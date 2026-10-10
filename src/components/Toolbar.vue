@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, onBeforeUnmount } from 'vue'
+import { ref, onMounted, onBeforeUnmount, watch, nextTick } from 'vue'
 import type { EditorView } from '@codemirror/view'
 import {
   /* 图标全部取自 Lucide（lucide-vue-next，ISC 许可）。
@@ -97,6 +97,73 @@ function close() {
   openMenu.value = null
 }
 
+/* ── 菜单定位（关键） ──
+   .tb 是横向滚动容器（overflow-x: auto），而 overflow 不为 visible 的元素
+   会把所有溢出的子节点裁掉——包括绝对定位的下拉。
+   表现很迷惑：DOM 里菜单明明在（所以「点了没反应」用肉眼和 DOM 断言都查不出来，
+   按钮的高亮态也正常），getBoundingClientRect() 也返回真实尺寸，
+   但视觉上被 .tb 裁成 0 高度，只剩编辑器露出来。
+
+   所以菜单必须「逃出」工具栏的裁剪。做法是 Teleport 到 body，
+   用 fixed 定位按锚点按钮的坐标摆放——这样既保住了 .tb 的横向滚动，
+   又让菜单能盖在编辑器之上。 */
+/** 每个 wrap 的 DOM 引用，用来量锚点位置 */
+const wrapEls = ref<Record<string, HTMLElement | null>>({})
+
+const menuStyle = ref<Record<string, string>>({})
+
+/** 各下拉的宽度（原来写在模板 style 上，Teleport 后需要提前知道才好定位） */
+const menuWidths: Record<string, number> = {
+  heading: 176,
+  reference: 200,
+  image: 190,
+  note: 224,
+  code: 192,
+  math: 176,
+  block: 176,
+}
+
+/** 按当前打开的菜单，量出锚点位置并算 fixed 坐标 */
+function placeMenu() {
+  const id = openMenu.value
+  if (!id) return
+  const wrap = wrapEls.value[id]
+  if (!wrap) return
+  const btn = wrap.querySelector<HTMLElement>('.tb-btn')
+  if (!btn) return
+  const r = btn.getBoundingClientRect()
+  const MENU_W = menuWidths[id]
+  const GAP = 4
+
+  /* 水平：默认左对齐按钮；若右边会超出窗口，则改成右对齐到按钮右边 */
+  const vw = window.innerWidth
+  let left = r.left
+  if (left + MENU_W > vw - 8) left = r.right - MENU_W
+  if (left < 8) left = 8
+
+  menuStyle.value = {
+    position: 'fixed',
+    top: `${Math.round(r.bottom + GAP)}px`,
+    left: `${Math.round(left)}px`,
+    width: `${MENU_W}px`,
+  }
+}
+
+function setWrap(id: Exclude<MenuId, null>, el: unknown) {
+  wrapEls.value[id] = (el as HTMLElement) ?? null
+}
+
+/** 供模板调用：给 wrap 绑 ref */
+function wrapRef(id: Exclude<MenuId, null>) {
+  return (el: unknown) => setWrap(id, el)
+}
+
+watch(openMenu, async (id) => {
+  if (!id) return
+  await nextTick()
+  placeMenu()
+})
+
 /** 菜单项点击：先关菜单，再执行命令（避免焦点被菜单吃掉） */
 function pick(fn: (view: EditorView) => void) {
   close()
@@ -126,16 +193,26 @@ function onArrow(e: KeyboardEvent) {
   openMenu.value = ids[(at + step + ids.length) % ids.length]
 }
 
+/** 窗口尺寸或工具栏滚动变化时，菜单要跟着锚点重新摆位，
+    否则 fixed 坐标会跟按钮脱节（fixed 不随滚动容器一起走）。 */
+function onReposition() {
+  if (openMenu.value) placeMenu()
+}
+
 onMounted(() => {
   document.addEventListener('pointerdown', onDocPointer)
   document.addEventListener('keydown', onEsc)
   document.addEventListener('keydown', onArrow)
+  window.addEventListener('resize', onReposition)
+  window.addEventListener('scroll', onReposition, true)
 })
 
 onBeforeUnmount(() => {
   document.removeEventListener('pointerdown', onDocPointer)
   document.removeEventListener('keydown', onEsc)
   document.removeEventListener('keydown', onArrow)
+  window.removeEventListener('resize', onReposition)
+  window.removeEventListener('scroll', onReposition, true)
 })
 
 /* ── 标题下拉：正文 + H1–H6 ── */
@@ -172,7 +249,7 @@ async function uploadImage() {
     <span class="tb-sep" />
 
     <!-- 2. 标题 -->
-    <div class="tb-group tb-menu-wrap">
+    <div :ref="wrapRef('heading')" class="tb-group tb-menu-wrap">
       <button
         class="tb-btn"
         :class="{ on: openMenu === 'heading' }"
@@ -182,17 +259,23 @@ async function uploadImage() {
         <Heading :size="ICON" :stroke-width="STROKE" />
         <ChevronDown class="caret" :size="10" :stroke-width="2" />
       </button>
-      <div v-if="openMenu === 'heading'" class="tb-menu" style="min-width: 176px">
-        <template v-for="(h, i) in headingItems" :key="h.level">
-          <span v-if="i === 1" class="tb-sep-h" />
-          <button class="tb-item" @click="pick((v) => toolbarHeading(v, h.level))">
-            <span :style="{ fontSize: `${17 - Math.min(h.level, 4) * 1.1}px`, fontWeight: 600 }">
-              {{ h.label }}
-            </span>
-            <span class="kbd">{{ h.kbd }}</span>
-          </button>
-        </template>
-      </div>
+      <Teleport to="body">
+        <div
+          v-if="openMenu === 'heading'"
+          class="tb-menu tb-menu--float"
+          :style="menuStyle"
+        >
+          <template v-for="(h, i) in headingItems" :key="h.level">
+            <span v-if="i === 1" class="tb-sep-h" />
+            <button class="tb-item" @click="pick((v) => toolbarHeading(v, h.level))">
+              <span :style="{ fontSize: `${17 - Math.min(h.level, 4) * 1.1}px`, fontWeight: 600 }">
+                {{ h.label }}
+              </span>
+              <span class="kbd">{{ h.kbd }}</span>
+            </button>
+          </template>
+        </div>
+      </Teleport>
     </div>
 
     <span class="tb-sep" />
@@ -237,7 +320,7 @@ async function uploadImage() {
     <span class="tb-sep" />
 
     <!-- 5. 链接 / 图片 / 笔记 -->
-    <div class="tb-group tb-menu-wrap">
+    <div :ref="wrapRef('reference')" class="tb-group tb-menu-wrap">
       <button
         class="tb-btn"
         :class="{ on: openMenu === 'reference' }"
@@ -247,28 +330,34 @@ async function uploadImage() {
         <Link2 :size="ICON" :stroke-width="STROKE" />
         <ChevronDown class="caret" :size="10" :stroke-width="2" />
       </button>
-      <div v-if="openMenu === 'reference'" class="tb-menu" style="min-width: 200px">
-        <button class="tb-item" @click="pick((v) => toolbarLink(v))">
-          <span>链接</span><span class="kbd">[]()</span>
-        </button>
-        <span class="tb-sep-h" />
-        <button class="tb-item" @click="pick((v) => toolbarWrap(v, '[[', ']]'))">
-          <span>双链笔记</span><span class="kbd">[[ ]]</span>
-        </button>
-        <button class="tb-item" @click="pick((v) => toolbarWrap(v, '![[', ']]'))">
-          <span>笔记嵌入</span><span class="kbd">![[ ]]</span>
-        </button>
-        <button class="tb-item" @click="pick((v) => toolbarWrap(v, '[[#^', ']]'))">
-          <span>块引用</span><span class="kbd">[[#^ ]]</span>
-        </button>
-        <span class="tb-sep-h" />
-        <button class="tb-item" @click="pick((v) => toolbarFootnote(v))">
-          <span>脚注</span><span class="kbd">[^1]</span>
-        </button>
-      </div>
+      <Teleport to="body">
+        <div
+          v-if="openMenu === 'reference'"
+          class="tb-menu tb-menu--float"
+          :style="menuStyle"
+        >
+          <button class="tb-item" @click="pick((v) => toolbarLink(v))">
+            <span>链接</span><span class="kbd">[]()</span>
+          </button>
+          <span class="tb-sep-h" />
+          <button class="tb-item" @click="pick((v) => toolbarWrap(v, '[[', ']]'))">
+            <span>双链笔记</span><span class="kbd">[[ ]]</span>
+          </button>
+          <button class="tb-item" @click="pick((v) => toolbarWrap(v, '![[', ']]'))">
+            <span>笔记嵌入</span><span class="kbd">![[ ]]</span>
+          </button>
+          <button class="tb-item" @click="pick((v) => toolbarWrap(v, '[[#^', ']]'))">
+            <span>块引用</span><span class="kbd">[[#^ ]]</span>
+          </button>
+          <span class="tb-sep-h" />
+          <button class="tb-item" @click="pick((v) => toolbarFootnote(v))">
+            <span>脚注</span><span class="kbd">[^1]</span>
+          </button>
+        </div>
+      </Teleport>
     </div>
 
-    <div class="tb-group tb-menu-wrap">
+    <div :ref="wrapRef('image')" class="tb-group tb-menu-wrap">
       <button
         class="tb-btn"
         :class="{ on: openMenu === 'image' }"
@@ -278,17 +367,23 @@ async function uploadImage() {
         <ImageIcon :size="ICON" :stroke-width="STROKE" />
         <ChevronDown class="caret" :size="10" :stroke-width="2" />
       </button>
-      <div v-if="openMenu === 'image'" class="tb-menu" style="min-width: 190px">
-        <button class="tb-item" @click="uploadImage">
-          <span>上传本地图片</span>
-        </button>
-        <button class="tb-item" @click="pick((v) => toolbarImage(v))">
-          <span>远程图片链接</span><span class="kbd">![]()</span>
-        </button>
-      </div>
+      <Teleport to="body">
+        <div
+          v-if="openMenu === 'image'"
+          class="tb-menu tb-menu--float"
+          :style="menuStyle"
+        >
+          <button class="tb-item" @click="uploadImage">
+            <span>上传本地图片</span>
+          </button>
+          <button class="tb-item" @click="pick((v) => toolbarImage(v))">
+            <span>远程图片链接</span><span class="kbd">![]()</span>
+          </button>
+        </div>
+      </Teleport>
     </div>
 
-    <div class="tb-group tb-menu-wrap">
+    <div :ref="wrapRef('note')" class="tb-group tb-menu-wrap">
       <button
         class="tb-btn"
         :class="{ on: openMenu === 'note' }"
@@ -298,28 +393,34 @@ async function uploadImage() {
         <FileText :size="ICON" :stroke-width="STROKE" />
         <ChevronDown class="caret" :size="10" :stroke-width="2" />
       </button>
-      <div v-if="openMenu === 'note'" class="tb-menu" style="min-width: 224px">
-        <button class="tb-item" @click="pick((v) => toolbarTag(v))">
-          <span>插入标签</span><span class="kbd">#</span>
-        </button>
-        <button class="tb-item" @click="pick((v) => toolbarBlockId(v))">
-          <span>块 ID</span><span class="kbd">^</span>
-        </button>
-        <span class="tb-sep-h" />
-        <button class="tb-item" @click="pick((v) => toolbarFrontMatter(v))">
-          <span>Front Matter</span><span class="kbd">---</span>
-        </button>
-        <span class="tb-sep-h" />
-        <button class="tb-item" @click="pick((v) => toolbarInline(v, 'comment'))">
-          <span>隐藏注释</span><span class="kbd">%% %%</span>
-        </button>
-      </div>
+      <Teleport to="body">
+        <div
+          v-if="openMenu === 'note'"
+          class="tb-menu tb-menu--float"
+          :style="menuStyle"
+        >
+          <button class="tb-item" @click="pick((v) => toolbarTag(v))">
+            <span>插入标签</span><span class="kbd">#</span>
+          </button>
+          <button class="tb-item" @click="pick((v) => toolbarBlockId(v))">
+            <span>块 ID</span><span class="kbd">^</span>
+          </button>
+          <span class="tb-sep-h" />
+          <button class="tb-item" @click="pick((v) => toolbarFrontMatter(v))">
+            <span>Front Matter</span><span class="kbd">---</span>
+          </button>
+          <span class="tb-sep-h" />
+          <button class="tb-item" @click="pick((v) => toolbarInline(v, 'comment'))">
+            <span>隐藏注释</span><span class="kbd">%% %%</span>
+          </button>
+        </div>
+      </Teleport>
     </div>
 
     <span class="tb-sep" />
 
     <!-- 6. 代码 / 表格 / 数学 / 块 -->
-    <div class="tb-group tb-menu-wrap">
+    <div :ref="wrapRef('code')" class="tb-group tb-menu-wrap">
       <button
         class="tb-btn"
         :class="{ on: openMenu === 'code' }"
@@ -329,25 +430,31 @@ async function uploadImage() {
         <Braces :size="ICON" :stroke-width="STROKE" />
         <ChevronDown class="caret" :size="10" :stroke-width="2" />
       </button>
-      <div v-if="openMenu === 'code'" class="tb-menu" style="min-width: 192px">
-        <button class="tb-item" @click="pick((v) => toolbarCodeBlock(v))">
-          <span>代码块</span><span class="kbd">```</span>
-        </button>
-        <button class="tb-item" @click="pick((v) => toolbarAdvancedCodeBlock(v))">
-          <span>高级代码块</span><span class="tag">标题/行号</span>
-        </button>
-        <span class="tb-sep-h" />
-        <button class="tb-item" @click="pick((v) => toolbarMermaid(v))">
-          <span>Mermaid 图表</span>
-        </button>
-      </div>
+      <Teleport to="body">
+        <div
+          v-if="openMenu === 'code'"
+          class="tb-menu tb-menu--float"
+          :style="menuStyle"
+        >
+          <button class="tb-item" @click="pick((v) => toolbarCodeBlock(v))">
+            <span>代码块</span><span class="kbd">```</span>
+          </button>
+          <button class="tb-item" @click="pick((v) => toolbarAdvancedCodeBlock(v))">
+            <span>高级代码块</span><span class="tag">标题/行号</span>
+          </button>
+          <span class="tb-sep-h" />
+          <button class="tb-item" @click="pick((v) => toolbarMermaid(v))">
+            <span>Mermaid 图表</span>
+          </button>
+        </div>
+      </Teleport>
     </div>
 
     <button class="tb-btn" title="插入表格" @click="run((v) => toolbarTable(v, '| 列 1 | 列 2 | 列 3 |'))">
       <Table :size="ICON" :stroke-width="STROKE" />
     </button>
 
-    <div class="tb-group tb-menu-wrap tb-menu-wrap--end">
+    <div :ref="wrapRef('math')" class="tb-group tb-menu-wrap">
       <button
         class="tb-btn"
         :class="{ on: openMenu === 'math' }"
@@ -357,17 +464,23 @@ async function uploadImage() {
         <Sigma :size="ICON" :stroke-width="STROKE" />
         <ChevronDown class="caret" :size="10" :stroke-width="2" />
       </button>
-      <div v-if="openMenu === 'math'" class="tb-menu" style="min-width: 176px">
-        <button class="tb-item" @click="pick((v) => toolbarInline(v, 'inlineMath'))">
-          <span>行内公式</span><span class="kbd">$ $</span>
-        </button>
-        <button class="tb-item" @click="pick((v) => toolbarMathBlock(v))">
-          <span>块级公式</span><span class="kbd">$$</span>
-        </button>
-      </div>
+      <Teleport to="body">
+        <div
+          v-if="openMenu === 'math'"
+          class="tb-menu tb-menu--float"
+          :style="menuStyle"
+        >
+          <button class="tb-item" @click="pick((v) => toolbarInline(v, 'inlineMath'))">
+            <span>行内公式</span><span class="kbd">$ $</span>
+          </button>
+          <button class="tb-item" @click="pick((v) => toolbarMathBlock(v))">
+            <span>块级公式</span><span class="kbd">$$</span>
+          </button>
+        </div>
+      </Teleport>
     </div>
 
-    <div class="tb-group tb-menu-wrap tb-menu-wrap--end">
+    <div :ref="wrapRef('block')" class="tb-group tb-menu-wrap">
       <button
         class="tb-btn"
         :class="{ on: openMenu === 'block' }"
@@ -377,21 +490,27 @@ async function uploadImage() {
         <Blocks :size="ICON" :stroke-width="STROKE" />
         <ChevronDown class="caret" :size="10" :stroke-width="2" />
       </button>
-      <div v-if="openMenu === 'block'" class="tb-menu" style="min-width: 176px">
-        <button class="tb-item" @click="pick((v) => toolbarCallout(v))">
-          <span>Callout 提示块</span>
-        </button>
-        <button class="tb-item" @click="pick((v) => toolbarDetails(v))">
-          <span>折叠详情块</span>
-        </button>
-        <button class="tb-item" @click="pick((v) => toolbarTabs(v, '标签一', '标签二'))">
-          <span>分栏标签</span>
-        </button>
-        <span class="tb-sep-h" />
-        <button class="tb-item" @click="pick((v) => toolbarHorizontalRule(v))">
-          <span>分割线</span>
-        </button>
-      </div>
+      <Teleport to="body">
+        <div
+          v-if="openMenu === 'block'"
+          class="tb-menu tb-menu--float"
+          :style="menuStyle"
+        >
+          <button class="tb-item" @click="pick((v) => toolbarCallout(v))">
+            <span>Callout 提示块</span>
+          </button>
+          <button class="tb-item" @click="pick((v) => toolbarDetails(v))">
+            <span>折叠详情块</span>
+          </button>
+          <button class="tb-item" @click="pick((v) => toolbarTabs(v, '标签一', '标签二'))">
+            <span>分栏标签</span>
+          </button>
+          <span class="tb-sep-h" />
+          <button class="tb-item" @click="pick((v) => toolbarHorizontalRule(v))">
+            <span>分割线</span>
+          </button>
+        </div>
+      </Teleport>
     </div>
   </div>
 </template>
@@ -490,8 +609,6 @@ async function uploadImage() {
   left: 0;
   z-index: 40;
   min-width: 176px;
-  /* 下拉最多占窗口一半宽，防止菜单项长文本把菜单撑到窗外 */
-  max-width: 50vw;
   padding: 4px;
   background: var(--n-raised);
   border: 1px solid var(--n-line);
@@ -500,14 +617,19 @@ async function uploadImage() {
   animation: menu-in 120ms var(--n-ease);
 }
 
-/* 靠右的下拉改成右对齐，避免被窗口右边缘裁掉。
-   :has 判定「这个按钮是 .tb 里最后几个之一」不可靠，
-   改为按位置兜底：菜单用 right:0 会被左边缘裁，用 left:0 会被右裁，
-   所以给靠右的 wrap 加 .tb-menu-wrap--end 类，在模板里手动标注。 */
-.tb-menu-wrap--end > .tb-menu {
-  left: auto;
-  right: 0;
+/* 菜单被 Teleport 到 body 后，工具栏的 overflow 就裁不到它了。
+   位置由 placeMenu() 按锚点按钮实时算出，这里只需要保证层级够高
+   （要盖过编辑器与侧栏），并且坐标用 fixed。 */
+.tb-menu--float {
+  position: fixed;
+  top: 0;
+  left: 0;
+  z-index: 999;
 }
+
+/* 说明：原来靠 .tb-menu-wrap--end 做右边缘避让，
+   现在改由 placeMenu() 在算坐标时判断（左对齐会超出窗口就翻成右对齐），
+   这个类已不再需要。 */
 
 @keyframes menu-in {
   from { opacity: 0; transform: translateY(-4px); }

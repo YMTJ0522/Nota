@@ -160,8 +160,8 @@ async function probeMainClick(idx) {
   const state = await evaluate(
     '(() => {' +
       ' const w = document.querySelectorAll(".tb-menu-wrap")[' + idx + '];' +
-      ' const menu = w.querySelector(".tb-menu");' +
       ' const btn = w.querySelector(".tb-btn");' +
+      ' const menu = document.querySelector(".tb-menu");' +
       ' return { menuOpen: !!menu, btnHighlighted: btn ? btn.classList.contains("on") : null };' +
       '})()',
   )
@@ -169,6 +169,47 @@ async function probeMainClick(idx) {
   await evaluate('(() => { document.body.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true })); return true })()')
   await new Promise((r) => setTimeout(r, 250))
   return state
+}
+
+/**
+ * 「菜单真的看得见吗」——这是最关键的一条断言。
+ *
+ * 教训：之前只断言 `!!menu`（DOM 里在不在）和 getBoundingClientRect()，
+ * 两者对「被 overflow 裁掉」的元素都照样成立，于是漏掉了真机上
+ * 「按钮亮了但下拉不出来」的 bug（.tb 是 overflow:auto，把绝对定位的下拉裁没了）。
+ * 正确做法是用 elementFromPoint 打菜单中心：如果返回的是菜单自己，
+ * 才算真的可见；返回编辑器/工具栏说明被盖住或被裁。
+ */
+async function probeVisible(idx) {
+  /* 用 caret 打开（不依赖某个按钮的点击语义） */
+  await evaluate(
+    '(() => {' +
+      ' const w = document.querySelectorAll(".tb-menu-wrap")[' + idx + '];' +
+      ' const btn = w.querySelector(".tb-btn");' +
+      ' btn.dispatchEvent(new MouseEvent("click", { bubbles: true }));' +
+      ' return true;' +
+      '})()',
+  )
+  await new Promise((r) => setTimeout(r, 350))
+  const res = await evaluate(
+    "(() => {" +
+      " const menu = document.querySelector('.tb-menu');" +
+      " if (!menu) return { visible: false, reason: 'no-menu' };" +
+      " const r = menu.getBoundingClientRect();" +
+      " if (r.width < 10 || r.height < 10) return { visible: false, reason: 'zero-size', w: r.width, h: r.height };" +
+      " const cx = Math.round(r.left + r.width / 2);" +
+      " const cy = Math.round(r.top + r.height / 2);" +
+      " const el = document.elementFromPoint(cx, cy);" +
+      " const inside = el ? menu.contains(el) : false;" +
+      " const hit = el ? (typeof el.className === 'string' && el.className ? el.className : el.tagName) : null;" +
+      " return { visible: inside, hit, cx, cy, w: Math.round(r.width), h: Math.round(r.height)," +
+      "   top: Math.round(r.top), left: Math.round(r.left)," +
+      "   overflowBottom: Math.round(r.bottom - window.innerHeight) };" +
+      "})()",
+  )
+  await evaluate('(() => { document.body.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true })); return true })()')
+  await new Promise((r) => setTimeout(r, 220))
+  return res
 }
 
 /** 点 caret，看菜单是否打开 */
@@ -185,8 +226,7 @@ async function probeCaretClick(idx) {
   await new Promise((r) => setTimeout(r, 300))
   const state = await evaluate(
     '(() => {' +
-      ' const w = document.querySelectorAll(".tb-menu-wrap")[' + idx + '];' +
-      ' return { menuOpen: !!w.querySelector(".tb-menu") };' +
+      ' return { menuOpen: !!document.querySelector(".tb-menu") };' +
       '})()',
   )
   await evaluate('(() => { document.body.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true })); return true })()')
@@ -196,16 +236,16 @@ async function probeCaretClick(idx) {
 
 out.mainClick = []
 out.caretClick = []
+out.visibility = []
 for (let i = 0; i < out.dropdowns.length; i += 1) {
   out.mainClick.push(await probeMainClick(i))
   out.caretClick.push(await probeCaretClick(i))
+  out.visibility.push({ i, ...(await probeVisible(i)) })
 }
 
-/* ── 菜单溢出窗口右边缘检查 ── */
+/* ── 菜单溢出窗口检查（含底部溢出） ── */
 out.overflow = []
 for (let i = 0; i < out.dropdowns.length; i += 1) {
-  /* 用 caret 打开（所有下拉都支持），再量菜单盒子 */
-  await probeCaretClick(i)
   await evaluate(
     '(() => {' +
       ' const w = document.querySelectorAll(".tb-menu-wrap")[' + i + '];' +
@@ -217,14 +257,14 @@ for (let i = 0; i < out.dropdowns.length; i += 1) {
   await new Promise((r) => setTimeout(r, 320))
   const box = await evaluate(
     "(() => {" +
-      " const w = document.querySelectorAll('.tb-menu-wrap')[" + i + '];' +
-      " const menu = w.querySelector('.tb-menu');" +
+      " const menu = document.querySelector('.tb-menu');" +
       " if (!menu) return { present: false };" +
       " const r = menu.getBoundingClientRect();" +
       " return { present: true, left: Math.round(r.left), right: Math.round(r.right)," +
-      "   w: Math.round(r.width), vw: window.innerWidth," +
+      "   bottom: Math.round(r.bottom), w: Math.round(r.width), h: Math.round(r.height)," +
+      "   vw: window.innerWidth, vh: window.innerHeight," +
       "   overflowRight: Math.round(r.right - window.innerWidth)," +
-      "   overflowLeft: Math.round(-r.left) };" +
+      "   overflowBottom: Math.round(r.bottom - window.innerHeight) };" +
       "})()",
   )
   out.overflow.push({ i, ...box })
@@ -251,8 +291,9 @@ out.beforeItemClick = await evaluate('(() => window.__notaView.state.doc.toStrin
 /* 真实模拟：pointerdown 关菜单 + click 执行，两者顺序按浏览器实际行为 */
 await evaluate(
   '(() => {' +
-    ' const w = document.querySelectorAll(".tb-menu-wrap")[0];' +
-    ' const items = [...w.querySelectorAll(".tb-item")];' +
+    ' const menu = document.querySelector(".tb-menu");' +
+    ' if (!menu) return "no-menu";' +
+    ' const items = [...menu.querySelectorAll(".tb-item")];' +
     ' const target = items.find((b) => b.textContent.includes("正文"));' +
     ' if (!target) return "no-item";' +
     ' target.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true }));' +
