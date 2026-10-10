@@ -170,6 +170,19 @@ CodeMirror 的 `.cm-gutters`（行号）和 `.cm-content`（正文）是 `.cm-sc
 
 预览模式（`.preview`）用同一个公式，保证「编辑 / 预览」切换时正文列完全对齐。
 
+### 下拉菜单为什么要 Teleport 到 body
+
+工具栏 `.tb` 是横向滚动容器（`overflow-x: auto` + `overflow-y: hidden`，窄窗口下用）。**`overflow` 不为 `visible` 的元素会裁掉所有溢出的子节点——包括绝对定位的下拉菜单。**
+
+这个坑很隐蔽：菜单一直在 DOM 里、`getBoundingClientRect()` 也返回真实尺寸，只是视觉上被裁没了。表现出来就是「点了按钮有高亮，但菜单不出来」，而任何只断言「元素存在」的测试都会误判为通过。
+
+所以菜单统一 Teleport 到 `body`，用 `position: fixed` 按锚点按钮的实时坐标摆放（见 `placeMenu()`）。这样既保住了工具栏的横向滚动，菜单又能正常盖在编辑器之上。相应地：
+
+- 窗口 `resize` 或工具栏滚动时要重新摆位（`fixed` 不随滚动容器一起走）；
+- 右对齐不再靠 class，而是算坐标时判断「左边放会超出窗口就翻成右对齐」。
+
+⚠️ 若要给工具栏加新的浮层（tooltip、popover 等），务必同样 Teleport 出去，否则会被 `.tb` 裁掉。
+
 ### 为什么主进程用 esbuild 而不是 vite-plugin-electron
 
 该插件在 dev 模式下会覆盖 `rollupOptions.output.format`，强制输出 ESM，导致 `.cjs` 文件里出现 `import` 语句而启动崩溃。改用 esbuild 直接构建，dev 与生产行为完全一致，构建耗时约 30ms。
