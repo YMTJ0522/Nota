@@ -2,6 +2,13 @@
 import { ref, onMounted, onBeforeUnmount, watch, nextTick, computed } from 'vue'
 import { EditorState } from '@codemirror/state'
 import { EditorView } from '@codemirror/view'
+import {
+  /* 顶部区域与 inkstone 对齐：标题可编辑、右侧一段式视图切换。
+     图标同样取自 Lucide（ISC），不碰 inkstone 的 LGPL 源码。 */
+  Pencil,
+  Columns2,
+  Eye,
+} from 'lucide-vue-next'
 import { store } from '@/store'
 import { baseExtensions } from '@/editor/setup'
 import { notaThemeExtensions } from '@/editor/theme'
@@ -37,9 +44,55 @@ import {
 const { state } = store
 
 const host = ref<HTMLDivElement | null>(null)
-const mode = ref<'write' | 'read'>('write')
+/** 视图模式：编辑 / 分栏 / 预览（对齐 inkstone 的三段式切换） */
+type ViewMode = 'write' | 'split' | 'read'
+const mode = ref<ViewMode>('write')
 const html = ref('')
 const slash = ref<SlashMenuRenderState | null>(null)
+
+/** 编辑区是否可见 / 预览区是否可见，由模式派生 */
+const showEditor = computed(() => mode.value !== 'read')
+const showPreview = computed(() => mode.value !== 'write')
+
+/** 标题（不含扩展名），可编辑 */
+const titleDraft = ref('')
+watch(
+  () => store.activeName.value,
+  (n) => {
+    titleDraft.value = n
+  },
+  { immediate: true },
+)
+
+/** 标题回车 / 失焦时改名 */
+async function commitTitle() {
+  const next = titleDraft.value.trim()
+  const path = state.activePath
+  if (!path) return
+  if (!next || next === store.activeName.value) {
+    titleDraft.value = store.activeName.value
+    return
+  }
+  await store.renameNote(path, next)
+}
+
+function onTitleKey(e: KeyboardEvent) {
+  if (e.key === 'Enter') {
+    e.preventDefault()
+    ;(e.target as HTMLInputElement).blur()
+  } else if (e.key === 'Escape') {
+    titleDraft.value = store.activeName.value
+    ;(e.target as HTMLInputElement).blur()
+  }
+}
+
+/** 快捷键 Ctrl+1/2/3 切视图，和多数编辑器一致 */
+function onViewKey(e: KeyboardEvent) {
+  if (!(e.ctrlKey || e.metaKey) || e.shiftKey || e.altKey) return
+  if (e.key === '1') { e.preventDefault(); mode.value = 'write' }
+  else if (e.key === '2') { e.preventDefault(); mode.value = 'split' }
+  else if (e.key === '3') { e.preventDefault(); mode.value = 'read' }
+}
 
 let view: EditorView | null = null
 let timer: ReturnType<typeof setTimeout> | null = null
@@ -204,6 +257,7 @@ onMounted(() => {
     // 笔记内容可能晚于组件挂载到达，这里补一次同步
     pushDoc(state.draft)
   })
+  window.addEventListener('keydown', onViewKey)
 })
 
 onBeforeUnmount(() => {
@@ -211,6 +265,7 @@ onBeforeUnmount(() => {
   view?.destroy()
   view = null
   ;(window as unknown as { __notaView?: EditorView | null }).__notaView = null
+  window.removeEventListener('keydown', onViewKey)
 })
 
 // 切笔记：activePath 变化时把 draft 灌进 CM。
@@ -226,7 +281,8 @@ watch(
   }
 )
 
-// 阅读模式：销毁编辑器省内存；返回编辑模式再重建
+// 阅读模式：销毁编辑器省内存；回到编辑/分栏再重建。
+// 分栏模式两边都要在，所以只有纯预览才销毁。
 watch(mode, async (m) => {
   if (m === 'read') {
     view?.destroy()
@@ -245,26 +301,76 @@ defineExpose({ getView: () => view })
 
 <template>
   <div class="pane">
+    <!-- 顶部标题栏：左边可编辑标题，右边视图切换 + 字数。
+         顺序与 inkstone 一致——标题栏在工具栏之上。 -->
+    <header class="ph">
+      <input
+        v-model="titleDraft"
+        class="ph-title"
+        type="text"
+        placeholder="未命名笔记"
+        aria-label="笔记标题"
+        spellcheck="false"
+        @keydown="onTitleKey"
+        @blur="commitTitle"
+      />
+
+      <div class="ph-right">
+        <span class="ph-stat">{{ statText }}</span>
+        <span v-if="store.dirty.value" class="dot" title="有未保存的修改" />
+
+        <!-- 视图切换：编辑 / 分栏 / 预览 -->
+        <div class="ph-seg" role="radiogroup" aria-label="视图模式">
+          <button
+            class="ph-seg-btn"
+            role="radio"
+            :aria-checked="mode === 'write'"
+            aria-label="编辑模式 (Ctrl+1)"
+            title="编辑模式 (Ctrl+1)"
+            :class="{ on: mode === 'write' }"
+            @click="mode = 'write'"
+          >
+            <Pencil :size="12.5" :stroke-width="1.9" />
+          </button>
+          <button
+            class="ph-seg-btn"
+            role="radio"
+            :aria-checked="mode === 'split'"
+            aria-label="分栏视图 (Ctrl+2)"
+            title="分栏视图 (Ctrl+2)"
+            :class="{ on: mode === 'split' }"
+            @click="mode = 'split'"
+          >
+            <Columns2 :size="12.5" :stroke-width="1.9" />
+          </button>
+          <button
+            class="ph-seg-btn"
+            role="radio"
+            :aria-checked="mode === 'read'"
+            aria-label="阅读模式 (Ctrl+3)"
+            title="阅读模式 (Ctrl+3)"
+            :class="{ on: mode === 'read' }"
+            @click="mode = 'read'"
+          >
+            <Eye :size="12.5" :stroke-width="1.9" />
+          </button>
+        </div>
+      </div>
+    </header>
+
     <Toolbar
-      v-if="mode === 'write'"
+      v-if="showEditor"
       :get-view="() => view"
       @toast="onToolbarToast"
     />
 
-    <div class="tabs">
-      <button :class="{ on: mode === 'write' }" @click="mode = 'write'">编辑</button>
-      <button :class="{ on: mode === 'read' }" @click="mode = 'read'">预览</button>
-      <span class="spacer" />
-      <span class="stat">{{ statText }}</span>
-    </div>
-
-    <div class="stage">
+    <div class="stage" :data-layout="mode">
       <div
-        v-show="mode === 'write'"
+        v-show="showEditor"
         ref="host"
         class="host"
       />
-      <div v-if="mode === 'read'" class="preview" v-html="html" />
+      <div v-if="showPreview" class="preview" v-html="html" />
 
       <SlashMenu
         v-if="slash && mode === 'write'"
@@ -289,41 +395,106 @@ defineExpose({ getView: () => view })
   min-height: 0;
 }
 
-.tabs {
+/* ── 顶部标题栏 ──
+   44px，和 inkstone 一致。标题做成「平时像纯文本、悬停/聚焦才显形」的输入框，
+   避免一排边框把界面切得太碎。 */
+.ph {
   flex: none;
-  height: 32px;
+  height: 44px;
   display: flex;
   align-items: center;
-  gap: 2px;
+  gap: 8px;
   padding: 0 12px;
   border-bottom: 1px solid var(--n-line);
-}
-
-.tabs button {
-  height: 22px;
-  padding: 0 10px;
-  font-size: 12.5px;
-  border-radius: var(--n-r-sm);
-  color: var(--n-fg-dim);
-  transition: background var(--n-dur) var(--n-ease), color var(--n-dur) var(--n-ease);
-}
-
-.tabs button:hover {
-  color: var(--n-fg);
   background: var(--n-surface);
 }
 
-.tabs button.on {
-  background: var(--n-accent-soft);
-  color: var(--n-accent);
-  font-weight: 500;
-}
-
-.spacer {
+.ph-title {
   flex: 1;
+  min-width: 0;
+  height: 30px;
+  padding: 0 8px;
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--n-fg);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--n-r-sm);
+  outline: none;
+  transition: background var(--n-dur) var(--n-ease), border-color var(--n-dur) var(--n-ease);
 }
 
-.stat {
+.ph-title::placeholder {
+  font-weight: 500;
+  color: var(--n-fg-faint);
+}
+
+.ph-title:hover {
+  background: var(--n-raised);
+  border-color: var(--n-line);
+}
+
+.ph-title:focus {
+  background: var(--n-bg);
+  border-color: var(--n-accent);
+}
+
+.ph-right {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+/* 未保存标记：一个小圆点，比文字更安静 */
+.dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--n-accent);
+  opacity: 0.75;
+}
+
+/* ── 视图切换（分段控件） ──
+   和 inkstone 的 Segmented 同构：外层凹陷底槽，选中项浮起成白块。 */
+.ph-seg {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 3px;
+  border-radius: var(--n-r-md);
+  background: var(--n-bg);
+  border: 1px solid var(--n-line);
+}
+
+.ph-seg-btn {
+  width: 30px;
+  height: 22px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--n-r-sm);
+  color: var(--n-fg-dim);
+  transition: color var(--n-dur) var(--n-ease), background var(--n-dur) var(--n-ease);
+}
+
+.ph-seg-btn svg {
+  fill: none;
+  stroke: currentColor;
+}
+
+.ph-seg-btn:hover {
+  color: var(--n-fg);
+}
+
+.ph-seg-btn.on {
+  background: var(--n-raised);
+  color: var(--n-accent);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.12);
+}
+
+.ph-stat {
   font-size: 11.5px;
   color: var(--n-fg-faint);
   font-variant-numeric: tabular-nums;
@@ -334,7 +505,25 @@ defineExpose({ getView: () => view })
   flex: 1;
   min-height: 0;
   display: flex;
-  flex-direction: column;
+  flex-direction: row;
+}
+
+/* 纯编辑 / 纯预览：单栏占满 */
+.stage[data-layout='write'] .host,
+.stage[data-layout='read'] .preview {
+  width: 100%;
+}
+
+/* 分栏：编辑在左、预览在右，中间一条分隔线 */
+.stage[data-layout='split'] .host {
+  flex: 1 1 50%;
+  min-width: 0;
+  border-right: 1px solid var(--n-line);
+}
+
+.stage[data-layout='split'] .preview {
+  flex: 1 1 50%;
+  min-width: 0;
 }
 
 .host {
@@ -355,6 +544,17 @@ defineExpose({ getView: () => view })
   line-height: var(--n-lh);
 }
 
+/* 分栏时每栏只有半宽，正文列的居中留白要相应收窄，
+   否则 (100% - measure)/2 会算出负值，正文被挤到贴边。 */
+.stage[data-layout='split'] .preview {
+  padding: 16px clamp(12px, 4%, 40px) 42vh;
+}
+
+/* 同理，分栏时编辑区的居中留白也要收窄。
+   .cm-scroller 的 padding 设在 theme.ts 里，这里用 :deep 覆盖。 */
+.stage[data-layout='split'] :deep(.cm-scroller) {
+  padding-inline: clamp(12px, 4%, 40px);
+}
 .preview :deep(h1),
 .preview :deep(h2),
 .preview :deep(h3),
