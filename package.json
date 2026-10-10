@@ -4,6 +4,8 @@
   "version": "0.1.0",
   "type": "module",
   "description": "A lightweight local-first Markdown note app.",
+  "author": "YMTJ0522",
+  "license": "MIT",
   "main": "dist-electron/main.cjs",
   "scripts": {
     "dev": "vite",

@@ -2,24 +2,51 @@
   "$schema": "https://json.schemastore.org/electron-builder.json",
   "appId": "com.ymtj.nota",
   "productName": "Nota",
+  "copyright": "Copyright © 2026 YMTJ0522",
   "directories": {
-    "output": "release"
+    "output": "release",
+    "buildResources": "build"
   },
-  "files": ["dist/**/*", "dist-electron/**/*"],
+  "files": [
+    "dist/**/*",
+    "dist-electron/**/*",
+    "package.json"
+  ],
   "win": {
-    "target": ["nsis"],
-    "icon": "build/icon.ico"
+    "target": [
+      {
+        "target": "nsis",
+        "arch": ["x64"]
+      },
+      {
+        "target": "portable",
+        "arch": ["x64"]
+      }
+    ],
+    "icon": "build/icon.ico",
+    "artifactName": "${productName}-${version}-${arch}.${ext}"
   },
   "nsis": {
     "oneClick": false,
+    "perMachine": false,
     "allowToChangeInstallationDirectory": true,
     "createDesktopShortcut": true,
-    "shortcutName": "Nota"
+    "createStartMenuShortcut": true,
+    "shortcutName": "Nota",
+    "deleteAppDataOnUninstall": false,
+    "artifactName": "${productName}-Setup-${version}.${ext}"
+  },
+  "portable": {
+    "artifactName": "${productName}-Portable-${version}.${ext}"
   },
   "mac": {
-    "target": ["dmg"]
+    "target": ["dmg"],
+    "icon": "build/icon.png",
+    "category": "public.app-category.productivity"
   },
   "linux": {
-    "target": ["AppImage"]
+    "target": ["AppImage"],
+    "icon": "build/icon.png",
+    "category": "Office"
   }
 }

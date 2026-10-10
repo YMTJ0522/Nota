@@ -1,0 +1,26 @@
+<svg width="512" height="512" viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#4d8169"/>
+      <stop offset="1" stop-color="#34573f"/>
+    </linearGradient>
+  </defs>
+
+  <!-- 圆角底板 -->
+  <rect x="16" y="16" width="480" height="480" rx="110" fill="url(#bg)"/>
+
+  <!-- 笔记页：x 148..372, y 112..400 -->
+  <path d="M176 112h122l74 74v186a28 28 0 0 1-28 28H176a28 28 0 0 1-28-28V140a28 28 0 0 1 28-28z"
+        fill="#fffefc"/>
+  <!-- 折角 -->
+  <path d="M298 112l74 74h-56a18 18 0 0 1-18-18z" fill="#dfe9e2"/>
+
+  <!-- 文字行：左侧，右端留出书签空间 -->
+  <rect x="176" y="212" width="104" height="14" rx="7" fill="#9db8a8"/>
+  <rect x="176" y="254" width="128" height="14" rx="7" fill="#c8d6cd"/>
+  <rect x="176" y="296" width="88"  height="14" rx="7" fill="#c8d6cd"/>
+  <rect x="176" y="338" width="112" height="14" rx="7" fill="#c8d6cd"/>
+
+  <!-- 书签：右侧独立竖条，x 316..360，不与文字行相交 -->
+  <path d="M316 196h44v112l-22-18-22 18z" fill="#e0915b"/>
+</svg>
