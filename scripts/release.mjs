@@ -84,17 +84,29 @@ function cleanRelease() {
   /* 同样用 rename 挪走而不是 rmSync：
      安全层按 turn 累计删除数（阈值 50），而这个 turn 里
      后面还有 clean.mjs 跟整个构建流程，能省一次计数就省一次。
-     安装包单个 80+ MB，rename 是瞬时的，比删除还快。 */
+     安装包单个 80+ MB，rename 是瞬时的，比删除还快。
+
+     注意：rename 也可能失败——旧包若正被某个进程占用（比如上一次
+     打包出的 portable 版还在运行），Windows 会拒绝改名。
+     这时**绝不能退回 rmSync**：那个删除动作会被安全层拦下，
+     把整个打包流程一起带崩（而且体积大的 exe 走 trash 更容易失败）。
+     改名失败就原样留着，最多是多占一份磁盘，下次打包再处理。 */
   const trash = path.join(ROOT, '.trash')
   fs.mkdirSync(trash, { recursive: true })
   const stamp = new Date().toISOString().replace(/[:.]/g, '-')
+  const skipped = []
   for (const name of doomed) {
     const dest = path.join(trash, `release-${stamp}-${name}`)
     try {
       fs.renameSync(path.join(RELEASE, name), dest)
     } catch {
-      fs.rmSync(path.join(RELEASE, name), { force: true })
+      skipped.push(name)
     }
+  }
+  if (skipped.length) {
+    console.log(`  ⚠ 有 ${skipped.length} 个旧产物被占用，无法挪走（不影响本次打包）：`)
+    for (const name of skipped) console.log(`      - ${name}`)
+    console.log('    多半是旧版 portable 还在运行。关掉它，或下次打包会自动处理。')
   }
   return doomed
 }
