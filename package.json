@@ -1,7 +1,7 @@
 {
   "name": "nota",
   "private": true,
-  "version": "0.2.0",
+  "version": "0.3.0",
   "type": "module",
   "description": "A lightweight local-first Markdown note app.",
   "author": "YMTJ0522",
@@ -14,7 +14,8 @@
     "preview": "vite preview",
     "typecheck": "vue-tsc --noEmit",
     "verify": "node scripts/probe.mjs",
-    "pack": "npm run build && electron-builder"
+    "pack": "node scripts/release.mjs",
+    "pack:rebuild": "node scripts/release.mjs --no-bump"
   },
   "dependencies": {
     "@codemirror/autocomplete": "^6.20.3",

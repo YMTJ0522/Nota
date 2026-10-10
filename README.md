@@ -51,10 +51,24 @@ npm run dev
 ## 构建
 
 ```bash
-npm run build      # 类型检查 + 前端构建 + 主进程构建
-npm run pack       # 打包成 Windows 安装包（输出到 release/）
-npm run verify     # 无头启动应用并断言关键 UI，截图输出到 docs/
+npm run build        # 类型检查 + 前端构建 + 主进程构建
+npm run pack         # 发布打包：滚版本 → 删旧包 → 构建 → 出安装包
+npm run pack:rebuild # 同上传，但沿用当前版本号（只重新打包）
+npm run verify       # 无头启动应用并断言关键 UI，截图输出到 docs/
 ```
+
+### 打包即发布
+
+`npm run pack` 是**唯一的发布入口**，它会按顺序做四件事：
+
+1. **滚版本号** — `0.2.0 → 0.3.0 → 0.4.0`（minor 递增，patch 归零；`0.9.0` 之后进 `1.0.0`）
+2. **删旧产物** — 清空 `release/` 下所有历史的 `.exe` / `.blockmap` / `.yml`，只保留本次输出
+3. **清 `dist/`** — 小批量删除，绕开大批量删除限制
+4. **构建 + 打包** — 前端、主进程、NSIS 安装版、Portable 免安装版
+
+所以 `release/` 目录里**永远只有最新一版**的两个 `.exe`，不会越堆越多。
+
+想要先看看会做什么而不真跑：`node scripts/release.mjs --dry`
 
 ## 项目结构
 
@@ -87,6 +101,7 @@ scripts/
   probe.mjs        无头验证脚本（CDP 驱动，断言 + 截图）
   verify-commands.mjs 命令行为验证（真跑「正文」与「隐藏注释」并比对文本）
   clean.mjs        分批清理 dist，绕开大批量删除限制
+  release.mjs      发布打包：滚版本 → 删旧包 → 构建 → 出安装包
 build-electron.mjs 主进程构建脚本（esbuild → CJS）
 ```
 
