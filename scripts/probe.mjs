@@ -5,7 +5,7 @@
  * and reports DOM assertions plus screenshots. Needed because Electron's
  * GPU process cannot start inside this sandbox.
  */
-import { spawn } from 'node:child_process'
+import { spawn, execFileSync } from 'node:child_process'
 import http from 'node:http'
 import path from 'node:path'
 import fs from 'node:fs'
@@ -332,6 +332,26 @@ result.editor = await evaluate(
     " };" +
     "})()",
 )
+/* 步 3b：量一下关键装饰的真实几何——不靠肉眼判断"太挤/太淡" */
+result.geometry = await evaluate(
+  "(() => {" +
+    " const box = (el) => { if (!el) return null; const r = el.getBoundingClientRect();" +
+    "   return { x: Math.round(r.x), y: Math.round(r.y), w: Math.round(r.width), h: Math.round(r.height) }; };" +
+    " const lines = [...document.querySelectorAll('.cm-line')];" +
+    " return {" +
+    "  quoteLine: box(lines.find((l) => l.classList.contains('cm-md-quote-line')))," +
+    "  quoteBar: (() => { const l = lines.find((x) => x.classList.contains('cm-md-quote-line'));" +
+    "    if (!l) return null; const s = getComputedStyle(l, '::before');" +
+    "    return { left: s.left, width: s.width, opacity: s.opacity, bg: s.backgroundColor }; })()," +
+    "  codePill: box(document.querySelector('.cm-md-inline-code'))," +
+    "  codePillPad: (() => { const e = document.querySelector('.cm-md-inline-code');" +
+    "    if (!e) return null; const s = getComputedStyle(e);" +
+    "    return { border: s.borderLeftWidth, radius: s.borderRadius, font: s.fontSize }; })()," +
+    "  codeBlock: lines.filter((l) => l.classList.contains('cm-md-codeblock')).map(box)," +
+    "  contentWidth: box(document.querySelector('.cm-content'))" +
+    " };" +
+    "})()",
+)
 result.steps.push(await shot('probe-02-editor.png'))
 
 /* 步 4：斜杠命令 —— 通过 CodeMirror 自身 API 插入 "/"，
@@ -388,6 +408,47 @@ result.slashAlias = await evaluate(
   "(() => { const m = document.querySelector('.slash'); return { open: !!m, itemCount: m ? m.querySelectorAll('.slash-item').length : 0, labels: m ? [...m.querySelectorAll('.slash-item .txt')].map((e) => e.textContent) : [] }; })()",
 )
 
+/* 步 4d：预览面板 —— 确认引用块竖线/代码块底色与编辑器一致（两处样式分开维护，容易走偏） */
+result.preview = await evaluate(
+  '(() => {' +
+    ' const segs = [...document.querySelectorAll(".tabs button")];' +
+    ' const hit = segs.find((b) => (b.textContent || "").trim() === "预览");' +
+    ' if (!hit) return { error: "no-preview-tab", segCount: segs.length };' +
+    ' hit.click();' +
+    ' return { clicked: true };' +
+    '})()',
+)
+await new Promise((r) => setTimeout(r, 600))
+const previewStyle = await evaluate(
+  '(() => {' +
+    ' const bq = document.querySelector(".preview blockquote");' +
+    ' const pre = document.querySelector(".preview pre");' +
+    ' const code = document.querySelector(".preview p code");' +
+    ' const g = (el, props) => { if (!el) return null; const s = getComputedStyle(el);' +
+    '   const o = {}; for (const p of props) o[p] = s[p]; return o; };' +
+    ' return {' +
+    '  hasPreview: !!document.querySelector(".preview"),' +
+    '  bq: g(bq, ["borderLeftWidth","borderLeftColor","backgroundColor","color","fontStyle"]),' +
+    '  pre: g(pre, ["backgroundColor","paddingTop","borderRadius"]),' +
+    '  code: g(code, ["backgroundColor","color","paddingLeft"]),' +
+    '  hlSpans: document.querySelectorAll(".preview pre [class^=cm-hl-]").length,' +
+    '  hlColors: [...new Set([...document.querySelectorAll(".preview pre [class^=cm-hl-]")]' +
+    '    .map((e) => e.className + ":" + getComputedStyle(e).color))]' +
+    ' };' +
+    '})()',
+)
+result.previewStyle = previewStyle
+result.steps.push(await shot('probe-05-preview.png'))
+await evaluate(
+  '(() => {' +
+    ' const segs = [...document.querySelectorAll(".tabs button")];' +
+    ' const hit = segs.find((b) => (b.textContent || "").trim() === "编辑");' +
+    ' if (hit) hit.click();' +
+    ' return true;' +
+    '})()',
+)
+await new Promise((r) => setTimeout(r, 400))
+
 /* 步 5：暗色 */
 await evaluate("(() => { document.documentElement.setAttribute('data-theme', 'dark'); return true; })()")
 await new Promise((r) => setTimeout(r, 400))
@@ -398,6 +459,43 @@ console.log(JSON.stringify(result, null, 2))
 console.log('===END===')
 
 ws.close()
-child.kill()
 server.close()
+
+/* 清理浏览器的 user-data-dir。
+ *
+ * 这里只做"尽力而为"的同步清理，且必须是同步的：
+ * 之前用 await + 重试循环会把整个脚本挂住——headless 的子进程
+ * 持有的文件句柄不一定在几秒内释放，等下去就是无限等待。
+ * 删不掉的目录留着即可（已在 .gitignore 里），不影响验证结论。
+ * 过期目录由下次运行或手工清理。
+ */
+function killTree(pid) {
+  try {
+    execFileSync('taskkill', ['/PID', String(pid), '/T', '/F'], {
+      stdio: 'ignore',
+      timeout: 3000,
+    })
+  } catch { /* 进程可能已退出，或权限不足 */ }
+}
+
+function rmProfile(dir) {
+  if (!fs.existsSync(dir)) return
+  const files = []
+  const dirs = []
+  const walk = (d) => {
+    for (const e of fs.readdirSync(d, { withFileTypes: true })) {
+      const p = path.join(d, e.name)
+      if (e.isDirectory()) { walk(p); dirs.push(p) } else { files.push(p) }
+    }
+  }
+  try {
+    walk(dir)
+    for (const f of files) fs.rmSync(f, { force: true })
+    for (const d of dirs.reverse()) fs.rmdirSync(d)
+    fs.rmdirSync(dir)
+  } catch { /* 句柄未释放就放弃，下次再清 */ }
+}
+
+killTree(child.pid)
+rmProfile(profile)
 process.exit(0)

@@ -82,7 +82,9 @@ src/
   store/           状态层（Vue reactive）
   editor/          编辑器内核
     setup.ts               CodeMirror 基础扩展集合
-    theme.ts               编辑器主题（桥接 --n-* token）
+    theme.ts               编辑器主题 + 语法配色（编辑/预览共用一张表）
+    live-preview.ts        Markdown 实时呈现：标题层级、标记淡化、引用竖线
+    highlight-code.ts      预览代码块的语法高亮（复用编辑器同一套 token）
     markdown-commands.ts   纯函数：Markdown 文本变换
     toolbar-commands.ts    视图层命令，包一层 dispatch
     toolbar-keymap.ts      工具栏快捷键绑定
@@ -123,6 +125,17 @@ build-electron.mjs 主进程构建脚本（esbuild → CJS）
 `editor/` 下的文本变换全部是纯函数：`(doc, selection) => { change, selection }`，不依赖编辑器实例、不读写全局状态。视图层命令（`toolbar-*`）只负责把结果包成一个 CodeMirror transaction 并重新聚焦，因此每次操作恰好产生一次撤销步。
 
 这种分层让核心逻辑可以直接跑单元测试，也让斜杠命令与工具栏按钮复用同一套实现，行为不会漂移。
+
+### 编辑区与预览区为什么必须共用配色
+
+编辑区走 CodeMirror 的 `HighlightStyle`（产出内联样式），预览区是 `marked` 生成的静态 HTML（只能挂 class），两边的渲染机制完全不同。
+
+如果各自配一套颜色，很快就会出现「同一个代码块在编辑和预览里长得不一样」。所以 `theme.ts` 里只维护**一张**「标签 → 语义」表，再由它派生出两份产物：
+
+- `notaHighlight` —— `HighlightStyle`，给编辑区用；
+- `notaHighlightClass` —— `tagHighlighter`，产出 `.cm-hl-*` 类名，给预览区用。
+
+颜色本身统一写在 `styles/tokens.css` 的 `.cm-hl-*` 规则里，两边都读同一组 `--n-code-*` 变量。预览侧的高亮实现（`highlight-code.ts`）直接借道 CodeMirror 自己的 Lezer 语言去解析，而不是再引入一个高亮库——这样连「哪个 token 算关键字」的判定都同源，不会一边认得 `const`、另一边认不得。
 
 ### 正文列为什么这样居中
 

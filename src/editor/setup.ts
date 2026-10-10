@@ -33,6 +33,7 @@ import { closeBrackets, closeBracketsKeymap } from "@codemirror/autocomplete";
 import { toolbarKeymap } from "./toolbar-keymap";
 import { codeLangCompleteExtensions } from "./code-lang-complete";
 import { fencedCodeBlockHighlighter } from "./code-languages";
+import { markdownLivePreview } from "./live-preview";
 
 /**
  * Baseline CodeMirror extension set for the Markdown editor.
@@ -69,6 +70,7 @@ export function baseExtensions(options: {
       codeLanguages: languages,
       addKeymap: true,
     }),
+    markdownLivePreview,
     fencedCodeBlockHighlighter(),
     codeLangCompleteExtensions(),
     keymap.of([

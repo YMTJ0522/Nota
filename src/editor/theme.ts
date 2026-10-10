@@ -1,12 +1,16 @@
 import { EditorView } from "@codemirror/view";
 import { HighlightStyle, syntaxHighlighting } from "@codemirror/language";
-import { tags as t } from "@lezer/highlight";
+import { tags as t, tagHighlighter } from "@lezer/highlight";
 
 /**
- * Nota's CodeMirror theme.
+ * Nota 的 CodeMirror 主题。
  *
- * All colors read from the app's `--n-*` custom properties, so the editor
- * follows the light/dark switch without a second theme definition.
+ * 两层结构：
+ *  - 基础层（本文件前半）：编辑器外壳、光标、选区、gutter、搜索面板、补全气泡；
+ *  - 表现层（本文件后半，配合 live-preview.ts 的装饰器）：标题层级、行内标记淡化、
+ *    代码块贴边圆角、引用竖线、列表标记、任务状态。
+ *
+ * 颜色一律读 `--n-*` 自定义属性，所以深浅主题共用这一份定义。
  */
 
 export const notaTheme = EditorView.theme({
@@ -16,60 +20,72 @@ export const notaTheme = EditorView.theme({
     color: "var(--n-fg)",
     fontSize: "var(--n-fs-body)",
   },
-  /*
-   * 让「行号 + 正文」这一整对居中：
-   * 做法是给 scroller 一个左右对称的 padding，左右各留出
-   * (容器宽 - 正文列宽) / 2 的空白，正文列本身则撑满剩余宽度。
-   * 比单独给 .cm-content 加 margin:0 auto 可靠——gutter 与正文不会脱节。
-   */
+
+  /* ── 滚动与居中 ──
+     行号 gutter 与正文 content 是 scroller 下的并列 flex 子节点，
+     所以居中的责任在 scroller 上：左右各留出 (容器 - 正文列) / 2。 */
   ".cm-scroller": {
     fontFamily: "var(--n-font-mono)",
     lineHeight: "var(--n-lh)",
     overflowY: "auto",
     overflowX: "hidden",
-    paddingTop: "20px",
+    paddingTop: "24px",
     paddingBottom: "42vh",
     paddingInline: "max(20px, calc((100% - var(--n-measure)) / 2))",
   },
-  /*
-   * 正文列撑满 scroller 的可用宽度，不再自己居中。
-   */
   ".cm-content": {
     padding: "0",
     caretColor: "var(--n-accent)",
     minWidth: "0",
   },
   "&.cm-focused": { outline: "none" },
-  ".cm-line": { padding: "0 16px" },
+  ".cm-line": { padding: "0 18px" },
 
-  /*
-   * 行号 gutter 是 scroller 里的 flex 兄弟节点，位置由上面的
-   * scroller padding 统一决定，这里只做视觉样式。
-   */
+  /* ── 行号 ── */
   ".cm-gutters": {
     backgroundColor: "transparent",
     color: "var(--n-fg-faint)",
     border: "none",
     fontSize: "12px",
-    paddingInlineEnd: "4px",
+    paddingInlineEnd: "6px",
   },
-  ".cm-lineNumbers .cm-gutterElement": { padding: "0 6px 0 12px" },
+  ".cm-lineNumbers .cm-gutterElement": {
+    padding: "0 8px 0 12px",
+    minWidth: "34px",
+  },
   ".cm-activeLineGutter": {
     backgroundColor: "transparent",
     color: "var(--n-fg-dim)",
   },
   ".cm-activeLine": { backgroundColor: "var(--n-active-line)" },
+  /* 折叠箭头平时隐形，hover 才出现——安静，不干扰写作 */
+  ".cm-foldGutter .cm-gutterElement": {
+    color: "var(--n-fg-faint)",
+    opacity: 0,
+    transition: "opacity var(--n-dur) var(--n-ease)",
+  },
+  ".cm-editor:hover .cm-foldGutter .cm-gutterElement": { opacity: 1 },
+
+  /* ── 光标与选区 ── */
   ".cm-cursor, .cm-dropCursor": {
     borderLeftColor: "var(--n-accent)",
     borderLeftWidth: "2px",
+    borderRadius: "1px",
   },
   "&.cm-focused .cm-selectionBackground, .cm-selectionBackground, .cm-content ::selection": {
     backgroundColor: "var(--n-selection)",
   },
-  ".cm-selectionMatch": { backgroundColor: "var(--n-selection)" },
+  ".cm-selectionMatch": {
+    backgroundColor: "var(--n-selection)",
+    borderRadius: "2px",
+  },
   ".cm-matchingBracket, &.cm-focused .cm-matchingBracket": {
     backgroundColor: "var(--n-selection)",
     outline: "1px solid var(--n-line-strong)",
+  },
+  ".cm-placeholder": {
+    color: "var(--n-fg-faint)",
+    fontStyle: "normal",
   },
   ".cm-foldPlaceholder": {
     backgroundColor: "var(--n-surface)",
@@ -78,51 +94,300 @@ export const notaTheme = EditorView.theme({
     borderRadius: "4px",
     padding: "0 6px",
   },
-  ".cm-tooltip": {
-    backgroundColor: "var(--n-raised)",
-    border: "1px solid var(--n-line)",
-    borderRadius: "8px",
-    boxShadow: "var(--n-shadow)",
-  },
-  ".cm-tooltip-autocomplete ul li[aria-selected]": {
-    backgroundColor: "var(--n-accent-soft)",
-    color: "var(--n-fg)",
-  },
-  ".cm-md-codeblock": { backgroundColor: "var(--n-code-bg)" },
+
+  /* ── 搜索面板 ── */
   ".cm-panels": {
     backgroundColor: "var(--n-surface)",
     borderColor: "var(--n-line)",
     color: "var(--n-fg)",
   },
+  ".cm-panels.cm-panels-top": { borderBottom: "1px solid var(--n-line)" },
+  ".cm-panel input, .cm-panel button": {
+    fontFamily: "var(--n-font-ui)",
+    fontSize: "12.5px",
+    background: "var(--n-raised)",
+    color: "var(--n-fg)",
+    border: "1px solid var(--n-line)",
+    borderRadius: "var(--n-r-sm)",
+    padding: "2px 6px",
+  },
+  ".cm-panel button:hover": { background: "var(--n-accent-soft)" },
+  ".cm-searchMatch": {
+    backgroundColor: "var(--n-accent-soft)",
+    outline: "1px solid var(--n-accent)",
+  },
+  ".cm-searchMatch.cm-searchMatch-selected": {
+    backgroundColor: "var(--n-selection)",
+  },
+
+  /* ── 补全气泡 ── */
+  ".cm-tooltip": {
+    backgroundColor: "var(--n-raised)",
+    border: "1px solid var(--n-line)",
+    borderRadius: "var(--n-r-md)",
+    boxShadow: "var(--n-shadow-lg)",
+    overflow: "hidden",
+  },
+  ".cm-tooltip.cm-tooltip-autocomplete > ul": {
+    maxHeight: "15em",
+    fontFamily: "var(--n-font-ui)",
+    fontSize: "12.5px",
+  },
+  ".cm-tooltip.cm-tooltip-autocomplete > ul > li": {
+    padding: "5px 10px",
+    color: "var(--n-fg-dim)",
+  },
+  ".cm-tooltip-autocomplete ul li[aria-selected]": {
+    backgroundColor: "var(--n-accent-soft)",
+    color: "var(--n-fg)",
+  },
+  ".cm-completionMatchedText": {
+    textDecoration: "none",
+    fontWeight: "600",
+    color: "var(--n-accent)",
+  },
+  ".cm-completionDetail": {
+    fontStyle: "normal",
+    fontSize: "11px",
+    color: "var(--n-fg-faint)",
+  },
+
+  /* ══════════════════════════════════════════
+     表现层：Markdown 语义（由 live-preview.ts 打 class）
+     这是「看起来像专业写作软件」的关键所在。
+     ══════════════════════════════════════════ */
+
+  /* ── 标题：源码里直接呈现层级 ──
+     字号用 em 放大后，行盒会被相邻行挤压，所以显式给足 line-height
+     与上下 margin，让大标题"呼吸"得开。 */
+  ".cm-md-h1": {
+    fontSize: "1.62em",
+    fontWeight: "700",
+    lineHeight: "1.5",
+    letterSpacing: "-0.02em",
+    paddingTop: "0.28em",
+    paddingBottom: "0.12em",
+  },
+  ".cm-md-h2": {
+    fontSize: "1.34em",
+    fontWeight: "700",
+    lineHeight: "1.48",
+    letterSpacing: "-0.015em",
+    paddingTop: "0.26em",
+    paddingBottom: "0.08em",
+  },
+  ".cm-md-h3": {
+    fontSize: "1.16em",
+    fontWeight: "650",
+    lineHeight: "1.46",
+    paddingTop: "0.22em",
+    paddingBottom: "0.06em",
+  },
+  ".cm-md-h4": {
+    fontSize: "1.04em",
+    fontWeight: "650",
+    lineHeight: "1.44",
+    paddingTop: "0.18em",
+  },
+  ".cm-md-h5": {
+    fontSize: "0.96em",
+    fontWeight: "650",
+    color: "var(--n-fg-dim)",
+  },
+  ".cm-md-h6": {
+    fontSize: "0.92em",
+    fontWeight: "650",
+    color: "var(--n-fg-faint)",
+  },
+
+  /* 首行标题不需要额外的顶部内边距 */
+  ".cm-line:first-child.cm-md-h1, .cm-line:first-child.cm-md-h2, .cm-line:first-child.cm-md-h3": {
+    paddingTop: "0",
+  },
+
+  /* ── 标记淡化：让符号退成注脚，正文成为主体 ── */
+  ".cm-md-marker": {
+    color: "var(--n-fg-faint)",
+    fontWeight: "400",
+    opacity: "0.55",
+  },
+  ".cm-md-marker-list": {
+    color: "var(--n-accent)",
+    opacity: "0.8",
+  },
+  /* 光标所在行，标记恢复清晰——正在编辑时不该"看不清自己写了什么" */
+  "&.cm-focused .cm-activeLine .cm-md-marker": {
+    color: "var(--n-fg-dim)",
+    opacity: "0.85",
+  },
+
+  /* ── 行内语义 ── */
+  ".cm-md-strong": { fontWeight: "700", color: "var(--n-fg)" },
+  ".cm-md-em": { fontStyle: "italic", color: "var(--n-fg)" },
+  ".cm-md-strike": {
+    textDecoration: "line-through",
+    textDecorationColor: "var(--n-fg-faint)",
+    color: "var(--n-fg-dim)",
+  },
+  ".cm-md-inline-code": {
+    fontFamily: "var(--n-font-mono)",
+    fontSize: "0.9em",
+    color: "var(--n-code-fg)",
+    backgroundColor: "var(--n-code-bg)",
+    borderRadius: "4px",
+    /* 行内标记不能用 padding 撑留白（会被 CM 裁掉），改用同色 border 当内边距。
+       注意不能用 em：em 以自身缩小后的 fontSize 为基准，会算出很小的一圈。
+       纵向再压一点，避免药丸比行高还厚。 */
+    borderWidth: "1px 5px",
+    borderStyle: "solid",
+    borderColor: "var(--n-code-bg)",
+    boxDecorationBreak: "clone",
+  },
+  ".cm-md-link": { color: "var(--n-accent)" },
+  ".cm-md-url": {
+    color: "var(--n-fg-dim)",
+    textDecoration: "underline",
+    textDecorationColor: "var(--n-line-strong)",
+  },
+
+  /* ── 引用块：整行左侧竖线 + 灰字斜体 ── */
+  ".cm-md-quote-line": {
+    position: "relative",
+    backgroundColor: "var(--n-accent-soft)",
+    borderRadius: "0 4px 4px 0",
+    color: "var(--n-fg-dim)",
+    fontStyle: "italic",
+  },
+  /* 竖线用伪元素画，才能贴住整行高度，且不被 .cm-line 的 padding 推走 */
+  ".cm-md-quote-line::before": {
+    content: '""',
+    position: "absolute",
+    left: "6px",
+    top: "0",
+    bottom: "0",
+    width: "3px",
+    borderRadius: "2px",
+    backgroundColor: "var(--n-accent)",
+    opacity: "0.55",
+    pointerEvents: "none",
+  },
+
+  /* ── 分隔线：弱化的记号 ── */
+  ".cm-md-hr": { color: "var(--n-fg-faint)", letterSpacing: "0.1em" },
+
+  /* ── 任务列表 ── */
+  ".cm-md-task-todo": { color: "var(--n-accent)", fontWeight: "600" },
+  ".cm-md-task-done": {
+    color: "var(--n-fg-faint)",
+    textDecoration: "line-through",
+    textDecorationColor: "var(--n-fg-faint)",
+  },
+
+  /* ── 代码块：整块贴边底色，首尾圆角，形成一张"卡片" ──
+     .cm-md-codeblock 由 code-languages.ts 给块内每一行打上；
+     .cm-md-codeblock-open / -close 由 live-preview.ts 给首尾行补圆角。 */
+  ".cm-md-codeblock": {
+    backgroundColor: "var(--n-code-bg)",
+    fontFamily: "var(--n-font-mono)",
+    fontSize: "0.92em",
+    lineHeight: "1.6",
+    /* 负向外扩，让底色盖住 .cm-line 的左右内边距，代码块才不会比正文窄一圈 */
+    marginInline: "-6px",
+    paddingInline: "6px",
+  },
+  /* 首行：上边框 + 上圆角。用 ::before 画边框，避免和中间行的规则互相覆盖 */
+  ".cm-md-codeblock-open": {
+    borderTopLeftRadius: "var(--n-r-md)",
+    borderTopRightRadius: "var(--n-r-md)",
+    boxShadow: "inset 0 1px var(--n-line)",
+    paddingTop: "7px",
+  },
+  /* 末行：下边框 + 下圆角 */
+  ".cm-md-codeblock-close": {
+    borderBottomLeftRadius: "var(--n-r-md)",
+    borderBottomRightRadius: "var(--n-r-md)",
+    boxShadow: "inset 0 -1px var(--n-line)",
+    paddingBottom: "7px",
+  },
+  /* 首末同一行（单行代码块）：四角都圆、上下都有边框 */
+  ".cm-md-codeblock-open.cm-md-codeblock-close": {
+    boxShadow: "inset 0 1px var(--n-line), inset 0 -1px var(--n-line)",
+    paddingTop: "7px",
+    paddingBottom: "7px",
+  },
+  /* 左右两侧的竖边框，由每行自己画一半再拼起来，这样多行不会断 */
+  ".cm-md-codeblock-open, .cm-md-codeblock-close, .cm-md-codeblock": {
+    position: "relative",
+  },
+  ".cm-md-codeblock::after": {
+    content: '""',
+    position: "absolute",
+    inset: "0",
+    borderLeft: "1px solid var(--n-line)",
+    borderRight: "1px solid var(--n-line)",
+    pointerEvents: "none",
+  },
 });
 
 /**
- * Markdown syntax highlighting. The palette leans on one accent hue with
- * weight/opacity variation, so long documents stay calm to read.
+ * Markdown 与代码的语法高亮。
+ *
+ * 正文用一套克制的单色调，代码块内部才上彩色 token——
+ * 这样一篇长文里，注意力始终在结构上，不在颜色上。
  */
 export const notaHighlight = HighlightStyle.define([
-  { tag: t.heading1, fontSize: "1.6em", fontWeight: "700", color: "var(--n-fg)" },
-  { tag: t.heading2, fontSize: "1.35em", fontWeight: "700", color: "var(--n-fg)" },
-  { tag: t.heading3, fontSize: "1.18em", fontWeight: "600", color: "var(--n-fg)" },
-  { tag: [t.heading4, t.heading5, t.heading6], fontWeight: "600", color: "var(--n-fg)" },
+  // Markdown 结构
+  { tag: t.heading1, fontWeight: "700", color: "var(--n-fg)" },
+  { tag: t.heading2, fontWeight: "700", color: "var(--n-fg)" },
+  { tag: [t.heading3, t.heading4, t.heading5, t.heading6], fontWeight: "650", color: "var(--n-fg)" },
   { tag: t.strong, fontWeight: "700", color: "var(--n-fg)" },
   { tag: t.emphasis, fontStyle: "italic" },
   { tag: t.strikethrough, textDecoration: "line-through", color: "var(--n-fg-dim)" },
-  { tag: t.link, color: "var(--n-accent)", textDecoration: "underline" },
+  { tag: t.link, color: "var(--n-accent)" },
   { tag: t.url, color: "var(--n-fg-dim)" },
   { tag: [t.monospace, t.special(t.string)], color: "var(--n-code-fg)" },
   { tag: t.quote, color: "var(--n-fg-dim)", fontStyle: "italic" },
-  { tag: t.list, color: "var(--n-accent)" },
+  { tag: t.list, color: "var(--n-fg)" },
   { tag: t.contentSeparator, color: "var(--n-line-strong)" },
   { tag: [t.meta, t.processingInstruction], color: "var(--n-fg-faint)" },
   { tag: t.comment, color: "var(--n-fg-faint)", fontStyle: "italic" },
-  { tag: [t.keyword, t.operatorKeyword], color: "var(--n-code-keyword)" },
-  { tag: [t.string, t.special(t.brace)], color: "var(--n-code-string)" },
-  { tag: [t.number, t.bool, t.null], color: "var(--n-code-number)" },
+
+  // 代码 token
+  { tag: [t.keyword, t.operatorKeyword, t.modifier], color: "var(--n-code-keyword)" },
+  { tag: [t.string, t.special(t.brace), t.regexp], color: "var(--n-code-string)" },
+  { tag: [t.number, t.bool, t.null, t.atom], color: "var(--n-code-number)" },
   { tag: [t.function(t.variableName), t.labelName], color: "var(--n-code-func)" },
   { tag: [t.typeName, t.className, t.namespace], color: "var(--n-code-type)" },
+  { tag: t.definition(t.variableName), color: "var(--n-code-func)" },
   { tag: t.propertyName, color: "var(--n-fg)" },
-  { tag: t.invalid, color: "var(--n-danger)" },
+  { tag: t.operator, color: "var(--n-code-keyword)" },
+  { tag: [t.punctuation, t.bracket], color: "var(--n-fg-dim)" },
+  { tag: t.variableName, color: "var(--n-fg)" },
+  { tag: t.invalid, color: "var(--n-danger)", textDecoration: "underline wavy var(--n-danger)" },
 ]);
 
 export const notaThemeExtensions = [notaTheme, syntaxHighlighting(notaHighlight)];
+
+/**
+ * 同一套配色，但产出 class 而不是内联样式。
+ *
+ * 预览区是静态 HTML，没法走 HighlightStyle，只能自己拼 class；
+ * 用同一张「标签 → 颜色」表生成，编辑区和预览区才不会走色。
+ * 颜色值统一在 `.cm-hl-*` 这些 class 里定义，见 styles/tokens.css。
+ */
+export const notaHighlightClass = tagHighlighter([
+  { tag: [t.keyword, t.operatorKeyword, t.modifier], class: "cm-hl-keyword" },
+  { tag: [t.string, t.special(t.brace), t.regexp], class: "cm-hl-string" },
+  { tag: [t.number, t.bool, t.null, t.atom], class: "cm-hl-number" },
+  {
+    tag: [t.function(t.variableName), t.labelName, t.definition(t.variableName)],
+    class: "cm-hl-func",
+  },
+  { tag: [t.typeName, t.className, t.namespace], class: "cm-hl-type" },
+  { tag: t.propertyName, class: "cm-hl-prop" },
+  { tag: t.operator, class: "cm-hl-operator" },
+  { tag: [t.punctuation, t.bracket], class: "cm-hl-punct" },
+  { tag: t.variableName, class: "cm-hl-var" },
+  { tag: t.comment, class: "cm-hl-comment" },
+  { tag: t.invalid, class: "cm-hl-invalid" },
+]);

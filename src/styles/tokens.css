@@ -150,3 +150,22 @@ textarea {
 ::-webkit-scrollbar-track {
   background: transparent;
 }
+
+/* ── 代码高亮 class ──
+   编辑区走 CodeMirror 的 HighlightStyle（内联样式）；
+   预览区是静态 HTML，只能挂 class。两者共用上面这套 --n-code-* 变量，
+   保证同一个代码块在编辑和预览里颜色一致。 */
+.cm-hl-keyword { color: var(--n-code-keyword); }
+.cm-hl-string { color: var(--n-code-string); }
+.cm-hl-number { color: var(--n-code-number); }
+.cm-hl-func { color: var(--n-code-func); }
+.cm-hl-type { color: var(--n-code-type); }
+.cm-hl-prop { color: var(--n-fg); }
+.cm-hl-operator { color: var(--n-code-keyword); }
+.cm-hl-punct { color: var(--n-fg-dim); }
+.cm-hl-var { color: var(--n-fg); }
+.cm-hl-comment { color: var(--n-fg-faint); font-style: italic; }
+.cm-hl-invalid {
+  color: var(--n-danger);
+  text-decoration: underline wavy var(--n-danger);
+}

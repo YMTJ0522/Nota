@@ -8,6 +8,7 @@ import { notaThemeExtensions } from '@/editor/theme'
 import { countWords, formatWordCount } from '@/editor/word-count'
 import { createSlashCommandsExtension } from '@/editor/slash-commands'
 import type { SlashMenuRenderState, SlashCommandId } from '@/editor/slash-commands'
+import { highlightCode, langFromClass } from '@/editor/highlight-code'
 import Toolbar from '@/components/Toolbar.vue'
 import SlashMenu from '@/components/SlashMenu.vue'
 import {
@@ -55,7 +56,41 @@ async function render() {
     markedMod = await import('marked')
     markedMod.marked.setOptions({ gfm: true, breaks: true })
   }
-  html.value = markedMod.marked.parse(state.draft, { async: false }) as string
+  const raw = markedMod.marked.parse(state.draft, { async: false }) as string
+  html.value = await highlightFences(raw)
+}
+
+/**
+ * 给 marked 产出的代码块补高亮。
+ *
+ * marked 只输出 `<pre><code class="language-js">原文</code></pre>`，
+ * 没有 token 信息；这里把它换成带 class 的 span，颜色和编辑区同源。
+ * 语言没写、或写了不认识的语言，就保持原样——不猜、不报错。
+ */
+async function highlightFences(source: string): Promise<string> {
+  const blocks = [...source.matchAll(/<pre><code([^>]*)>([\s\S]*?)<\/code><\/pre>/g)]
+  if (blocks.length === 0) return source
+
+  const rendered = await Promise.all(
+    blocks.map(async (m) => {
+      const lang = langFromClass(m[1])
+      const code = m[2]
+        .replace(/&lt;/g, '<')
+        .replace(/&gt;/g, '>')
+        .replace(/&quot;/g, '"')
+        .replace(/&#39;/g, "'")
+        .replace(/&amp;/g, '&')
+      const inner = await highlightCode(code, lang)
+      const cls = lang ? ` class="language-${lang}"` : ''
+      return `<pre><code${cls}>${inner}</code></pre>`
+    }),
+  )
+
+  let i = 0
+  return source.replace(
+    /<pre><code([^>]*)>[\s\S]*?<\/code><\/pre>/g,
+    () => rendered[i++],
+  )
 }
 
 /* ── 自动保存 ── */
@@ -323,19 +358,34 @@ defineExpose({ getView: () => view })
 .preview :deep(h1),
 .preview :deep(h2),
 .preview :deep(h3),
-.preview :deep(h4) {
-  line-height: 1.35;
-  margin: 1.6em 0 0.6em;
-  font-weight: 600;
+.preview :deep(h4),
+.preview :deep(h5),
+.preview :deep(h6) {
+  line-height: 1.34;
+  margin: 1.5em 0 0.5em;
+  font-weight: 700;
+  letter-spacing: -0.015em;
 }
 .preview :deep(h1) {
-  font-size: 1.7em;
+  font-size: 1.62em;
   margin-top: 0;
 }
 .preview :deep(h2) {
-  font-size: 1.35em;
-  padding-bottom: 0.3em;
-  border-bottom: 1px solid var(--n-line);
+  font-size: 1.34em;
+}
+.preview :deep(h3) {
+  font-size: 1.16em;
+}
+.preview :deep(h4) {
+  font-size: 1.04em;
+}
+.preview :deep(h5) {
+  font-size: 0.96em;
+  color: var(--n-fg-dim);
+}
+.preview :deep(h6) {
+  font-size: 0.92em;
+  color: var(--n-fg-faint);
 }
 .preview :deep(h3) {
   font-size: 1.15em;
@@ -349,26 +399,32 @@ defineExpose({ getView: () => view })
 }
 .preview :deep(code) {
   font-family: var(--n-font-mono);
-  font-size: 0.88em;
+  font-size: 0.9em;
   padding: 0.15em 0.4em;
   border-radius: 4px;
-  background: var(--n-surface);
+  color: var(--n-code-fg);
+  background: var(--n-code-bg);
 }
 .preview :deep(pre) {
-  padding: 14px 16px;
+  padding: 12px 16px;
   border-radius: var(--n-r-md);
-  background: var(--n-surface);
+  background: var(--n-code-bg);
+  border: 1px solid var(--n-line);
   overflow-x: auto;
 }
 .preview :deep(pre code) {
   padding: 0;
   background: none;
+  color: inherit;
 }
 .preview :deep(blockquote) {
   margin: 1em 0;
-  padding: 0.2em 0 0.2em 1em;
-  border-left: 3px solid var(--n-accent-soft);
+  padding: 0.45em 0 0.45em 14px;
+  border-left: 3px solid var(--n-accent);
+  border-radius: 0 4px 4px 0;
+  background: var(--n-accent-soft);
   color: var(--n-fg-dim);
+  font-style: italic;
 }
 .preview :deep(ul),
 .preview :deep(ol) {
