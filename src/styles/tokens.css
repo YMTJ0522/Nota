@@ -27,11 +27,28 @@
   --n-on-accent: #ffffff;
   --n-danger: #c0503f;
 
+  /* 编辑器专用 */
+  --n-selection: rgba(63, 111, 90, 0.18);
+  --n-active-line: rgba(63, 111, 90, 0.05);
+  --n-code-bg: #f1efe9;
+  --n-code-fg: #7a4a2b;
+  --n-code-keyword: #8a4b8f;
+  --n-code-string: #3f6f5a;
+  --n-code-number: #a05c22;
+  --n-code-func: #2f5e8c;
+  --n-code-type: #7a5a1e;
+
   /* 排版 */
   --n-font-ui: "Inter", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
   --n-font-mono: "Cascadia Code", "SFMono-Regular", Consolas, monospace;
   --n-fs-body: 15px;
   --n-lh: 1.75;
+  /* 正文栏宽：长文档可读性上限 */
+  --n-measure: 720px;
+
+  /* 阴影 */
+  --n-shadow: 0 6px 24px rgba(30, 28, 24, 0.1);
+  --n-shadow-lg: 0 18px 48px rgba(30, 28, 24, 0.16);
 
   /* 圆角 */
   --n-r-sm: 5px;
@@ -63,6 +80,19 @@
   /* 深色下强调色偏亮，文字改用深色才够对比 */
   --n-on-accent: #10160f;
   --n-danger: #e07a68;
+
+  --n-selection: rgba(111, 174, 143, 0.24);
+  --n-active-line: rgba(111, 174, 143, 0.06);
+  --n-code-bg: #191a1e;
+  --n-code-fg: #e0b48c;
+  --n-code-keyword: #c9a0dc;
+  --n-code-string: #8fcfa8;
+  --n-code-number: #e8b57f;
+  --n-code-func: #8bb8e0;
+  --n-code-type: #d9c07a;
+
+  --n-shadow: 0 6px 24px rgba(0, 0, 0, 0.4);
+  --n-shadow-lg: 0 18px 48px rgba(0, 0, 0, 0.55);
 }
 
 * {

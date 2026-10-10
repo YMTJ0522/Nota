@@ -1,112 +1,202 @@
 <script setup lang="ts">
-import { ref, onMounted, onBeforeUnmount, watch } from 'vue'
+import { ref, onMounted, onBeforeUnmount, watch, nextTick, computed } from 'vue'
+import { EditorState } from '@codemirror/state'
+import { EditorView } from '@codemirror/view'
 import { store } from '@/store'
-import { marked } from 'marked'
+import { baseExtensions } from '@/editor/setup'
+import { notaThemeExtensions } from '@/editor/theme'
+import { countWords, formatWordCount } from '@/editor/word-count'
+import { createSlashCommandsExtension } from '@/editor/slash-commands'
+import type { SlashMenuRenderState, SlashCommandId } from '@/editor/slash-commands'
+import Toolbar from '@/components/Toolbar.vue'
+import SlashMenu from '@/components/SlashMenu.vue'
+import {
+  toolbarInline,
+  toolbarBlockPrefix,
+  toolbarHeading,
+  toolbarCodeBlock,
+  toolbarTable,
+  toolbarMermaid,
+  toolbarFrontMatter,
+  toolbarHorizontalRule,
+  toolbarMathBlock,
+} from '@/editor/toolbar-commands'
 
 const { state } = store
 
-const editor = ref<HTMLTextAreaElement | null>(null)
+const host = ref<HTMLDivElement | null>(null)
 const mode = ref<'write' | 'read'>('write')
 const html = ref('')
+const slash = ref<SlashMenuRenderState | null>(null)
 
-marked.setOptions({ gfm: true, breaks: true })
+let view: EditorView | null = null
+let timer: ReturnType<typeof setTimeout> | null = null
+/** 防止把程序化写入回灌成用户输入 */
+let syncing = false
 
-function render() {
-  html.value = marked.parse(state.draft, { async: false }) as string
+/** 字数统计直接从 draft 派生，避免手动同步漏更新 */
+const statText = computed(() => formatWordCount(countWords(state.draft)))
+
+/** 预览（阅读模式） */
+let markedMod: typeof import('marked') | null = null
+async function render() {
+  if (!markedMod) {
+    markedMod = await import('marked')
+    markedMod.marked.setOptions({ gfm: true, breaks: true })
+  }
+  html.value = markedMod.marked.parse(state.draft, { async: false }) as string
 }
 
-watch(
-  () => state.draft,
-  () => {
-    render()
-    // 输入即自动存（防抖 600ms）
-    scheduleSave()
-  },
-  { immediate: true }
-)
-
-let timer: ReturnType<typeof setTimeout> | null = null
+/* ── 自动保存 ── */
 function scheduleSave() {
   if (timer) clearTimeout(timer)
-  timer = setTimeout(() => {
-    store.saveNote()
-  }, 600)
+  timer = setTimeout(() => store.saveNote(), 600)
 }
 
-function onInput(e: Event) {
-  state.draft = (e.target as HTMLTextAreaElement).value
+/* ── 斜杠命令 → 具体动作 ── */
+function runSlashFormat(id: SlashCommandId, v: EditorView) {
+  switch (id) {
+    case 'heading1': toolbarHeading(v, 1); break
+    case 'heading2': toolbarHeading(v, 2); break
+    case 'heading3': toolbarHeading(v, 3); break
+    case 'bold': toolbarInline(v, 'bold'); break
+    case 'italic': toolbarInline(v, 'italic'); break
+    case 'bulletList': toolbarBlockPrefix(v, 'bullet'); break
+    case 'numberedList': toolbarBlockPrefix(v, 'ordered'); break
+    case 'taskList': toolbarBlockPrefix(v, 'task'); break
+    case 'quote': toolbarBlockPrefix(v, 'quote'); break
+    case 'codeBlock': toolbarCodeBlock(v); break
+    case 'table': toolbarTable(v, '| 列 1 | 列 2 | 列 3 |'); break
+    case 'divider': toolbarHorizontalRule(v); break
+    default: break
+  }
 }
 
-/** Tab 插入两个空格，而不是切换焦点 */
-function onTab(e: KeyboardEvent) {
-  e.preventDefault()
-  const el = e.target as HTMLTextAreaElement
-  const { selectionStart: s, selectionEnd: en, value } = el
-  state.draft = value.slice(0, s) + '  ' + value.slice(en)
-  requestAnimationFrame(() => {
-    el.selectionStart = el.selectionEnd = s + 2
+async function runSlashAi(_id: SlashCommandId, _v: EditorView) {
+  // AI 能力属于后续里程碑，先在 UI 上给出明确反馈
+  window.dispatchEvent(new CustomEvent('nota:toast', { detail: 'AI 命令尚未接入，敬请期待' }))
+}
+
+/* ── 创建 / 销毁编辑器 ── */
+function createEditor() {
+  if (!host.value) return
+
+  const extensions = [
+    ...baseExtensions({
+      placeholder: '开始写点什么… / 唤出命令',
+      onDocChanged: (doc) => {
+        if (syncing) return
+        state.draft = doc
+        scheduleSave()
+      },
+    }),
+    ...notaThemeExtensions,
+    ...createSlashCommandsExtension({
+      onStateChange: (s) => { slash.value = s },
+      onExecuteFormat: runSlashFormat,
+      onExecuteAi: runSlashAi,
+    }),
+  ]
+
+  view = new EditorView({
+    state: EditorState.create({ doc: state.draft, extensions }),
+    parent: host.value,
   })
+
+  // 供自动化验证脚本访问（无副作用，不参与业务逻辑）
+  ;(window as unknown as { __notaView?: EditorView | null }).__notaView = view
 }
 
-/** 列表续行：回车自动补 - 或 1. */
-function onEnter(e: KeyboardEvent) {
-  const el = e.target as HTMLTextAreaElement
-  const { selectionStart: s, value } = el
-  const lineStart = value.lastIndexOf('\n', s - 1) + 1
-  const line = value.slice(lineStart, s)
-  const m = line.match(/^(\s*)([-*+]|\d+\.)\s+(.*)$/)
-  if (!m) return
-  if (m[3].trim() === '') return
-  e.preventDefault()
-  const bullet = /^\d+\.$/.test(m[2]) ? `${parseInt(m[2]) + 1}.` : m[2]
-  const insert = `\n${m[1]}${bullet} `
-  state.draft = value.slice(0, s) + insert + value.slice(el.selectionEnd)
-  requestAnimationFrame(() => {
-    el.selectionStart = el.selectionEnd = s + insert.length
+/** 外部改动了 draft（切笔记等），把内容灌进 CM */
+function pushDoc(text: string) {
+  if (!view) return
+  const current = view.state.doc.toString()
+  if (current === text) return
+  syncing = true
+  view.dispatch({
+    changes: { from: 0, to: current.length, insert: text },
+    selection: { anchor: 0 },
   })
+  syncing = false
 }
 
 onMounted(() => {
   render()
-  editor.value?.focus()
+  nextTick(() => {
+    createEditor()
+    // 笔记内容可能晚于组件挂载到达，这里补一次同步
+    pushDoc(state.draft)
+  })
 })
 
 onBeforeUnmount(() => {
   if (timer) clearTimeout(timer)
+  view?.destroy()
+  view = null
+  ;(window as unknown as { __notaView?: EditorView | null }).__notaView = null
 })
 
-// 切换笔记时把滚动位置归零
+// 切笔记：activePath 变化时把 draft 灌进 CM。
+// draft 的赋值发生在 openNote 的 await 之后，所以同时监听 draft，
+// 只要 CM 里的内容和 draft 不一致就同步（用户输入路径由 syncing 挡住）。
 watch(
   () => state.activePath,
-  () => {
-    if (editor.value) editor.value.scrollTop = 0
-    editor.value?.focus()
+  async () => {
+    render()
+    await nextTick()
+    pushDoc(state.draft)
+    view?.focus()
   }
 )
+
+// 阅读模式：销毁编辑器省内存；返回编辑模式再重建
+watch(mode, async (m) => {
+  if (m === 'read') {
+    view?.destroy()
+    view = null
+    await render()
+  } else {
+    await nextTick()
+    createEditor()
+    pushDoc(state.draft)
+  }
+})
+
+/** 工具栏调用入口：把 EditorView 暴露给子组件 */
+defineExpose({ getView: () => view })
 </script>
 
 <template>
   <div class="pane">
+    <Toolbar v-if="mode === 'write'" :get-view="() => view" />
+
     <div class="tabs">
       <button :class="{ on: mode === 'write' }" @click="mode = 'write'">编辑</button>
       <button :class="{ on: mode === 'read' }" @click="mode = 'read'">预览</button>
       <span class="spacer" />
-      <span class="stat">{{ state.draft.length }} 字</span>
+      <span class="stat">{{ statText }}</span>
     </div>
 
-    <textarea
-      v-if="mode === 'write'"
-      ref="editor"
-      class="editor"
-      :value="state.draft"
-      placeholder="开始写点什么…"
-      spellcheck="false"
-      @input="onInput"
-      @keydown.tab="onTab"
-      @keydown.enter="onEnter"
-    />
+    <div class="stage">
+      <div
+        v-show="mode === 'write'"
+        ref="host"
+        class="host"
+      />
+      <div v-if="mode === 'read'" class="preview" v-html="html" />
 
-    <div v-else class="preview" v-html="html" />
+      <SlashMenu
+        v-if="slash && mode === 'write'"
+        :state="slash"
+        @pick="(id: SlashCommandId) => {
+          const v = view
+          if (!v) return
+          // 菜单已由扩展关闭，这里只负责执行
+          if (id.startsWith('ai')) runSlashAi(id, v)
+          else runSlashFormat(id, v)
+        }"
+      />
+    </div>
   </div>
 </template>
 
@@ -120,7 +210,7 @@ watch(
 
 .tabs {
   flex: none;
-  height: 36px;
+  height: 32px;
   display: flex;
   align-items: center;
   gap: 2px;
@@ -129,7 +219,7 @@ watch(
 }
 
 .tabs button {
-  height: 24px;
+  height: 22px;
   padding: 0 10px;
   font-size: 12.5px;
   border-radius: var(--n-r-sm);
@@ -158,36 +248,33 @@ watch(
   font-variant-numeric: tabular-nums;
 }
 
-.editor {
+.stage {
+  position: relative;
   flex: 1;
-  width: 100%;
-  padding: 32px 48px;
-  border: none;
-  outline: none;
-  resize: none;
-  background: transparent;
-  font-family: var(--n-font-ui);
-  font-size: var(--n-fs-body);
-  line-height: var(--n-lh);
-  color: var(--n-fg);
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.host {
+  flex: 1;
+  min-height: 0;
   user-select: text;
-  overflow-y: auto;
-  caret-color: var(--n-accent);
+  overflow: hidden;
 }
 
-.editor::placeholder {
-  color: var(--n-fg-faint);
-}
-
+/* ── 预览排版 ── */
 .preview {
   flex: 1;
   padding: 32px 48px;
   overflow-y: auto;
   user-select: text;
   line-height: var(--n-lh);
+  max-width: calc(var(--n-measure) + 96px);
+  margin: 0 auto;
+  width: 100%;
 }
 
-/* ── 预览排版 ── */
 .preview :deep(h1),
 .preview :deep(h2),
 .preview :deep(h3),

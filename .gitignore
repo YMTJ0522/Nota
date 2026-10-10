@@ -6,3 +6,9 @@ release/
 *.log
 .DS_Store
 .vite/
+
+# 验证脚本产生的临时浏览器 profile
+.tmp-*
+
+# 验证脚本产出的中间截图（只保留 README 用的那两张）
+docs/probe-*.png
