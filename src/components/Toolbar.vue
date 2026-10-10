@@ -79,14 +79,30 @@ function onEsc(e: KeyboardEvent) {
   if (e.key === 'Escape') close()
 }
 
+/** 菜单打开时按左右方向键可在相邻下拉之间切换（和原生菜单栏行为一致） */
+function onArrow(e: KeyboardEvent) {
+  if (!openMenu.value) return
+  if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return
+  const ids: Exclude<MenuId, null>[] = [
+    'heading', 'reference', 'image', 'note', 'code', 'math', 'block',
+  ]
+  const at = ids.indexOf(openMenu.value)
+  if (at < 0) return
+  e.preventDefault()
+  const step = e.key === 'ArrowRight' ? 1 : -1
+  openMenu.value = ids[(at + step + ids.length) % ids.length]
+}
+
 onMounted(() => {
   document.addEventListener('pointerdown', onDocPointer)
   document.addEventListener('keydown', onEsc)
+  document.addEventListener('keydown', onArrow)
 })
 
 onBeforeUnmount(() => {
   document.removeEventListener('pointerdown', onDocPointer)
   document.removeEventListener('keydown', onEsc)
+  document.removeEventListener('keydown', onArrow)
 })
 
 /* ── 标题下拉：正文 + H1–H6 ── */
@@ -189,9 +205,14 @@ async function uploadImage() {
 
     <!-- 5. 链接 / 图片 / 笔记 -->
     <div class="tb-group tb-menu-wrap">
-      <button class="tb-btn" title="插入链接 (Ctrl+K)" @click="run((v) => toolbarLink(v))">
+      <button
+        class="tb-btn"
+        :class="{ on: openMenu === 'reference' }"
+        title="链接与引用"
+        @click="toggle('reference')"
+      >
         <svg viewBox="0 0 24 24"><path d="M10.6 13.4a1 1 0 0 1 0-1.4l1.4-1.4a1 1 0 0 1 1.4 1.4l-1.4 1.4a1 1 0 0 1-1.4 0M7.8 16.2a3 3 0 0 1 0-4.2l3-3a3 3 0 0 1 4.2 0l-1.4 1.4a1 1 0 0 0-1.4 0l-3 3a1 1 0 0 0 0 1.4 1 1 0 0 0 1.4 0l1-1 1.4 1.4-1 1a3 3 0 0 1-4.2 0m8.4-8.4a3 3 0 0 1 0 4.2l-3 3a3 3 0 0 1-4.2 0l1.4-1.4a1 1 0 0 0 1.4 0l3-3a1 1 0 0 0 0-1.4 1 1 0 0 0-1.4 0l-1 1-1.4-1.4 1-1a3 3 0 0 1 4.2 0"/></svg>
-        <svg class="caret" viewBox="0 0 24 24" @click.stop="toggle('reference')"><path d="m7 10 5 5 5-5z"/></svg>
+        <svg class="caret" viewBox="0 0 24 24"><path d="m7 10 5 5 5-5z"/></svg>
       </button>
       <div v-if="openMenu === 'reference'" class="tb-menu" style="min-width: 200px">
         <button class="tb-item" @click="pick((v) => toolbarLink(v))">
@@ -215,11 +236,16 @@ async function uploadImage() {
     </div>
 
     <div class="tb-group tb-menu-wrap">
-      <button class="tb-btn" title="插入图片" @click="uploadImage">
+      <button
+        class="tb-btn"
+        :class="{ on: openMenu === 'image' }"
+        title="插入图片"
+        @click="toggle('image')"
+      >
         <svg viewBox="0 0 24 24"><path d="M4 5h16v14H4zm2 2v7l3.2-3.2 2.6 2.6L14.4 10 18 13.6V7zm3 2.2a1.4 1.4 0 1 1 0 2.8 1.4 1.4 0 0 1 0-2.8"/></svg>
-        <svg class="caret" viewBox="0 0 24 24" @click.stop="toggle('image')"><path d="m7 10 5 5 5-5z"/></svg>
+        <svg class="caret" viewBox="0 0 24 24"><path d="m7 10 5 5 5-5z"/></svg>
       </button>
-      <div v-if="openMenu === 'image'" class="tb-menu" style="min-width: 176px">
+      <div v-if="openMenu === 'image'" class="tb-menu" style="min-width: 190px">
         <button class="tb-item" @click="uploadImage">
           <span>上传本地图片</span>
         </button>
@@ -261,9 +287,14 @@ async function uploadImage() {
 
     <!-- 6. 代码 / 表格 / 数学 / 块 -->
     <div class="tb-group tb-menu-wrap">
-      <button class="tb-btn" title="代码块" @click="run((v) => toolbarCodeBlock(v))">
+      <button
+        class="tb-btn"
+        :class="{ on: openMenu === 'code' }"
+        title="代码与图表"
+        @click="toggle('code')"
+      >
         <svg viewBox="0 0 24 24"><path d="M9.4 16.6 4.8 12l4.6-4.6 1.4 1.4L7.6 12l3.2 3.2zM14.6 7.4 19.2 12l-4.6 4.6-1.4-1.4L16.4 12l-3.2-3.2z"/></svg>
-        <svg class="caret" viewBox="0 0 24 24" @click.stop="toggle('code')"><path d="m7 10 5 5 5-5z"/></svg>
+        <svg class="caret" viewBox="0 0 24 24"><path d="m7 10 5 5 5-5z"/></svg>
       </button>
       <div v-if="openMenu === 'code'" class="tb-menu" style="min-width: 192px">
         <button class="tb-item" @click="pick((v) => toolbarCodeBlock(v))">
@@ -283,8 +314,13 @@ async function uploadImage() {
       <svg viewBox="0 0 24 24"><path d="M4 5h16v14H4zm2 2v3h5V7zm7 0v3h5V7zM6 12v3h5v-3zm7 0v3h5v-3z"/></svg>
     </button>
 
-    <div class="tb-group tb-menu-wrap">
-      <button class="tb-btn" title="数学公式" @click="toggle('math')">
+    <div class="tb-group tb-menu-wrap tb-menu-wrap--end">
+      <button
+        class="tb-btn"
+        :class="{ on: openMenu === 'math' }"
+        title="数学公式"
+        @click="toggle('math')"
+      >
         <svg viewBox="0 0 24 24"><path d="M8 5h8v2h-5.3l2 4.2L10 18h6v2H7v-1.6l3.4-7.1L7 5z"/></svg>
         <svg class="caret" viewBox="0 0 24 24"><path d="m7 10 5 5 5-5z"/></svg>
       </button>
@@ -298,7 +334,7 @@ async function uploadImage() {
       </div>
     </div>
 
-    <div class="tb-group tb-menu-wrap">
+    <div class="tb-group tb-menu-wrap tb-menu-wrap--end">
       <button
         class="tb-btn"
         :class="{ on: openMenu === 'block' }"
@@ -419,12 +455,23 @@ async function uploadImage() {
   left: 0;
   z-index: 40;
   min-width: 176px;
+  /* 下拉最多占窗口一半宽，防止菜单项长文本把菜单撑到窗外 */
+  max-width: 50vw;
   padding: 4px;
   background: var(--n-raised);
   border: 1px solid var(--n-line);
   border-radius: var(--n-r-md);
   box-shadow: var(--n-shadow-lg);
   animation: menu-in 120ms var(--n-ease);
+}
+
+/* 靠右的下拉改成右对齐，避免被窗口右边缘裁掉。
+   :has 判定「这个按钮是 .tb 里最后几个之一」不可靠，
+   改为按位置兜底：菜单用 right:0 会被左边缘裁，用 left:0 会被右裁，
+   所以给靠右的 wrap 加 .tb-menu-wrap--end 类，在模板里手动标注。 */
+.tb-menu-wrap--end > .tb-menu {
+  left: auto;
+  right: 0;
 }
 
 @keyframes menu-in {
