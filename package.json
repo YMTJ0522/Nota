@@ -1,0 +1,33 @@
+{
+  "name": "nota",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "A lightweight local-first Markdown note app.",
+  "main": "dist-electron/main.cjs",
+  "scripts": {
+    "dev": "vite",
+    "build:electron": "node build-electron.mjs",
+    "build": "vue-tsc -b && vite build && node build-electron.mjs",
+    "preview": "vite preview",
+    "typecheck": "vue-tsc --noEmit",
+    "pack": "npm run build && electron-builder"
+  },
+  "dependencies": {
+    "@tiptap/core": "^2.10.3",
+    "@tiptap/pm": "^2.10.3",
+    "@tiptap/starter-kit": "^2.10.3",
+    "@tiptap/extension-placeholder": "^2.10.3",
+    "marked": "^15.0.6",
+    "vue": "^3.5.13"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-vue": "^5.2.1",
+    "electron": "^33.3.1",
+    "electron-builder": "^25.1.8",
+    "esbuild": "^0.25.12",
+    "typescript": "~5.7.2",
+    "vite": "^6.0.7",
+    "vue-tsc": "^2.2.0"
+  }
+}

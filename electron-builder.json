@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json.schemastore.org/electron-builder.json",
+  "appId": "com.ymtj.nota",
+  "productName": "Nota",
+  "directories": {
+    "output": "release"
+  },
+  "files": ["dist/**/*", "dist-electron/**/*"],
+  "win": {
+    "target": ["nsis"],
+    "icon": "build/icon.ico"
+  },
+  "nsis": {
+    "oneClick": false,
+    "allowToChangeInstallationDirectory": true,
+    "createDesktopShortcut": true,
+    "shortcutName": "Nota"
+  },
+  "mac": {
+    "target": ["dmg"]
+  },
+  "linux": {
+    "target": ["AppImage"]
+  }
+}

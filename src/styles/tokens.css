@@ -1,0 +1,122 @@
+/* ─────────────────────────────────────────────
+   Nota 设计 token
+   命名前缀统一用 --n-，与任何外部项目无关
+   ───────────────────────────────────────────── */
+
+:root {
+  color-scheme: light;
+
+  /* 底色层 */
+  --n-bg: #faf9f6;
+  --n-surface: #f4f2ed;
+  --n-raised: #fffefc;
+
+  /* 描边 */
+  --n-line: #e6e2da;
+  --n-line-strong: #d5cfc4;
+
+  /* 文字 */
+  --n-fg: #2a2b28;
+  --n-fg-dim: #8b8880;
+  --n-fg-faint: #b3afa6;
+
+  /* 强调色：走墨绿，不走蓝，避免任何“通用后台蓝”的观感 */
+  --n-accent: #3f6f5a;
+  --n-accent-soft: #e4ede7;
+  /* 强调色之上的文字色（按钮/选中态用） */
+  --n-on-accent: #ffffff;
+  --n-danger: #c0503f;
+
+  /* 排版 */
+  --n-font-ui: "Inter", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+  --n-font-mono: "Cascadia Code", "SFMono-Regular", Consolas, monospace;
+  --n-fs-body: 15px;
+  --n-lh: 1.75;
+
+  /* 圆角 */
+  --n-r-sm: 5px;
+  --n-r-md: 8px;
+  --n-r-lg: 12px;
+
+  /* 动效 */
+  --n-dur: 150ms;
+  --n-ease: cubic-bezier(0.22, 1, 0.36, 1);
+
+  /* 尺寸 */
+  --n-titlebar: 40px;
+  --n-sidebar: 232px;
+}
+
+[data-theme='dark'] {
+  color-scheme: dark;
+
+  --n-bg: #16161a;
+  --n-surface: #1c1d21;
+  --n-raised: #24252a;
+  --n-line: #33343a;
+  --n-line-strong: #45464d;
+  --n-fg: #eeedea;
+  --n-fg-dim: #a3a19b;
+  --n-fg-faint: #6e6c67;
+  --n-accent: #6fae8f;
+  --n-accent-soft: #26332c;
+  /* 深色下强调色偏亮，文字改用深色才够对比 */
+  --n-on-accent: #10160f;
+  --n-danger: #e07a68;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: var(--n-font-ui);
+  font-size: var(--n-fs-body);
+  line-height: var(--n-lh);
+  color: var(--n-fg);
+  background: var(--n-bg);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  overflow: hidden;
+  user-select: none;
+}
+
+button {
+  font: inherit;
+  color: inherit;
+  border: none;
+  background: none;
+  cursor: pointer;
+}
+
+input,
+textarea {
+  font: inherit;
+  color: inherit;
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--n-line-strong);
+  border-radius: 6px;
+  border: 3px solid transparent;
+  background-clip: content-box;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--n-fg-faint);
+  background-clip: content-box;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}

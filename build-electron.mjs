@@ -1,0 +1,39 @@
+/**
+ * 用 esbuild 单独构建主进程与 preload，输出确定性的 CJS。
+ *
+ * 为什么不用 vite-plugin-electron：
+ *   该插件在 dev 模式下会覆盖 rollupOptions.output.format，强制输出 ESM，
+ *   导致 .cjs 文件里出现 import 语句而崩溃。在这里完全绕开它。
+ */
+import * as esbuild from 'esbuild'
+import { fileURLToPath } from 'node:url'
+import path from 'node:path'
+
+const root = path.dirname(fileURLToPath(import.meta.url))
+const watch = process.argv.includes('--watch')
+
+/** @type {import('esbuild').BuildOptions} */
+const common = {
+  bundle: true,
+  platform: 'node',
+  target: 'node20',
+  format: 'cjs',
+  sourcemap: false,
+  // electron 与 node 内置模块不打进产物
+  external: ['electron'],
+  logLevel: 'info',
+}
+
+const targets = [
+  { entryPoints: [path.join(root, 'electron/main.ts')], outfile: path.join(root, 'dist-electron/main.cjs') },
+  { entryPoints: [path.join(root, 'electron/preload.ts')], outfile: path.join(root, 'dist-electron/preload.cjs') },
+]
+
+if (watch) {
+  const ctxs = await Promise.all(targets.map((t) => esbuild.context({ ...common, ...t })))
+  await Promise.all(ctxs.map((c) => c.watch()))
+  console.log('[electron] watching main + preload ...')
+} else {
+  await Promise.all(targets.map((t) => esbuild.build({ ...common, ...t })))
+  console.log('[electron] build done')
+}
