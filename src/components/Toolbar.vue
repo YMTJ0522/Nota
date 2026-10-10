@@ -1,6 +1,32 @@
 <script setup lang="ts">
-import { ref, onMounted, onBeforeUnmount, computed } from 'vue'
+import { ref, onMounted, onBeforeUnmount } from 'vue'
 import type { EditorView } from '@codemirror/view'
+import {
+  /* 图标全部取自 Lucide（lucide-vue-next，ISC 许可）。
+     这里刻意不自己手画：Lucide 是 inkstone 工具栏图标的上游来源，
+     同源、同几何、同观感，但许可宽松（ISC + 部分 MIT），
+     只要求保留版权声明，不产生任何 copyleft 牵连。
+     inkstone 自身是 LGPL-3.0，其源码不能照抄——所以走「用它的上游」而不是「用它的代码」。 */
+  Search,
+  Heading,
+  Bold,
+  Italic,
+  Strikethrough,
+  Highlighter,
+  Code,
+  List,
+  ListOrdered,
+  ListTodo,
+  Quote,
+  Link2,
+  Image as ImageIcon,
+  FileText,
+  Braces,
+  Table,
+  Sigma,
+  Blocks,
+  ChevronDown,
+} from 'lucide-vue-next'
 import {
   toolbarInline,
   toolbarWrap,
@@ -28,6 +54,13 @@ import {
 
 const props = defineProps<{ getView: () => EditorView | null }>()
 const emit = defineEmits<{ (e: 'toast', text: string): void }>()
+
+/** Lucide 图标统一尺寸。inkstone 用 14，这里跟按钮 26px 的高度配 15 更稳，
+    视觉粗细与原来那套手绘图标接近，不会显得发飘。 */
+const ICON = 15
+/** Lucide 原生线宽是 2（24 视口）。缩到 15px 后按比例看略粗，
+    压到 1.75 更接近 inkstone 那种克制的细线。 */
+const STROKE = 1.75
 
 function v(): EditorView | null {
   return props.getView()
@@ -116,8 +149,8 @@ const headingItems = [
   { level: 6 as const, label: '六级标题', kbd: 'Ctrl+6' },
 ]
 
-/** 标题下拉按钮上显示当前档位（简单映射，非实时读光标） */
-const headingBadge = computed(() => 'H1')
+/** 标题下拉按钮上曾显示当前档位（H1 徽标），但换上 Lucide 的 Heading 图标后
+    两者语义重复，挤在一起反而看不清，已去掉徽标只留图标。 */
 
 /* ── 图片：本地上传走原生文件选择 ── */
 async function uploadImage() {
@@ -133,7 +166,7 @@ async function uploadImage() {
   <div class="tb">
     <!-- 1. 搜索 -->
     <button class="tb-btn" title="在本文中查找 (Ctrl+F)" @click="run((v) => toolbarFind(v))">
-      <svg viewBox="0 0 24 24"><path d="M10 4a6 6 0 1 1 0 12 6 6 0 0 1 0-12m0 2a4 4 0 1 0 0 8 4 4 0 0 0 0-8m4.6 9.2 1.4-1.4 4.3 4.3-1.4 1.4z"/></svg>
+      <Search :size="ICON" :stroke-width="STROKE" />
     </button>
 
     <span class="tb-sep" />
@@ -141,13 +174,13 @@ async function uploadImage() {
     <!-- 2. 标题 -->
     <div class="tb-group tb-menu-wrap">
       <button
-        class="tb-btn wide"
+        class="tb-btn"
         :class="{ on: openMenu === 'heading' }"
         title="标题级别"
         @click="toggle('heading')"
       >
-        <span>{{ headingBadge }}</span>
-        <svg class="caret" viewBox="0 0 24 24"><path d="m7 10 5 5 5-5z"/></svg>
+        <Heading :size="ICON" :stroke-width="STROKE" />
+        <ChevronDown class="caret" :size="10" :stroke-width="2" />
       </button>
       <div v-if="openMenu === 'heading'" class="tb-menu" style="min-width: 176px">
         <template v-for="(h, i) in headingItems" :key="h.level">
@@ -167,19 +200,19 @@ async function uploadImage() {
     <!-- 3. 行内格式 -->
     <div class="tb-group">
       <button class="tb-btn" title="加粗 (Ctrl+B)" @click="run((v) => toolbarInline(v, 'bold'))">
-        <svg viewBox="0 0 24 24"><path d="M7 5h6.2a3.4 3.4 0 0 1 .6 6.7A3.7 3.7 0 0 1 13.6 19H7zM10 7.6v3h2.9a1.5 1.5 0 0 0 0-3zm0 5.2v3.6h3.4a1.8 1.8 0 0 0 0-3.6z"/></svg>
+        <Bold :size="ICON" :stroke-width="STROKE" />
       </button>
       <button class="tb-btn" title="斜体 (Ctrl+I)" @click="run((v) => toolbarInline(v, 'italic'))">
-        <svg viewBox="0 0 24 24"><path d="M10 5h8v2h-2.9l-3 10H15v2H7v-2h2.9l3-10H10z"/></svg>
+        <Italic :size="ICON" :stroke-width="STROKE" />
       </button>
       <button class="tb-btn" title="删除线 (Ctrl+Shift+X)" @click="run((v) => toolbarInline(v, 'strikethrough'))">
-        <svg viewBox="0 0 24 24"><path d="M4 11h16v2H4zM7.5 8.2C7.5 6 9.4 5 11.7 5c1.7 0 3.2.5 4.2 1.4l-1.3 1.6c-.7-.6-1.7-1-2.9-1-1.3 0-2.1.5-2.1 1.4 0 .8.6 1.2 2 1.6H8.1c-.4-.4-.6-1-.6-1.8zm.3 6.3c0 1.6 1.3 2.5 3.3 2.5 1.6 0 3-.5 4-1.4l-1.2-1.6c-.7.6-1.7 1-2.7 1-1.1 0-1.8-.4-1.8-1.1 0-.3.1-.5.3-.7h-2c0 .4-.1.8-.1 1.3z"/></svg>
+        <Strikethrough :size="ICON" :stroke-width="STROKE" />
       </button>
       <button class="tb-btn" title="高亮 (Ctrl+Shift+H)" @click="run((v) => toolbarInline(v, 'highlight'))">
-        <svg viewBox="0 0 24 24"><path d="M6 14.5 11.5 9l3.5 3.5L9.5 18H6zM13 7.4l1.6-1.6a1.5 1.5 0 0 1 2.1 0l1.5 1.5a1.5 1.5 0 0 1 0 2.1L16.6 11zM4 20h11v2H4z"/></svg>
+        <Highlighter :size="ICON" :stroke-width="STROKE" />
       </button>
       <button class="tb-btn" title="行内代码 (Ctrl+E)" @click="run((v) => toolbarInlineCode(v))">
-        <svg viewBox="0 0 24 24"><path d="M9.4 16.6 4.8 12l4.6-4.6 1.4 1.4L7.6 12l3.2 3.2zM14.6 7.4 19.2 12l-4.6 4.6-1.4-1.4L16.4 12l-3.2-3.2z"/></svg>
+        <Code :size="ICON" :stroke-width="STROKE" />
       </button>
     </div>
 
@@ -188,16 +221,16 @@ async function uploadImage() {
     <!-- 4. 列表与引用 -->
     <div class="tb-group">
       <button class="tb-btn" title="无序列表 (Ctrl+Shift+8)" @click="run((v) => toolbarBlockPrefix(v, 'bullet'))">
-        <svg viewBox="0 0 24 24"><path d="M4 6h2v2H4zm4 0h12v2H8zM4 11h2v2H4zm4 0h12v2H8zM4 16h2v2H4zm4 0h12v2H8z"/></svg>
+        <List :size="ICON" :stroke-width="STROKE" />
       </button>
       <button class="tb-btn" title="有序列表 (Ctrl+Shift+7)" @click="run((v) => toolbarBlockPrefix(v, 'ordered'))">
-        <svg viewBox="0 0 24 24"><path d="M4 5h2v1.6H5.2v.9H6v1H4V7h.8v-.4H4zm0 5h1.6l-1.6 1.7v.8h2.2v-1H4.7l1.5-1.6V9H4zm0 5.2h1.7v.6H4v1h1.7v.6H4V19h2.2v-5H4zM8 6h12v2H8zm0 5h12v2H8zm0 5h12v2H8z"/></svg>
+        <ListOrdered :size="ICON" :stroke-width="STROKE" />
       </button>
       <button class="tb-btn" title="任务列表 (Ctrl+Shift+9)" @click="run((v) => toolbarBlockPrefix(v, 'task'))">
-        <svg viewBox="0 0 24 24"><path d="M4 5h4v4H4zm1.5 2.6 1 1 2-2 .9.9-2.9 2.9-1.9-1.9zM10 6h10v2H10zm-6 7h4v4H4zm1.5 2.6 1 1 2-2 .9.9-2.9 2.9-1.9-1.9zM10 13h10v2H10z"/></svg>
+        <ListTodo :size="ICON" :stroke-width="STROKE" />
       </button>
       <button class="tb-btn" title="引用块 (Ctrl+Shift+.)" @click="run((v) => toolbarBlockPrefix(v, 'quote'))">
-        <svg viewBox="0 0 24 24"><path d="M6 5c-1.7 0-3 1.3-3 3s1.3 3 3 3c0 2-1 3.2-2.6 4l.9 1.7C7.1 15.2 9 12.9 9 9.5V8c0-1.7-1.3-3-3-3m10 0c-1.7 0-3 1.3-3 3s1.3 3 3 3c0 2-1 3.2-2.6 4l.9 1.7C17.1 15.2 19 12.9 19 9.5V8c0-1.7-1.3-3-3-3"/></svg>
+        <Quote :size="ICON" :stroke-width="STROKE" />
       </button>
     </div>
 
@@ -211,8 +244,8 @@ async function uploadImage() {
         title="链接与引用"
         @click="toggle('reference')"
       >
-        <svg viewBox="0 0 24 24"><path d="M10.6 13.4a1 1 0 0 1 0-1.4l1.4-1.4a1 1 0 0 1 1.4 1.4l-1.4 1.4a1 1 0 0 1-1.4 0M7.8 16.2a3 3 0 0 1 0-4.2l3-3a3 3 0 0 1 4.2 0l-1.4 1.4a1 1 0 0 0-1.4 0l-3 3a1 1 0 0 0 0 1.4 1 1 0 0 0 1.4 0l1-1 1.4 1.4-1 1a3 3 0 0 1-4.2 0m8.4-8.4a3 3 0 0 1 0 4.2l-3 3a3 3 0 0 1-4.2 0l1.4-1.4a1 1 0 0 0 1.4 0l3-3a1 1 0 0 0 0-1.4 1 1 0 0 0-1.4 0l-1 1-1.4-1.4 1-1a3 3 0 0 1 4.2 0"/></svg>
-        <svg class="caret" viewBox="0 0 24 24"><path d="m7 10 5 5 5-5z"/></svg>
+        <Link2 :size="ICON" :stroke-width="STROKE" />
+        <ChevronDown class="caret" :size="10" :stroke-width="2" />
       </button>
       <div v-if="openMenu === 'reference'" class="tb-menu" style="min-width: 200px">
         <button class="tb-item" @click="pick((v) => toolbarLink(v))">
@@ -242,8 +275,8 @@ async function uploadImage() {
         title="插入图片"
         @click="toggle('image')"
       >
-        <svg viewBox="0 0 24 24"><path d="M4 5h16v14H4zm2 2v7l3.2-3.2 2.6 2.6L14.4 10 18 13.6V7zm3 2.2a1.4 1.4 0 1 1 0 2.8 1.4 1.4 0 0 1 0-2.8"/></svg>
-        <svg class="caret" viewBox="0 0 24 24"><path d="m7 10 5 5 5-5z"/></svg>
+        <ImageIcon :size="ICON" :stroke-width="STROKE" />
+        <ChevronDown class="caret" :size="10" :stroke-width="2" />
       </button>
       <div v-if="openMenu === 'image'" class="tb-menu" style="min-width: 190px">
         <button class="tb-item" @click="uploadImage">
@@ -262,8 +295,8 @@ async function uploadImage() {
         title="笔记工具"
         @click="toggle('note')"
       >
-        <svg viewBox="0 0 24 24"><path d="M6 3h8l4 4v14H6zm7 1.5V8h3.5zM8 11h8v1.6H8zm0 3.2h8v1.6H8zm0 3.2h5v1.6H8z"/></svg>
-        <svg class="caret" viewBox="0 0 24 24"><path d="m7 10 5 5 5-5z"/></svg>
+        <FileText :size="ICON" :stroke-width="STROKE" />
+        <ChevronDown class="caret" :size="10" :stroke-width="2" />
       </button>
       <div v-if="openMenu === 'note'" class="tb-menu" style="min-width: 224px">
         <button class="tb-item" @click="pick((v) => toolbarTag(v))">
@@ -293,8 +326,8 @@ async function uploadImage() {
         title="代码与图表"
         @click="toggle('code')"
       >
-        <svg viewBox="0 0 24 24"><path d="M9.4 16.6 4.8 12l4.6-4.6 1.4 1.4L7.6 12l3.2 3.2zM14.6 7.4 19.2 12l-4.6 4.6-1.4-1.4L16.4 12l-3.2-3.2z"/></svg>
-        <svg class="caret" viewBox="0 0 24 24"><path d="m7 10 5 5 5-5z"/></svg>
+        <Braces :size="ICON" :stroke-width="STROKE" />
+        <ChevronDown class="caret" :size="10" :stroke-width="2" />
       </button>
       <div v-if="openMenu === 'code'" class="tb-menu" style="min-width: 192px">
         <button class="tb-item" @click="pick((v) => toolbarCodeBlock(v))">
@@ -311,7 +344,7 @@ async function uploadImage() {
     </div>
 
     <button class="tb-btn" title="插入表格" @click="run((v) => toolbarTable(v, '| 列 1 | 列 2 | 列 3 |'))">
-      <svg viewBox="0 0 24 24"><path d="M4 5h16v14H4zm2 2v3h5V7zm7 0v3h5V7zM6 12v3h5v-3zm7 0v3h5v-3z"/></svg>
+      <Table :size="ICON" :stroke-width="STROKE" />
     </button>
 
     <div class="tb-group tb-menu-wrap tb-menu-wrap--end">
@@ -321,8 +354,8 @@ async function uploadImage() {
         title="数学公式"
         @click="toggle('math')"
       >
-        <svg viewBox="0 0 24 24"><path d="M8 5h8v2h-5.3l2 4.2L10 18h6v2H7v-1.6l3.4-7.1L7 5z"/></svg>
-        <svg class="caret" viewBox="0 0 24 24"><path d="m7 10 5 5 5-5z"/></svg>
+        <Sigma :size="ICON" :stroke-width="STROKE" />
+        <ChevronDown class="caret" :size="10" :stroke-width="2" />
       </button>
       <div v-if="openMenu === 'math'" class="tb-menu" style="min-width: 176px">
         <button class="tb-item" @click="pick((v) => toolbarInline(v, 'inlineMath'))">
@@ -341,8 +374,8 @@ async function uploadImage() {
         title="内容块"
         @click="toggle('block')"
       >
-        <svg viewBox="0 0 24 24"><path d="M4 5h7v6H4zm9 0h7v6h-7zM4 13h7v6H4zm9 0h7v6h-7z"/></svg>
-        <svg class="caret" viewBox="0 0 24 24"><path d="m7 10 5 5 5-5z"/></svg>
+        <Blocks :size="ICON" :stroke-width="STROKE" />
+        <ChevronDown class="caret" :size="10" :stroke-width="2" />
       </button>
       <div v-if="openMenu === 'block'" class="tb-menu" style="min-width: 176px">
         <button class="tb-item" @click="pick((v) => toolbarCallout(v))">
@@ -421,11 +454,6 @@ async function uploadImage() {
   transition: background var(--n-dur) var(--n-ease), color var(--n-dur) var(--n-ease);
 }
 
-.tb-btn.wide {
-  font-size: 12px;
-  font-weight: 600;
-}
-
 .tb-btn:hover {
   background: var(--n-raised);
   color: var(--n-fg);
@@ -436,10 +464,15 @@ async function uploadImage() {
   color: var(--n-accent);
 }
 
+/* Lucide 图标是「描边」画的（fill="none" + stroke），不是「填充」画的。
+   原来那套手绘图标是填充路径，所以这里有 fill: currentColor。
+   现在必须去掉它：给描边图标强加 fill 会把它们糊成实心黑块。
+   统一用 stroke: currentColor，颜色才跟着 .tb-btn 的 color 走。 */
 .tb-btn svg {
   width: 16px;
   height: 16px;
-  fill: currentColor;
+  fill: none;
+  stroke: currentColor;
   flex: none;
 }
 
@@ -447,6 +480,8 @@ async function uploadImage() {
   width: 12px;
   height: 12px;
   opacity: 0.6;
+  fill: none;
+  stroke: currentColor;
 }
 
 .tb-menu {

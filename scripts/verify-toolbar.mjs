@@ -263,6 +263,31 @@ await evaluate(
 await new Promise((r) => setTimeout(r, 500))
 out.afterItemClick = await evaluate('(() => window.__notaView.state.doc.toString())()')
 
+/* ── 图标渲染检查 ──
+   换用 Lucide 后最怕两件事：
+   1) 图标是描边画的，被 CSS 强加 fill:currentColor 后糊成实心黑块；
+   2) 某个图标名没解析出来，渲染成空白。
+   两者肉眼在小尺寸下都不容易发现，这里逐个量盒子。 */
+out.icons = await evaluate(
+  "(() => [...document.querySelectorAll('.tb-btn')].map((b) => {" +
+    " const svgs = [...b.querySelectorAll('svg')];" +
+    " return {" +
+    "   title: b.getAttribute('title') || b.innerText.trim()," +
+    "   svgCount: svgs.length," +
+    "   shapes: svgs.map((s) => {" +
+    "     const r = s.getBoundingClientRect();" +
+    "     const cs = getComputedStyle(s);" +
+    "     return {" +
+    "       w: Math.round(r.width), h: Math.round(r.height)," +
+    "       fill: cs.fill, stroke: cs.stroke," +
+    "       isCaret: s.classList.contains('caret')," +
+    "       paths: s.querySelectorAll('path,line,circle,rect,polyline,polygon').length," +
+    "     };" +
+    "   })," +
+    " };" +
+    "}))()",
+)
+
 console.log('===RESULT===')
 console.log(JSON.stringify(out, null, 2))
 console.log('===END===')

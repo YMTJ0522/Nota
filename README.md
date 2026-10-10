@@ -115,6 +115,7 @@ build/
 scripts/
   probe.mjs        无头验证脚本（CDP 驱动，断言 + 截图）
   verify-commands.mjs 命令行为验证（真跑「正文」与「隐藏注释」并比对文本）
+  verify-toolbar.mjs  工具栏验证：7 个下拉能否展开/高亮/执行，图标是否渲染成描边
   clean.mjs        清理 dist（用改名绕开批量删除限制）
   release.mjs      发布打包：滚版本 → 删旧包 → 构建 → 出安装包
 build-electron.mjs 主进程构建脚本（esbuild → CJS）
@@ -129,9 +130,18 @@ build-electron.mjs 主进程构建脚本（esbuild → CJS）
 | 构建 | Vite 6（前端） + esbuild（主进程） |
 | 编辑器 | CodeMirror 6 |
 | Markdown | @codemirror/lang-markdown（编辑）+ marked（预览） |
+| 图标 | Lucide（lucide-vue-next，ISC） |
 | 样式 | 原生 CSS + 自定义属性 |
 
 没有引入任何 UI 组件库。所有界面手写，设计 token 以 `--n-` 为前缀。
+
+### 图标为什么用 Lucide，而不是自己画
+
+工具栏图标全部来自 [Lucide](https://lucide.dev)（`lucide-vue-next`）。选它有一个很实际的原因：Lucide 是 Lucide 生态的原始上游，许可为 **ISC**（其中一部分来自 Feather 的图标为 MIT），只要求保留版权声明，商用、修改、再分发都不受限，也不产生任何 copyleft 牵连。
+
+需要区分的是：此前参考过的 `shuaiplus/inkstone` 项目**整体是 LGPL-3.0**，它的源码不能照搬（照搬会让本项目被 LGPL 覆盖）。但它工具栏用的图标本身就来自 Lucide，所以「用它的图标」的正确做法是**直接依赖 Lucide**——拿到的几何完全一致，而许可链条干净。走上游，而不是走中间商。
+
+用法上有一处必须注意：Lucide 图标是**描边**画的（`fill="none"` + `stroke`），和常见的填充路径图标不同。`Toolbar.vue` 里因此显式写了 `fill: none; stroke: currentColor`——如果沿用填充图标的 `fill: currentColor`，这些图标会糊成实心黑块。
 
 ### 编辑器设计要点
 
@@ -166,4 +176,9 @@ CodeMirror 的 `.cm-gutters`（行号）和 `.cm-content`（正文）是 `.cm-sc
 
 ## 授权
 
-MIT License，详见 [LICENSE](./LICENSE)。
+本项目源码：MIT License，详见 [LICENSE](./LICENSE)。
+
+### 第三方声明
+
+- **Lucide 图标**（`lucide-vue-next`）—— ISC License，Copyright (c) Lucide Icons and Contributors。其中部分图标源自 Feather，为 MIT License，Copyright (c) Cole Bemis。完整条款见 `node_modules/lucide-vue-next/LICENSE`。
+- **CodeMirror 6**、**Vue 3**、**marked**、**Electron** 等依赖各自遵循其原有许可，详见 `node_modules/` 内各包。
