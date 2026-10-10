@@ -34,6 +34,7 @@ import { toolbarKeymap } from "./toolbar-keymap";
 import { codeLangCompleteExtensions } from "./code-lang-complete";
 import { fencedCodeBlockHighlighter } from "./code-languages";
 import { markdownLivePreview } from "./live-preview";
+import { markdownMediaPreview } from "./media-preview";
 
 /**
  * Baseline CodeMirror extension set for the Markdown editor.
@@ -71,6 +72,7 @@ export function baseExtensions(options: {
       addKeymap: true,
     }),
     markdownLivePreview,
+    markdownMediaPreview,
     fencedCodeBlockHighlighter(),
     codeLangCompleteExtensions(),
     keymap.of([

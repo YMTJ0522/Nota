@@ -21,9 +21,14 @@ export const notaTheme = EditorView.theme({
     fontSize: "var(--n-fs-body)",
   },
 
-  /* ── 滚动与居中 ──
-     行号 gutter 与正文 content 是 scroller 下的并列 flex 子节点，
-     所以居中的责任在 scroller 上：左右各留出 (容器 - 正文列) / 2。 */
+  /* ── 滚动与居左 ──
+     行号 gutter 与正文 content 是 scroller 下的并列 flex 子节点。
+     早期做法是给 scroller 加对称留白 `(100% - measure)/2`，
+     结果行号被一起推到窗口中间——用户看到的就是「行号飘在中间」。
+
+     现在改成：scroller 只留一个小的固定左内边距（行号紧贴左侧），
+     正文列的宽度约束交给 .cm-content 自己（max-width + 左对齐）。
+     这样行号归位到左边，正文也不会拉成一条超长的行。 */
   ".cm-scroller": {
     fontFamily: "var(--n-font-mono)",
     lineHeight: "var(--n-lh)",
@@ -31,27 +36,32 @@ export const notaTheme = EditorView.theme({
     overflowX: "hidden",
     paddingTop: "24px",
     paddingBottom: "42vh",
-    paddingInline: "max(20px, calc((100% - var(--n-measure)) / 2))",
+    paddingInline: "0",
   },
   ".cm-content": {
     padding: "0",
     caretColor: "var(--n-accent)",
     minWidth: "0",
+    /* 正文列宽上限；超过就停住，避免宽屏下一行拉到几百字 */
+    maxWidth: "var(--n-measure)",
   },
   "&.cm-focused": { outline: "none" },
   ".cm-line": { padding: "0 18px" },
 
-  /* ── 行号 ── */
+  /* ── 行号 ──
+     scroller 的 paddingInline 已归零，所以左右留白落在这里：
+     左侧 12px 是「编辑区边缘到行号」，右侧 6px 是「行号到正文」。 */
   ".cm-gutters": {
     backgroundColor: "transparent",
     color: "var(--n-fg-faint)",
     border: "none",
     fontSize: "12px",
+    paddingInlineStart: "12px",
     paddingInlineEnd: "6px",
   },
   ".cm-lineNumbers .cm-gutterElement": {
-    padding: "0 8px 0 12px",
-    minWidth: "34px",
+    padding: "0 6px 0 0",
+    minWidth: "28px",
   },
   ".cm-activeLineGutter": {
     backgroundColor: "transparent",

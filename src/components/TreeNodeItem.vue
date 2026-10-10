@@ -2,12 +2,25 @@
 import { ref, nextTick } from 'vue'
 import { store } from '@/store'
 import type { TreeNode } from '@/store'
+import ConfirmDialog from '@/components/ConfirmDialog.vue'
 
 const props = defineProps<{ node: TreeNode; depth?: number }>()
 const { state } = store
 
 const depth = props.depth ?? 0
 const nameInput = ref<HTMLInputElement | null>(null)
+
+/** 删除确认弹窗：先记下要删的路径，等用户点确认才真删 */
+const confirmOpen = ref(false)
+
+function askDelete() {
+  confirmOpen.value = true
+}
+
+async function doDelete() {
+  confirmOpen.value = false
+  await store.removeNote(props.node.path)
+}
 
 function isOpen() {
   return !!state.expanded[props.node.path]
@@ -86,11 +99,23 @@ function onKey(e: KeyboardEvent) {
       >
         <span class="name">{{ displayName() }}</span>
       </button>
-      <button class="del" title="移到回收站" @click.stop="store.removeNote(node.path)">
+      <button class="del" title="删除笔记" @click.stop="askDelete">
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
           <path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14" />
         </svg>
       </button>
+
+      <!-- 删除前先确认一次，避免误点把笔记删掉。
+           实际动作是 shell.trashItem → 进系统回收站，所以文案如实写「回收站」。 -->
+      <ConfirmDialog
+        :open="confirmOpen"
+        title="删除这篇笔记？"
+        :message="`「${displayName()}」将被移到系统回收站。`"
+        confirm-text="删除"
+        danger
+        @confirm="doDelete"
+        @cancel="confirmOpen = false"
+      />
     </div>
   </li>
 </template>

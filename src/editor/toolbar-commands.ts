@@ -46,7 +46,10 @@ function dispatchResult(view: EditorView, result: MarkdownCommandResult) {
   view.dispatch({
     changes: result.change,
     selection: result.selection,
-    scrollIntoView: true,
+    /* 刻意不传 scrollIntoView。
+       工具栏就贴在编辑区上方，点一下按钮就整块往下滚一下，非常晃眼——
+       用户报的「点链接/图片，编辑区会往下调」就是它引起的。
+       不传时 CodeMirror 只在光标真的跑出视口时才滚动，足够。 */
     userEvent: "input.toolbar",
   });
   view.focus();
@@ -220,20 +223,41 @@ export function toolbarFind(view: EditorView) {
 }
 
 /**
- * 选一张本地图片复制进工作区 attachments/，然后把 Markdown 引用插入光标处。
- * 在浏览器（dev 预览、无 Electron）环境下退化为插入一个远程图片占位语法。
+ * 选一个本地图片/视频复制进工作区 attachments/，然后把引用插入光标处。
  *
- * @returns 是否真的插入了图片（用户取消返回 false，便于外层提示）
+ * 图片走标准 `![alt](path)`；视频用 `<video src>` 标签——Markdown 没有
+ * 原生的视频语法，而 `<video>` 在预览里能直接播，是最小惊讶的选择。
+ *
+ * 路径统一用相对路径（attachments/xxx），由主进程的 nota-media:// 协议
+ * 换算成可加载的 URL，所以写作时不依赖绝对盘符、换机器也不丢。
+ *
+ * @param kind 选择哪一类文件：image / video / any（不限）
+ * @returns 是否真的插入了（用户取消返回 false，便于外层提示）
  */
-export async function pickImageAndInsert(view: EditorView): Promise<boolean> {
+export async function pickImageAndInsert(
+  view: EditorView,
+  kind: "image" | "video" | "any" = "image",
+): Promise<boolean> {
   const api = (globalThis as { window?: { api?: Window["api"] } }).window?.api;
   if (!api?.pickImage) return false;
 
-  const picked = await api.pickImage(store.state.root ?? "");
+  const picked = await api.pickImage(store.state.root ?? "", kind);
   if (!picked) return false;
 
-  // copied = 已复制进 attachments/，用相对路径；否则是绝对路径，转成 file:///
-  const url = picked.copied ? picked.rel : `file:///${picked.rel}`;
-  dispatchResult(view, insertImageCommand(doc(view), selection(view), url));
+  const alt = picked.alt || "媒体";
+  const isVideo = picked.isVideo || kind === "video";
+
+  if (isVideo) {
+    // Markdown 没有原生视频语法，用 <video> 标签，预览里能直接播。
+    // 结尾留一个光标位，插完可以紧接着写东西。
+    const snippet = `<video src="${picked.rel}" controls></video>`;
+    dispatchResult(
+      view,
+      insertTextCommand(selection(view), snippet, snippet.length),
+    );
+  } else {
+    const snippet = `![${alt}](${picked.rel})`;
+    dispatchResult(view, insertTextCommand(selection(view), snippet, snippet.length));
+  }
   return true;
 }

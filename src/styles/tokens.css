@@ -49,6 +49,10 @@
   /* 阴影 */
   --n-shadow: 0 6px 24px rgba(30, 28, 24, 0.1);
   --n-shadow-lg: 0 18px 48px rgba(30, 28, 24, 0.16);
+  --n-shadow-xl: 0 28px 68px rgba(30, 28, 24, 0.22);
+
+  /* 弹窗遮罩 */
+  --n-mask: rgba(30, 28, 24, 0.34);
 
   /* 圆角 */
   --n-r-sm: 5px;
@@ -93,6 +97,8 @@
 
   --n-shadow: 0 6px 24px rgba(0, 0, 0, 0.4);
   --n-shadow-lg: 0 18px 48px rgba(0, 0, 0, 0.55);
+  --n-shadow-xl: 0 28px 68px rgba(0, 0, 0, 0.68);
+  --n-mask: rgba(0, 0, 0, 0.52);
 }
 
 * {
@@ -168,4 +174,41 @@ textarea {
 .cm-hl-invalid {
   color: var(--n-danger);
   text-decoration: underline wavy var(--n-danger);
+}
+
+/* ── 编辑区里的图片 / 视频缩略图 ──
+   由 media-preview.ts 的 block widget 生成，挂在图片那一行的下方。
+   收在一个有上限的框里（否则一张大图会把正文挤得没法看），
+   点一下能在新窗口里看原图。 */
+.cm-md-media {
+  margin: 6px 0 12px;
+  display: flex;
+}
+
+.cm-md-media .cm-md-media-el {
+  max-width: min(100%, 420px);
+  max-height: 320px;
+  width: auto;
+  height: auto;
+  border-radius: var(--n-r-md);
+  border: 1px solid var(--n-line);
+  background: var(--n-surface);
+  display: block;
+  object-fit: contain;
+}
+
+/* 还没解析出路径时的占位：一条安静的虚线，不显示破图标 */
+.cm-md-media.is-pending {
+  align-items: center;
+  min-height: 26px;
+  padding: 0 10px;
+  border: 1px dashed var(--n-line);
+  border-radius: var(--n-r-sm);
+  color: var(--n-fg-faint);
+  font-size: 11.5px;
+  font-family: var(--n-font-mono);
+  max-width: 420px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }

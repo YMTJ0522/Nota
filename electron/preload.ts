@@ -15,8 +15,29 @@ contextBridge.exposeInMainWorld('api', {
   deleteNote: (file: string): Promise<boolean> => ipcRenderer.invoke('note:delete', file),
   renameNote: (file: string, newName: string): Promise<string> =>
     ipcRenderer.invoke('note:rename', file, newName),
-  pickImage: (workspace: string): Promise<{ rel: string; alt: string; copied: boolean } | null> =>
-    ipcRenderer.invoke('image:pick', workspace),
+  pickImage: (
+    workspace: string,
+    kind?: 'image' | 'video' | 'any',
+  ): Promise<{ rel: string; alt: string; copied: boolean; isVideo: boolean } | null> =>
+    ipcRenderer.invoke('image:pick', workspace, kind ?? 'image'),
+  /* 把笔记里的相对路径换算成可加载的媒体 URL（工作区图片靠它显示） */
+  resolveMedia: (base: string, rel: string): Promise<string | null> =>
+    ipcRenderer.invoke('media:resolve', base, rel),
+
+  /* 导出：弹保存框并写文件，返回最终路径 */
+  exportSave: (opts: { defaultName: string; kind: string; data: string }): Promise<string | null> =>
+    ipcRenderer.invoke('export:save', opts),
+
+  /* 版本历史 */
+  historySave: (workspace: string, file: string, content: string): Promise<string | null> =>
+    ipcRenderer.invoke('history:save', workspace, file, content),
+  historyList: (
+    workspace: string,
+    file: string,
+  ): Promise<{ name: string; path: string; size: number; mtime: number }[]> =>
+    ipcRenderer.invoke('history:list', workspace, file),
+  historyRead: (snapshot: string): Promise<string | null> =>
+    ipcRenderer.invoke('history:read', snapshot),
 
   /* 窗口控制（自绘标题栏用） */
   minimize: (): Promise<void> => ipcRenderer.invoke('window:minimize'),

@@ -14,7 +14,18 @@ interface NoteApi {
   createNote(dir: string, name: string): Promise<string>
   deleteNote(file: string): Promise<boolean>
   renameNote(file: string, newName: string): Promise<string>
-  pickImage(workspace: string): Promise<{ rel: string; alt: string; copied: boolean } | null>
+  pickImage(
+    workspace: string,
+    kind?: 'image' | 'video' | 'any',
+  ): Promise<{ rel: string; alt: string; copied: boolean; isVideo: boolean } | null>
+  resolveMedia(base: string, rel: string): Promise<string | null>
+  exportSave(opts: { defaultName: string; kind: string; data: string }): Promise<string | null>
+  historySave(workspace: string, file: string, content: string): Promise<string | null>
+  historyList(
+    workspace: string,
+    file: string,
+  ): Promise<{ name: string; path: string; size: number; mtime: number }[]>
+  historyRead(snapshot: string): Promise<string | null>
   minimize(): Promise<void>
   toggleMaximize(): Promise<boolean>
   closeWindow(): Promise<void>

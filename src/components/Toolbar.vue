@@ -112,18 +112,22 @@ const wrapEls = ref<Record<string, HTMLElement | null>>({})
 
 const menuStyle = ref<Record<string, string>>({})
 
-/** 各下拉的宽度（原来写在模板 style 上，Teleport 后需要提前知道才好定位） */
-const menuWidths: Record<string, number> = {
-  heading: 176,
-  reference: 200,
-  image: 190,
-  note: 224,
-  code: 192,
-  math: 176,
-  block: 176,
-}
+/** 已渲染的浮层菜单元素，用来量它自己的真实宽度 */
+const menuEls = ref<Record<string, HTMLElement | null>>({})
 
-/** 按当前打开的菜单，量出锚点位置并算 fixed 坐标 */
+/** 浮层与锚点之间的垂直间距 */
+const GAP = 4
+/** 距视口边缘的最小留白 */
+const EDGE = 8
+
+/**
+ * 按当前打开的菜单，量出锚点位置并算 fixed 坐标。
+ *
+ * 宽度不再是写死的数字——写死会「要么太宽显得空、要么太窄挤成两行」，
+ * 用户明确要求「按字的长度来，刚刚好」。做法是先让菜单按内容自然排布
+ * （CSS 里 width: max-content），挂上去之后再量它的真实宽度，
+ * 然后据此决定左右定位。这样每个菜单都正好裹住自己最宽的那一项。
+ */
 function placeMenu() {
   const id = openMenu.value
   if (!id) return
@@ -131,22 +135,41 @@ function placeMenu() {
   if (!wrap) return
   const btn = wrap.querySelector<HTMLElement>('.tb-btn')
   if (!btn) return
-  const r = btn.getBoundingClientRect()
-  const MENU_W = menuWidths[id]
-  const GAP = 4
 
-  /* 水平：默认左对齐按钮；若右边会超出窗口，则改成右对齐到按钮右边 */
+  const r = btn.getBoundingClientRect()
+  const menu = menuEls.value[id]
+  // 首帧还没量到（菜单刚挂载）时先用一个保守值，下一帧会再摆一次
+  const menuW = menu ? Math.ceil(menu.getBoundingClientRect().width) : 0
   const vw = window.innerWidth
+
+  /* 水平：默认左对齐按钮；右边会超出窗口就翻成右对齐到按钮右边 */
   let left = r.left
-  if (left + MENU_W > vw - 8) left = r.right - MENU_W
-  if (left < 8) left = 8
+  if (menuW > 0) {
+    if (left + menuW > vw - EDGE) left = r.right - menuW
+    if (left < EDGE) left = EDGE
+  }
 
   menuStyle.value = {
     position: 'fixed',
     top: `${Math.round(r.bottom + GAP)}px`,
     left: `${Math.round(left)}px`,
-    width: `${MENU_W}px`,
+    // 宽度交给 CSS 的 max-content，这里不写死
   }
+
+  // 挂载后第一帧量到的宽度可能是 0（还没布局完），补一次
+  if (!menu) {
+    requestAnimationFrame(() => {
+      if (openMenu.value === id) placeMenu()
+    })
+  }
+}
+
+function setMenuEl(id: Exclude<MenuId, null>, el: unknown) {
+  menuEls.value[id] = (el as HTMLElement) ?? null
+}
+
+function menuRef(id: Exclude<MenuId, null>) {
+  return (el: unknown) => setMenuEl(id, el)
 }
 
 function setWrap(id: Exclude<MenuId, null>, el: unknown) {
@@ -162,6 +185,10 @@ watch(openMenu, async (id) => {
   if (!id) return
   await nextTick()
   placeMenu()
+  // 字体/图标可能晚一帧才定尺寸，再摆一次保证位置稳
+  requestAnimationFrame(() => {
+    if (openMenu.value === id) placeMenu()
+  })
 })
 
 /** 菜单项点击：先关菜单，再执行命令（避免焦点被菜单吃掉） */
@@ -229,13 +256,15 @@ const headingItems = [
 /** 标题下拉按钮上曾显示当前档位（H1 徽标），但换上 Lucide 的 Heading 图标后
     两者语义重复，挤在一起反而看不清，已去掉徽标只留图标。 */
 
-/* ── 图片：本地上传走原生文件选择 ── */
-async function uploadImage() {
+/* ── 图片 / 视频：本地上传走原生文件选择 ── */
+async function uploadMedia(kind: 'image' | 'video' | 'any') {
   close()
   const view = v()
   if (!view) return
-  const ok = await pickImageAndInsert(view)
-  if (!ok) emit('toast', '未选择图片，已取消')
+  const ok = await pickImageAndInsert(view, kind)
+  if (!ok) {
+    emit('toast', kind === 'video' ? '未选择视频，已取消' : '未选择文件，已取消')
+  }
 }
 </script>
 
@@ -262,6 +291,7 @@ async function uploadImage() {
       <Teleport to="body">
         <div
           v-if="openMenu === 'heading'"
+          :ref="menuRef('heading')"
           class="tb-menu tb-menu--float"
           :style="menuStyle"
         >
@@ -333,6 +363,7 @@ async function uploadImage() {
       <Teleport to="body">
         <div
           v-if="openMenu === 'reference'"
+          :ref="menuRef('reference')"
           class="tb-menu tb-menu--float"
           :style="menuStyle"
         >
@@ -358,29 +389,33 @@ async function uploadImage() {
     </div>
 
     <div :ref="wrapRef('image')" class="tb-group tb-menu-wrap">
-      <button
-        class="tb-btn"
-        :class="{ on: openMenu === 'image' }"
-        title="插入图片"
-        @click="toggle('image')"
-      >
-        <ImageIcon :size="ICON" :stroke-width="STROKE" />
-        <ChevronDown class="caret" :size="10" :stroke-width="2" />
-      </button>
-      <Teleport to="body">
-        <div
-          v-if="openMenu === 'image'"
-          class="tb-menu tb-menu--float"
-          :style="menuStyle"
-        >
-          <button class="tb-item" @click="uploadImage">
-            <span>上传本地图片</span>
-          </button>
-          <button class="tb-item" @click="pick((v) => toolbarImage(v))">
-            <span>远程图片链接</span><span class="kbd">![]()</span>
-          </button>
-        </div>
-      </Teleport>
+        <button class="tb-btn" :class="{ on: openMenu === 'image' }" title="插入图片或视频" @click="toggle('image')">
+          <ImageIcon :size="ICON" :stroke-width="STROKE" />
+          <ChevronDown class="caret" :size="10" :stroke-width="2" />
+        </button>
+        <Teleport to="body">
+          <div
+            v-if="openMenu === 'image'"
+            :ref="menuRef('image')"
+            class="tb-menu tb-menu--float"
+            :style="menuStyle"
+          >
+            <button class="tb-item" @click="uploadMedia('any')">
+              <span>上传本地图片或视频</span>
+            </button>
+            <span class="tb-sep-h" />
+            <button class="tb-item" @click="uploadMedia('image')">
+              <span>从本地插入图片</span>
+            </button>
+            <button class="tb-item" @click="uploadMedia('video')">
+              <span>从本地插入视频</span>
+            </button>
+            <span class="tb-sep-h" />
+            <button class="tb-item" @click="pick((v) => toolbarImage(v))">
+              <span>远程图片链接</span><span class="kbd">![]()</span>
+            </button>
+          </div>
+        </Teleport>
     </div>
 
     <div :ref="wrapRef('note')" class="tb-group tb-menu-wrap">
@@ -396,6 +431,7 @@ async function uploadImage() {
       <Teleport to="body">
         <div
           v-if="openMenu === 'note'"
+          :ref="menuRef('note')"
           class="tb-menu tb-menu--float"
           :style="menuStyle"
         >
@@ -433,6 +469,7 @@ async function uploadImage() {
       <Teleport to="body">
         <div
           v-if="openMenu === 'code'"
+          :ref="menuRef('code')"
           class="tb-menu tb-menu--float"
           :style="menuStyle"
         >
@@ -467,6 +504,7 @@ async function uploadImage() {
       <Teleport to="body">
         <div
           v-if="openMenu === 'math'"
+          :ref="menuRef('math')"
           class="tb-menu tb-menu--float"
           :style="menuStyle"
         >
@@ -493,6 +531,7 @@ async function uploadImage() {
       <Teleport to="body">
         <div
           v-if="openMenu === 'block'"
+          :ref="menuRef('block')"
           class="tb-menu tb-menu--float"
           :style="menuStyle"
         >
@@ -608,7 +647,12 @@ async function uploadImage() {
   top: calc(100% + 4px);
   left: 0;
   z-index: 40;
-  min-width: 176px;
+  /* 宽度按内容走：max-content 正好裹住最宽的那一项；
+     min/max 只做兜底，防止极端内容把菜单撑爆或压扁。
+     用户要的「跟字的长度刚刚好」就是这个。 */
+  width: max-content;
+  min-width: 132px;
+  max-width: 260px;
   padding: 4px;
   background: var(--n-raised);
   border: 1px solid var(--n-line);
@@ -642,7 +686,9 @@ async function uploadImage() {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 14px;
+  /* 标签与快捷键之间给一段固定间距，菜单窄的时候也不会贴在一起。
+     auto 的左边距把 kbd 推到右侧，菜单宽度由最长的那一行决定。 */
+  gap: 18px;
   padding: 0 9px;
   border-radius: var(--n-r-sm);
   font-size: 13px;

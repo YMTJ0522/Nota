@@ -8,6 +8,9 @@ import {
   Pencil,
   Columns2,
   Eye,
+  Check,
+  Loader2,
+  PanelLeft,
 } from 'lucide-vue-next'
 import { store } from '@/store'
 import { baseExtensions } from '@/editor/setup'
@@ -15,9 +18,11 @@ import { notaThemeExtensions } from '@/editor/theme'
 import { countWords, formatWordCount } from '@/editor/word-count'
 import { createSlashCommandsExtension } from '@/editor/slash-commands'
 import type { SlashMenuRenderState, SlashCommandId } from '@/editor/slash-commands'
+import { setMediaBase } from '@/editor/media-preview'
 import { highlightCode, langFromClass } from '@/editor/highlight-code'
 import Toolbar from '@/components/Toolbar.vue'
 import SlashMenu from '@/components/SlashMenu.vue'
+import HeaderMenu from '@/components/HeaderMenu.vue'
 import {
   toolbarInline,
   toolbarWrap,
@@ -102,6 +107,27 @@ let syncing = false
 /** 字数统计直接从 draft 派生，避免手动同步漏更新 */
 const statText = computed(() => formatWordCount(countWords(state.draft)))
 
+/**
+ * 保存状态文案。
+ * 三种态：正在写盘 → 「保存中…」；有未落盘的改动 → 「未保存」；
+ * 其余 → 「已保存」。比单纯一个圆点更能说明当前处境。
+ */
+const saveState = computed<'saving' | 'dirty' | 'saved'>(() => {
+  if (state.saving) return 'saving'
+  return store.dirty.value ? 'dirty' : 'saved'
+})
+
+const saveLabel = computed(() => {
+  switch (saveState.value) {
+    case 'saving':
+      return '保存中…'
+    case 'dirty':
+      return state.autoSave ? '待保存' : '未保存'
+    default:
+      return '已保存'
+  }
+})
+
 /** 预览（阅读模式） */
 let markedMod: typeof import('marked') | null = null
 async function render() {
@@ -110,7 +136,43 @@ async function render() {
     markedMod.marked.setOptions({ gfm: true, breaks: true })
   }
   const raw = markedMod.marked.parse(state.draft, { async: false }) as string
-  html.value = await highlightFences(raw)
+  html.value = await resolveMediaInHtml(await highlightFences(raw))
+}
+
+/**
+ * 把预览 HTML 里的相对路径图片/视频换成可加载的 URL。
+ *
+ * 笔记里存的是 `attachments/x.png` 这种跟自己目录相对的路径，
+ * 但渲染进程的 origin 是应用本身，相对路径指向的是应用而不是工作区，
+ * 所以插图一直是个破图标。这里逐条交给主进程换算成 nota-media:// URL。
+ *
+ * 匹配 <img src> 与 <video src> 两种；顺带处理 <source src>。
+ * 外链（http/https/data）主进程会原样返回，不做改动。
+ */
+async function resolveMediaInHtml(source: string): Promise<string> {
+  const api = window.api
+  if (!api?.resolveMedia) return source
+  const base = state.root ?? ''
+
+  const tags = [...source.matchAll(/<(img|video|source)\b[^>]*\bsrc="([^"]+)"[^>]*>/g)]
+  if (tags.length === 0) return source
+
+  const resolved = await Promise.all(
+    tags.map(async (m) => {
+      const url = await api.resolveMedia(base, m[2])
+      return url ?? m[2]
+    }),
+  )
+
+  let i = 0
+  return source.replace(
+    /<(img|video|source)\b[^>]*\bsrc="([^"]+)"[^>]*>/g,
+    (whole, ...rest) => {
+      const next = resolved[i++]
+      // 只替换 src 的值，其余属性（alt/class/width…）原样保留
+      return whole.replace(/(\bsrc=")([^"]+)(")/, `$1${next}$3`)
+    },
+  )
 }
 
 /**
@@ -146,10 +208,13 @@ async function highlightFences(source: string): Promise<string> {
   )
 }
 
-/* ── 自动保存 ── */
+/* ── 自动保存 ──
+   默认开启（用户要求「每次编辑完就自动保存」）。关掉后只留手动 Ctrl+S。
+   600ms 的防抖：连续打字时只在停顿后落一次盘，不会每敲一个字写一次。 */
 function scheduleSave() {
+  if (!state.autoSave) return
   if (timer) clearTimeout(timer)
-  timer = setTimeout(() => store.saveNote(), 600)
+  timer = setTimeout(() => store.saveNote({ silent: true }), 600)
 }
 
 /* ── 斜杠命令 → 具体动作 ── */
@@ -210,6 +275,9 @@ function onToolbarToast(text: string) {
 /* ── 创建 / 销毁编辑器 ── */
 function createEditor() {
   if (!host.value) return
+
+  // 告诉媒体小部件当前工作区根目录，它才能把 attachments/x.png 换算成可加载的 URL
+  setMediaBase(state.root ?? '')
 
   const extensions = [
     ...baseExtensions({
@@ -316,8 +384,27 @@ defineExpose({ getView: () => view })
       />
 
       <div class="ph-right">
+        <!-- 侧栏开关放在最左，和「内容区」的操作分开 -->
+        <button
+          class="ph-icon"
+          :title="state.sidebar ? '隐藏侧边栏' : '显示侧边栏'"
+          @click="store.toggleSidebar()"
+        >
+          <PanelLeft :size="14" :stroke-width="1.9" />
+        </button>
+
         <span class="ph-stat">{{ statText }}</span>
-        <span v-if="store.dirty.value" class="dot" title="有未保存的修改" />
+
+        <!-- 保存状态：图标 + 文案，比一个圆点说得更清楚 -->
+        <span class="ph-save" :class="saveState" :title="saveLabel">
+          <Loader2 v-if="saveState === 'saving'" class="spin" :size="12" :stroke-width="2" />
+          <Check v-else-if="saveState === 'saved'" :size="12" :stroke-width="2.1" />
+          <span v-else class="ph-dot" />
+          <span class="ph-save-text">{{ saveLabel }}</span>
+        </span>
+
+        <!-- 导出 / 版本历史 / 设置 -->
+        <HeaderMenu />
 
         <!-- 视图切换：编辑 / 分栏 / 预览 -->
         <div class="ph-seg" role="radiogroup" aria-label="视图模式">
@@ -447,13 +534,81 @@ defineExpose({ getView: () => view })
   gap: 10px;
 }
 
-/* 未保存标记：一个小圆点，比文字更安静 */
-.dot {
+/* 顶栏里的小图标按钮（侧栏开关等） */
+.ph-icon {
+  width: 26px;
+  height: 24px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--n-r-sm);
+  color: var(--n-fg-dim);
+  transition: background var(--n-dur) var(--n-ease), color var(--n-dur) var(--n-ease);
+}
+
+.ph-icon svg {
+  fill: none;
+  stroke: currentColor;
+}
+
+.ph-icon:hover {
+  background: var(--n-raised);
+  color: var(--n-fg);
+}
+
+/* ── 保存状态 ──
+   「已保存」刻意做得最安静（灰），只有真正需要注意时才提色：
+   保存中走强调色，未保存走警示色。 */
+.ph-save {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11.5px;
+  color: var(--n-fg-faint);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.ph-save svg {
+  fill: none;
+  stroke: currentColor;
+  flex: none;
+}
+
+.ph-save.saving {
+  color: var(--n-accent);
+}
+
+.ph-save.dirty {
+  color: var(--n-fg-dim);
+}
+
+.ph-save.saved {
+  color: var(--n-fg-faint);
+}
+
+/* 未保存 / 保存中用小圆点表示，保持和原来一致的克制 */
+.ph-dot {
   width: 6px;
   height: 6px;
   border-radius: 50%;
   background: var(--n-accent);
-  opacity: 0.75;
+  flex: none;
+  margin: 0 3px;
+}
+
+.spin {
+  animation: ph-spin 900ms linear infinite;
+}
+
+@keyframes ph-spin {
+  to { transform: rotate(360deg); }
+}
+
+/* 窄窗口下先把「已保存」这类次要文案收掉，保住标题和视图切换 */
+@media (max-width: 720px) {
+  .ph-save-text { display: none; }
+  .ph-stat { display: none; }
 }
 
 /* ── 视图切换（分段控件） ──
@@ -534,26 +689,37 @@ defineExpose({ getView: () => view })
 }
 
 /* ── 预览排版 ──
-   与编辑器用同一套居中公式：左右各留 (容器 - 正文列) / 2，
-   这样「编辑」和「预览」两个模式切换时正文列是完全对齐的。 */
+   与编辑区保持同一套「归左 + 列宽上限」的规则：左边距固定，
+   正文列到 --n-measure 就停住。这样编辑/预览切换时正文左边缘是对齐的。 */
 .preview {
   flex: 1;
-  padding: 20px max(20px, calc((100% - var(--n-measure)) / 2)) 42vh;
+  padding: 20px 24px 42vh;
   overflow-y: auto;
   user-select: text;
   line-height: var(--n-lh);
 }
 
-/* 分栏时每栏只有半宽，正文列的居中留白要相应收窄，
-   否则 (100% - measure)/2 会算出负值，正文被挤到贴边。 */
+/* 预览正文列宽上限，和编辑区 .cm-content 用同一个变量 */
+.preview > :deep(*) {
+  max-width: var(--n-measure);
+}
+
+/* 分栏时每栏更窄，列宽上限交还给容器（否则又会窄一条） */
 .stage[data-layout='split'] .preview {
   padding: 16px clamp(12px, 4%, 40px) 42vh;
 }
 
-/* 同理，分栏时编辑区的居中留白也要收窄。
-   .cm-scroller 的 padding 设在 theme.ts 里，这里用 :deep 覆盖。 */
+.stage[data-layout='split'] .preview > :deep(*) {
+  max-width: none;
+}
+
+/* 分栏时编辑区用固定左内边距，保持和预览对称 */
 .stage[data-layout='split'] :deep(.cm-scroller) {
-  padding-inline: clamp(12px, 4%, 40px);
+  padding-inline: 0;
+}
+
+.stage[data-layout='split'] :deep(.cm-content) {
+  max-width: none;
 }
 .preview :deep(h1),
 .preview :deep(h2),

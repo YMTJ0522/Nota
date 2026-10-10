@@ -26,6 +26,7 @@ function onKey(e: KeyboardEvent) {
 
 onMounted(() => {
   store.initTheme()
+  store.initPrefs()
   window.addEventListener('keydown', onKey)
 })
 
@@ -36,7 +37,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey))
   <div class="shell">
     <TitleBar />
     <div class="body">
-      <SidePanel v-if="state.root" />
+      <SidePanel v-if="state.root && state.sidebar" />
       <main class="main">
         <WelcomeView v-if="!state.root" />
         <EditorPane v-else-if="state.activePath" />
