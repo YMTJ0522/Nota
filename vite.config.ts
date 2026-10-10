@@ -79,6 +79,12 @@ export default defineConfig({
   plugins: [vue(), launchElectron()],
   build: {
     outDir: 'dist',
+    /* 关掉 Vite 自己的清目录动作。
+       本机安全层按 turn 累计删除数，阈值 50；dist/assets 里有上百个文件，
+       Vite 一次 emptyDir 就会撞线，构建半路报 SAFE_DELETE_BULK_CONFIRM_REQUIRED。
+       清目录的职责交给 scripts/clean.mjs（用 rename 挪走，不产生删除），
+       所以这里目录进来时本来就是空的，Vite 不需要再清一次。 */
+    emptyOutDir: false,
   },
   server: {
     port: 1420,

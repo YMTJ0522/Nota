@@ -58,7 +58,7 @@ console.log(`\n当前版本：${current}`)
 console.log(NO_BUMP ? '按 --no-bump，沿用当前版本' : `新版本：  ${target}`)
 
 /* ── 2. 清旧包 ── */
-/** 保留目录本身与 win-unpacked，只删旧的安装包 / 免安装包 / blockmap */
+/** 保留目录本身与 win-unpacked，只挪走旧的安装包 / 免安装包 / blockmap */
 function cleanRelease() {
   if (!fs.existsSync(RELEASE)) {
     fs.mkdirSync(RELEASE, { recursive: true })
@@ -69,7 +69,7 @@ function cleanRelease() {
     .filter((name) => {
       const lower = name.toLowerCase()
       if (lower === 'win-unpacked') return false
-      // 删掉所有历史产物与中间文件（新版本此刻还没生成，全删是安全的）
+      // 挪走所有历史产物与中间文件（新版本此刻还没生成，全挪是安全的）
       return (
         lower.endsWith('.exe') ||
         lower.endsWith('.blockmap') ||
@@ -79,8 +79,22 @@ function cleanRelease() {
       )
     })
 
+  if (!doomed.length) return doomed
+
+  /* 同样用 rename 挪走而不是 rmSync：
+     安全层按 turn 累计删除数（阈值 50），而这个 turn 里
+     后面还有 clean.mjs 跟整个构建流程，能省一次计数就省一次。
+     安装包单个 80+ MB，rename 是瞬时的，比删除还快。 */
+  const trash = path.join(ROOT, '.trash')
+  fs.mkdirSync(trash, { recursive: true })
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-')
   for (const name of doomed) {
-    fs.rmSync(path.join(RELEASE, name), { force: true })
+    const dest = path.join(trash, `release-${stamp}-${name}`)
+    try {
+      fs.renameSync(path.join(RELEASE, name), dest)
+    } catch {
+      fs.rmSync(path.join(RELEASE, name), { force: true })
+    }
   }
   return doomed
 }

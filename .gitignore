@@ -12,3 +12,6 @@ release/
 
 # 验证脚本产出的中间截图（只保留 README 用的那两张）
 docs/probe-*.png
+
+# clean.mjs / release.mjs 用改名代替删除而挪走的旧目录
+.trash/
