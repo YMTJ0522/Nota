@@ -16,28 +16,44 @@ export const notaTheme = EditorView.theme({
     color: "var(--n-fg)",
     fontSize: "var(--n-fs-body)",
   },
+  /*
+   * 让「行号 + 正文」这一整对居中：
+   * 做法是给 scroller 一个左右对称的 padding，左右各留出
+   * (容器宽 - 正文列宽) / 2 的空白，正文列本身则撑满剩余宽度。
+   * 比单独给 .cm-content 加 margin:0 auto 可靠——gutter 与正文不会脱节。
+   */
   ".cm-scroller": {
     fontFamily: "var(--n-font-mono)",
     lineHeight: "var(--n-lh)",
-    overflow: "auto",
+    overflowY: "auto",
+    overflowX: "hidden",
+    paddingTop: "20px",
+    paddingBottom: "42vh",
+    paddingInline: "max(20px, calc((100% - var(--n-measure)) / 2))",
   },
+  /*
+   * 正文列撑满 scroller 的可用宽度，不再自己居中。
+   */
   ".cm-content": {
-    padding: "28px 0 45vh",
+    padding: "0",
     caretColor: "var(--n-accent)",
-    maxWidth: "var(--n-measure)",
-    margin: "0 auto",
+    minWidth: "0",
   },
   "&.cm-focused": { outline: "none" },
-  ".cm-line": { padding: "0 32px" },
+  ".cm-line": { padding: "0 16px" },
 
+  /*
+   * 行号 gutter 是 scroller 里的 flex 兄弟节点，位置由上面的
+   * scroller padding 统一决定，这里只做视觉样式。
+   */
   ".cm-gutters": {
     backgroundColor: "transparent",
     color: "var(--n-fg-faint)",
     border: "none",
     fontSize: "12px",
-    paddingLeft: "8px",
+    paddingInlineEnd: "4px",
   },
-  ".cm-lineNumbers .cm-gutterElement": { padding: "0 6px 0 4px" },
+  ".cm-lineNumbers .cm-gutterElement": { padding: "0 6px 0 12px" },
   ".cm-activeLineGutter": {
     backgroundColor: "transparent",
     color: "var(--n-fg-dim)",

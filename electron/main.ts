@@ -159,6 +159,51 @@ ipcMain.handle('note:rename', async (_e, file: string, newName: string) => {
   return target
 })
 
+// 选择本地图片并复制进工作区的 attachments 目录，返回相对路径供 Markdown 引用。
+// 复制而非引用原路径：笔记目录自带素材，换机器/备份时不丢图。
+ipcMain.handle('image:pick', async (_e, workspace: string) => {
+  if (!win) return null
+  const result = await dialog.showOpenDialog(win, {
+    title: '插入图片',
+    properties: ['openFile'],
+    filters: [{ name: '图片', extensions: ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'bmp', 'avif'] }],
+  })
+  if (result.canceled || result.filePaths.length === 0) return null
+
+  const source = result.filePaths[0]
+  const ext = path.extname(source).toLowerCase()
+  const base = path.basename(source, path.extname(source)).replace(/[\\/:*?"<>|]/g, '-')
+
+  // 没选工作区时退化为返回绝对路径（file:// 形式让预览也能显示）
+  if (!workspace) {
+    return { rel: path.resolve(source).replace(/\\/g, '/'), alt: base, copied: false }
+  }
+
+  const dir = path.join(workspace, 'attachments')
+  await fs.mkdir(dir, { recursive: true })
+
+  let fileName = `${base}${ext || '.png'}`
+  let target = path.join(dir, fileName)
+  let i = 1
+  while (true) {
+    try {
+      await fs.access(target)
+      fileName = `${base} ${i}${ext || '.png'}`
+      target = path.join(dir, fileName)
+      i++
+    } catch {
+      break
+    }
+  }
+
+  await fs.copyFile(source, target)
+  return {
+    rel: `attachments/${fileName}`.replace(/\\/g, '/'),
+    alt: base,
+    copied: true,
+  }
+})
+
 /* ── 生命周期 ── */
 
 app.whenReady().then(createWindow)

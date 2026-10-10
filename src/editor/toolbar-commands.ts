@@ -1,4 +1,6 @@
 import type { EditorView } from "@codemirror/view";
+import { openSearchPanel } from "@codemirror/search";
+import { store } from "@/store";
 import {
   insertBlockIdCommand,
   insertCalloutCommand,
@@ -87,7 +89,10 @@ export function toolbarBlockPrefix(
   dispatchResult(view, toggleBlockPrefix(doc(view), selection(view), kind));
 }
 
-export function toolbarHeading(view: EditorView, level: 1 | 2 | 3 | 4 | 5 | 6) {
+export function toolbarHeading(
+  view: EditorView,
+  level: Parameters<typeof toggleHeadingLevel>[2],
+) {
   dispatchResult(view, toggleHeadingLevel(doc(view), selection(view), level));
 }
 
@@ -207,4 +212,28 @@ export function toolbarMathBlock(view: EditorView) {
 
 export function toolbarFrontMatter(view: EditorView) {
   dispatchResult(view, insertFrontMatterCommand(doc(view)));
+}
+
+/** 打开 CodeMirror 内置搜索面板（Ctrl+F 同款）。 */
+export function toolbarFind(view: EditorView) {
+  openSearchPanel(view);
+}
+
+/**
+ * 选一张本地图片复制进工作区 attachments/，然后把 Markdown 引用插入光标处。
+ * 在浏览器（dev 预览、无 Electron）环境下退化为插入一个远程图片占位语法。
+ *
+ * @returns 是否真的插入了图片（用户取消返回 false，便于外层提示）
+ */
+export async function pickImageAndInsert(view: EditorView): Promise<boolean> {
+  const api = (globalThis as { window?: { api?: Window["api"] } }).window?.api;
+  if (!api?.pickImage) return false;
+
+  const picked = await api.pickImage(store.state.root ?? "");
+  if (!picked) return false;
+
+  // copied = 已复制进 attachments/，用相对路径；否则是绝对路径，转成 file:///
+  const url = picked.copied ? picked.rel : `file:///${picked.rel}`;
+  dispatchResult(view, insertImageCommand(doc(view), selection(view), url));
+  return true;
 }

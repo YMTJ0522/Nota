@@ -12,14 +12,25 @@ import Toolbar from '@/components/Toolbar.vue'
 import SlashMenu from '@/components/SlashMenu.vue'
 import {
   toolbarInline,
+  toolbarWrap,
+  toolbarInlineCode,
   toolbarBlockPrefix,
   toolbarHeading,
-  toolbarCodeBlock,
-  toolbarTable,
+  toolbarLink,
+  toolbarImage,
+  toolbarTag,
+  toolbarBlockId,
+  toolbarFootnote,
+  toolbarCallout,
+  toolbarDetails,
+  toolbarTabs,
   toolbarMermaid,
-  toolbarFrontMatter,
+  toolbarCodeBlock,
+  toolbarAdvancedCodeBlock,
+  toolbarTable,
   toolbarHorizontalRule,
   toolbarMathBlock,
+  toolbarFrontMatter,
 } from '@/editor/toolbar-commands'
 
 const { state } = store
@@ -56,17 +67,43 @@ function scheduleSave() {
 /* ── 斜杠命令 → 具体动作 ── */
 function runSlashFormat(id: SlashCommandId, v: EditorView) {
   switch (id) {
+    // 文本
     case 'heading1': toolbarHeading(v, 1); break
     case 'heading2': toolbarHeading(v, 2); break
     case 'heading3': toolbarHeading(v, 3); break
     case 'bold': toolbarInline(v, 'bold'); break
     case 'italic': toolbarInline(v, 'italic'); break
+    case 'strikethrough': toolbarInline(v, 'strikethrough'); break
+    case 'highlight': toolbarInline(v, 'highlight'); break
+    case 'inlineCode': toolbarInlineCode(v); break
+    // 列表
     case 'bulletList': toolbarBlockPrefix(v, 'bullet'); break
     case 'numberedList': toolbarBlockPrefix(v, 'ordered'); break
     case 'taskList': toolbarBlockPrefix(v, 'task'); break
     case 'quote': toolbarBlockPrefix(v, 'quote'); break
+    // 链接与引用
+    case 'link': toolbarLink(v); break
+    case 'wikiLink': toolbarWrap(v, '[[', ']]'); break
+    case 'noteEmbed': toolbarWrap(v, '![[', ']]'); break
+    case 'blockReference': toolbarWrap(v, '[[#^', ']]'); break
+    case 'footnote': toolbarFootnote(v); break
+    case 'image': toolbarImage(v); break
+    // 笔记
+    case 'tag': toolbarTag(v); break
+    case 'blockId': toolbarBlockId(v); break
+    case 'frontMatter': toolbarFrontMatter(v); break
+    case 'comment': toolbarInline(v, 'comment'); break
+    // 代码 / 表格 / 数学
     case 'codeBlock': toolbarCodeBlock(v); break
+    case 'advancedCodeBlock': toolbarAdvancedCodeBlock(v); break
+    case 'mermaid': toolbarMermaid(v); break
     case 'table': toolbarTable(v, '| 列 1 | 列 2 | 列 3 |'); break
+    case 'inlineMath': toolbarInline(v, 'inlineMath'); break
+    case 'mathBlock': toolbarMathBlock(v); break
+    // 内容块
+    case 'callout': toolbarCallout(v); break
+    case 'details': toolbarDetails(v); break
+    case 'tabs': toolbarTabs(v, '标签一', '标签二'); break
     case 'divider': toolbarHorizontalRule(v); break
     default: break
   }
@@ -75,6 +112,11 @@ function runSlashFormat(id: SlashCommandId, v: EditorView) {
 async function runSlashAi(_id: SlashCommandId, _v: EditorView) {
   // AI 能力属于后续里程碑，先在 UI 上给出明确反馈
   window.dispatchEvent(new CustomEvent('nota:toast', { detail: 'AI 命令尚未接入，敬请期待' }))
+}
+
+/** 工具栏提示：模板里拿不到 window，统一从这里转发 */
+function onToolbarToast(text: string) {
+  window.dispatchEvent(new CustomEvent('nota:toast', { detail: text }))
 }
 
 /* ── 创建 / 销毁编辑器 ── */
@@ -168,7 +210,11 @@ defineExpose({ getView: () => view })
 
 <template>
   <div class="pane">
-    <Toolbar v-if="mode === 'write'" :get-view="() => view" />
+    <Toolbar
+      v-if="mode === 'write'"
+      :get-view="() => view"
+      @toast="onToolbarToast"
+    />
 
     <div class="tabs">
       <button :class="{ on: mode === 'write' }" @click="mode = 'write'">编辑</button>
@@ -263,16 +309,15 @@ defineExpose({ getView: () => view })
   overflow: hidden;
 }
 
-/* ── 预览排版 ── */
+/* ── 预览排版 ──
+   与编辑器用同一套居中公式：左右各留 (容器 - 正文列) / 2，
+   这样「编辑」和「预览」两个模式切换时正文列是完全对齐的。 */
 .preview {
   flex: 1;
-  padding: 32px 48px;
+  padding: 20px max(20px, calc((100% - var(--n-measure)) / 2)) 42vh;
   overflow-y: auto;
   user-select: text;
   line-height: var(--n-lh);
-  max-width: calc(var(--n-measure) + 96px);
-  margin: 0 auto;
-  width: 100%;
 }
 
 .preview :deep(h1),

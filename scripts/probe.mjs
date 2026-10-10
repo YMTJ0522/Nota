@@ -323,6 +323,10 @@ result.editor = await evaluate(
     "  textStart: c ? c.innerText.slice(0, 60) : ''," +
     "  toolbarButtons: document.querySelectorAll('.tb-btn').length," +
     "  dropdowns: document.querySelectorAll('.tb-menu-wrap').length," +
+    "  toolbarOrder: [...document.querySelectorAll('.tb > *')]" +
+    "    .map((e) => e.classList.contains('tb-sep') ? '|'" +
+    "      : (e.querySelector('.tb-btn')?.getAttribute('title') || e.querySelector('.tb-btn')?.getAttribute('aria-label') || e.getAttribute('title') || '?'))" +
+    "    .join(' ')," +
     "  hasView: !!window.__notaView," +
     "  stat: document.querySelector('.stat') ? document.querySelector('.stat').textContent : ''" +
     " };" +

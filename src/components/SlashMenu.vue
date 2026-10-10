@@ -14,9 +14,22 @@ const emit = defineEmits<{ (e: 'pick', id: SlashCommandId): void }>()
 const LABELS = SLASH_LABELS
 
 const ICONS: Record<SlashCommandId, string> = {
+  // 文本
   heading1: 'H1', heading2: 'H2', heading3: 'H3',
-  bold: 'B', italic: 'I', bulletList: '•', numberedList: '1.',
-  taskList: '☑', codeBlock: '</>', table: '▦', quote: '❝', divider: '—',
+  bold: 'B', italic: 'I', strikethrough: 'S', highlight: '▮', inlineCode: '</>',
+  // 列表
+  bulletList: '•', numberedList: '1.', taskList: '☑', quote: '❝',
+  // 链接与引用
+  link: '🔗', wikiLink: '[[', noteEmbed: '![[', blockReference: '[[#', footnote: '[^]',
+  image: '🖼',
+  // 笔记
+  tag: '#', blockId: '^', frontMatter: '---', comment: '%%',
+  // 代码 / 表格 / 数学
+  codeBlock: '```', advancedCodeBlock: '⌗', mermaid: '◈', table: '▦',
+  inlineMath: '$', mathBlock: '$$',
+  // 内容块
+  callout: '❗', details: '▸', tabs: '⧉', divider: '—',
+  // AI
   aiSummarize: '✦', aiOutline: '✦', aiContinue: '✦', aiTranslate: '✦',
 }
 

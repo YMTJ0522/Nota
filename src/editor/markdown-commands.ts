@@ -29,7 +29,8 @@ export type InlineFormat =
   | "strikethrough"
   | "code"
   | "highlight"
-  | "inlineMath";
+  | "inlineMath"
+  | "comment";
 
 export const INLINE_MARKS: Record<InlineFormat, string> = {
   bold: "**",
@@ -38,6 +39,8 @@ export const INLINE_MARKS: Record<InlineFormat, string> = {
   code: "`",
   highlight: "==",
   inlineMath: "$",
+  /** Obsidian 风格的隐藏注释：%% 之间不参与渲染 */
+  comment: "%%",
 };
 
 export type BlockKind = "quote" | "bullet" | "ordered" | "task";
@@ -341,10 +344,16 @@ export function toggleBlockPrefix(
  * setHeading): the current level clears, another level replaces, plain lines
  * gain the marker at the line start.
  */
+/**
+ * Sets the heading level of every selected line.
+ *
+ * level 0 means「正文」— it strips an existing heading marker instead of
+ * adding one, so the same menu entry can both apply and clear a heading.
+ */
 export function toggleHeadingLevel(
   doc: string,
   selection: { from: number; to: number },
-  level: 1 | 2 | 3 | 4 | 5 | 6,
+  level: 0 | 1 | 2 | 3 | 4 | 5 | 6,
 ): MarkdownCommandResult {
   const { start, end } = selectedLineBounds(doc, selection.from, selection.to);
   const lines = doc.slice(start, end).split("\n");
@@ -353,7 +362,10 @@ export function toggleHeadingLevel(
   let offset = start;
   for (const line of lines) {
     const match = HEADING_PATTERN.exec(line);
-    if (match && match[1]?.length === level) {
+    if (level === 0) {
+      // 正文：只移除已有标题标记，没有标记的行原样保留
+      if (match) changes.push({ from: offset, to: offset + match[0].length });
+    } else if (match && match[1]?.length === level) {
       changes.push({ from: offset, to: offset + match[0].length });
     } else if (match) {
       changes.push({ from: offset, to: offset + match[0].length, insert: `${marker} ` });

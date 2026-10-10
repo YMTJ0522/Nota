@@ -16,12 +16,32 @@ export type SlashCommandId =
   | "heading3"
   | "bold"
   | "italic"
+  | "strikethrough"
+  | "highlight"
+  | "inlineCode"
   | "bulletList"
   | "numberedList"
   | "taskList"
-  | "codeBlock"
-  | "table"
   | "quote"
+  | "link"
+  | "wikiLink"
+  | "noteEmbed"
+  | "blockReference"
+  | "footnote"
+  | "image"
+  | "tag"
+  | "blockId"
+  | "frontMatter"
+  | "comment"
+  | "codeBlock"
+  | "advancedCodeBlock"
+  | "mermaid"
+  | "table"
+  | "inlineMath"
+  | "mathBlock"
+  | "callout"
+  | "details"
+  | "tabs"
   | "divider"
   | "aiSummarize"
   | "aiOutline"
@@ -52,20 +72,48 @@ export type SlashCommandItem = {
   labelKey: string;
 };
 
-/** All available slash commands, in display order. */
+/** All available slash commands, in display order.
+ *  分组与顺序跟工具栏保持一致，避免两个入口的认知错位。 */
 export const SLASH_COMMANDS: SlashCommandItem[] = [
+  // —— 文本 ——
   { id: "heading1", group: "formatting", labelKey: "slash.heading1" },
   { id: "heading2", group: "formatting", labelKey: "slash.heading2" },
   { id: "heading3", group: "formatting", labelKey: "slash.heading3" },
   { id: "bold", group: "formatting", labelKey: "slash.bold" },
   { id: "italic", group: "formatting", labelKey: "slash.italic" },
+  { id: "strikethrough", group: "formatting", labelKey: "slash.strikethrough" },
+  { id: "highlight", group: "formatting", labelKey: "slash.highlight" },
+  { id: "inlineCode", group: "formatting", labelKey: "slash.inlineCode" },
+  // —— 列表 ——
   { id: "bulletList", group: "formatting", labelKey: "slash.bulletList" },
   { id: "numberedList", group: "formatting", labelKey: "slash.numberedList" },
   { id: "taskList", group: "formatting", labelKey: "slash.taskList" },
-  { id: "codeBlock", group: "formatting", labelKey: "slash.codeBlock" },
-  { id: "table", group: "formatting", labelKey: "slash.table" },
   { id: "quote", group: "formatting", labelKey: "slash.quote" },
+  // —— 链接与引用 ——
+  { id: "link", group: "formatting", labelKey: "slash.link" },
+  { id: "wikiLink", group: "formatting", labelKey: "slash.wikiLink" },
+  { id: "noteEmbed", group: "formatting", labelKey: "slash.noteEmbed" },
+  { id: "blockReference", group: "formatting", labelKey: "slash.blockReference" },
+  { id: "footnote", group: "formatting", labelKey: "slash.footnote" },
+  { id: "image", group: "formatting", labelKey: "slash.image" },
+  // —— 笔记 ——
+  { id: "tag", group: "formatting", labelKey: "slash.tag" },
+  { id: "blockId", group: "formatting", labelKey: "slash.blockId" },
+  { id: "frontMatter", group: "formatting", labelKey: "slash.frontMatter" },
+  { id: "comment", group: "formatting", labelKey: "slash.comment" },
+  // —— 代码 / 表格 / 数学 ——
+  { id: "codeBlock", group: "formatting", labelKey: "slash.codeBlock" },
+  { id: "advancedCodeBlock", group: "formatting", labelKey: "slash.advancedCodeBlock" },
+  { id: "mermaid", group: "formatting", labelKey: "slash.mermaid" },
+  { id: "table", group: "formatting", labelKey: "slash.table" },
+  { id: "inlineMath", group: "formatting", labelKey: "slash.inlineMath" },
+  { id: "mathBlock", group: "formatting", labelKey: "slash.mathBlock" },
+  // —— 内容块 ——
+  { id: "callout", group: "formatting", labelKey: "slash.callout" },
+  { id: "details", group: "formatting", labelKey: "slash.details" },
+  { id: "tabs", group: "formatting", labelKey: "slash.tabs" },
   { id: "divider", group: "formatting", labelKey: "slash.divider" },
+  // —— AI ——
   { id: "aiSummarize", group: "ai", labelKey: "slash.aiSummarize" },
   { id: "aiOutline", group: "ai", labelKey: "slash.aiOutline" },
   { id: "aiContinue", group: "ai", labelKey: "slash.aiContinue" },
@@ -80,12 +128,32 @@ export const SLASH_LABELS: Record<SlashCommandId, string> = {
   heading3: "三级标题",
   bold: "加粗",
   italic: "斜体",
+  strikethrough: "删除线",
+  highlight: "高亮",
+  inlineCode: "行内代码",
   bulletList: "无序列表",
   numberedList: "有序列表",
   taskList: "任务列表",
-  codeBlock: "代码块",
-  table: "表格",
   quote: "引用块",
+  link: "链接",
+  wikiLink: "双链笔记",
+  noteEmbed: "笔记嵌入",
+  blockReference: "块引用",
+  footnote: "脚注",
+  image: "图片",
+  tag: "标签",
+  blockId: "块 ID",
+  frontMatter: "Front Matter",
+  comment: "隐藏注释",
+  codeBlock: "代码块",
+  advancedCodeBlock: "高级代码块",
+  mermaid: "Mermaid 图表",
+  table: "表格",
+  inlineMath: "行内公式",
+  mathBlock: "块级公式",
+  callout: "Callout 提示块",
+  details: "折叠详情块",
+  tabs: "分栏标签",
   divider: "分割线",
   aiSummarize: "AI 摘要",
   aiOutline: "AI 大纲",
@@ -100,12 +168,32 @@ const SLASH_ALIASES: Partial<Record<SlashCommandId, string[]>> = {
   heading3: ["h3", "title", "bt"],
   bold: ["b", "strong", "jiacu"],
   italic: ["i", "em", "xieti"],
+  strikethrough: ["del", "s", "shanchuxian"],
+  highlight: ["mark", "gaoliang"],
+  inlineCode: ["code", "hangnei"],
   bulletList: ["ul", "list", "wuxu"],
   numberedList: ["ol", "list", "youxu"],
   taskList: ["todo", "task", "renwu"],
-  codeBlock: ["code", "daima"],
-  table: ["biaoge"],
   quote: ["blockquote", "yinyong"],
+  link: ["url", "lianjie"],
+  wikiLink: ["wikilink", "shuanglian", "bl"],
+  noteEmbed: ["embed", "qianru"],
+  blockReference: ["blockref", "kuaiyinyong"],
+  footnote: ["jiazhu", "fz"],
+  image: ["img", "picture", "tupian"],
+  tag: ["biaoqian", "topic"],
+  blockId: ["blockid", "kuaiid"],
+  frontMatter: ["fm", "yaml", "meta"],
+  comment: ["yincang", "zhushi"],
+  codeBlock: ["code", "daima", "fence"],
+  advancedCodeBlock: ["advanced", "gaoji"],
+  mermaid: ["chart", "diagram", "tubiao"],
+  table: ["biaoge"],
+  inlineMath: ["math", "gongshi", "xingshi"],
+  mathBlock: ["math", "formula", "kuaiji"],
+  callout: ["notice", "tishi", "ts"],
+  details: ["collapse", "zhedie", "zd"],
+  tabs: ["tab", "fenlan", "fl"],
   divider: ["hr", "rule", "fenge"],
   aiSummarize: ["ai", "summary", "zhaiyao"],
   aiOutline: ["ai", "outline", "dagang"],

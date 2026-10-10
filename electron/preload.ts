@@ -15,6 +15,8 @@ contextBridge.exposeInMainWorld('api', {
   deleteNote: (file: string): Promise<boolean> => ipcRenderer.invoke('note:delete', file),
   renameNote: (file: string, newName: string): Promise<string> =>
     ipcRenderer.invoke('note:rename', file, newName),
+  pickImage: (workspace: string): Promise<{ rel: string; alt: string; copied: boolean } | null> =>
+    ipcRenderer.invoke('image:pick', workspace),
 
   /* 窗口控制（自绘标题栏用） */
   minimize: (): Promise<void> => ipcRenderer.invoke('window:minimize'),

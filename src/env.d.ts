@@ -14,6 +14,7 @@ interface NoteApi {
   createNote(dir: string, name: string): Promise<string>
   deleteNote(file: string): Promise<boolean>
   renameNote(file: string, newName: string): Promise<string>
+  pickImage(workspace: string): Promise<{ rel: string; alt: string; copied: boolean } | null>
   minimize(): Promise<void>
   toggleMaximize(): Promise<boolean>
   closeWindow(): Promise<void>
