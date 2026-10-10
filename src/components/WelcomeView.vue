@@ -16,9 +16,13 @@ function pick() {
   <div class="welcome">
     <div class="inner">
       <div class="logo">
+        <!-- 与 build/icon.svg 同一套语言：页面 + 折角 + 两条文字行。
+            这里用细描边而非实心，跟应用内其它图标保持一致的克制感。 -->
         <svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M4 4.5A1.5 1.5 0 0 1 5.5 3H17l3 3v13.5A1.5 1.5 0 0 1 18.5 21h-13A1.5 1.5 0 0 1 4 19.5z" />
-          <path d="M8 3v7l2.5-1.8L13 10V3" />
+          <path d="M5 3.5A1.5 1.5 0 0 1 6.5 2h8L20 7.5v13A1.5 1.5 0 0 1 18.5 22h-12A1.5 1.5 0 0 1 5 20.5z" />
+          <path d="M14 2v6h6" />
+          <path d="M9 13h6" />
+          <path d="M9 17h4" />
         </svg>
       </div>
 
