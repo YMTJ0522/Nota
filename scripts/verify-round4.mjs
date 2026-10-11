@@ -390,16 +390,19 @@ const lib = await evaluate(`(async () => {
   const hasRestore = !!colTrash?.querySelector('.tv-restore')
   const attachGoneMeanwhile = !document.querySelector('.av')
 
-  // 切回笔记：列表和正文都还在 —— 换页只是换这一栏的内容
-  document.querySelector('.col-tab[data-view="notes"]')?.click()
-  await wait(500)
+  // 切回笔记：从侧栏那一项走（「笔记/大纲/引用」这排页签只在自己这一类里
+  // 出现，从附件库回来得从侧栏走）
+  pick('所有笔记')?.click()
+  await wait(600)
   const backToNotes = !!document.querySelector('.col[data-view="notes"] .nlist')
+  const tabsBack = document.querySelectorAll('.col-tab').length
   const editorAlive = !!document.querySelector('.stage')
   return {
     cards, attachTitle, rows, hasRestore,
     trashGoneMeanwhile, attachGoneMeanwhile,
     dialogs, backToNotes, editorAlive,
     inColumn: !!colAttach && !!colTrash,
+    tabsBack,
     tabs: document.querySelectorAll('.lib-tab').length,
   }
 })()`)
@@ -411,7 +414,7 @@ ok(
     lib.trashGoneMeanwhile && lib.attachGoneMeanwhile &&
     // 反向断言：弹窗和旧页签组一个都不许有
     lib.dialogs === 0 && lib.tabs === 0 &&
-    lib.backToNotes && lib.editorAlive,
+    lib.backToNotes && lib.tabsBack === 3 && lib.editorAlive,
   lib,
 )
 

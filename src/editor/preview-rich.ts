@@ -410,6 +410,58 @@ export interface HeadingItem {
   id: string
   level: number
   text: string
+  /** 源码里的行号（0 起）。只有从 Markdown 源码提取的标题才带 */
+  line?: number
+}
+
+/**
+ * 从 Markdown 源码里直接提标题。
+ *
+ * 为什么还要这一份：`decorateHeadings` 的目录要等预览渲染过才有，
+ * 纯写作模式（不分栏）下大纲就是空的 —— 而恰恰是专心写的时候最想看结构。
+ * 这份随着打字实时更新，行号也是准的，点了必定能跳到那一行。
+ *
+ * 会跳过 front matter 和围栏代码块里的 `#`，免得把注释当成章节。
+ */
+export function outlineFromSource(raw: string): HeadingItem[] {
+  const out: HeadingItem[] = []
+  const lines = raw.split('\n')
+  let fence = false
+  /** front matter 必须以首行的 --- 开头 */
+  let front = lines[0]?.trim() === '---'
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i]
+    if (/^\s*(```|~~~)/.test(line)) {
+      fence = !fence
+      continue
+    }
+    if (fence) continue
+    if (front) {
+      // 结束分隔符顶多出现在第二行往后
+      if (i > 0 && /^---\s*$/.test(line)) front = false
+      continue
+    }
+    const m = /^(#{1,6})\s+(.*)$/.exec(line)
+    if (!m) continue
+    const level = m[1].length
+    const text = plainInline(m[2])
+    out.push({ id: `h-${out.length}`, level, text, line: i })
+  }
+  return out
+}
+
+/** 抹掉行内的 Markdown 记号，只留看得见的字 */
+function plainInline(s: string): string {
+  return s
+    .replace(/\[([^\]]*)\]\([^)]*\)/g, '$1')
+    .replace(/!\[([^\]]*)\]\([^)]*\)/g, '$1')
+    .replace(/`([^`]*)`/g, '$1')
+    .replace(/(\*\*|__)(.*?)\1/g, '$2')
+    .replace(/(\*|_)(.*?)\1/g, '$2')
+    .replace(/~~(.*?)~~/g, '$1')
+    .replace(/\s+#+\s*$/, '')
+    .trim()
 }
 
 /**

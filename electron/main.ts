@@ -136,15 +136,33 @@ function aiError(e: unknown): string {
   return msg
 }
 
+/** 一段模型返回。text 是回答，reasoning 是推理过程（思考型模型才有） */
+interface AiPiece {
+  text?: string
+  reasoning?: string
+  /** 流结束 */
+  done?: boolean
+}
+
+/** 非流式返回体里可能出现的两种字段名：content 是回答，reasoning_content 是思考 */
+function pickReasoning(msg: Record<string, unknown> | undefined): string {
+  if (!msg) return ''
+  const v = msg.reasoning_content ?? msg.reasoning
+  return typeof v === 'string' ? v : ''
+}
+
 ipcMain.handle(
   'ai:chat',
   async (
-    _e,
+    e,
     cfg: AiRequest,
     messages: ChatMessage[],
-  ): Promise<{ ok: boolean; text?: string; error?: string }> => {
+  ): Promise<{ ok: boolean; text?: string; reasoning?: string; error?: string }> => {
     const controller = new AbortController()
     const timer = setTimeout(() => controller.abort(), AI_TIMEOUT_MS)
+    const push = (p: AiPiece) => {
+      if (!e.sender.isDestroyed()) e.sender.send('ai:delta', p)
+    }
     try {
       const body: ChatMessage[] = cfg.system.trim()
         ? [{ role: 'system', content: cfg.system.trim() }, ...messages]
@@ -156,7 +174,7 @@ ipcMain.handle(
           model: cfg.model,
           messages: body,
           temperature: cfg.temperature,
-          stream: false,
+          stream: true,
         }),
         signal: controller.signal,
       })
@@ -164,14 +182,71 @@ ipcMain.handle(
         const detail = await res.text().catch(() => '')
         return { ok: false, error: `HTTP ${res.status} ${detail.slice(0, 200)}` }
       }
-      const data = (await res.json()) as {
-        choices?: { message?: { content?: string } }[]
+
+      // 有的服务不认 stream:true，原样回了完整 JSON —— 那就当非流式处理
+      const ctype = res.headers.get('content-type') ?? ''
+      if (!ctype.includes('event-stream')) {
+        const data = (await res.json()) as {
+          choices?: { message?: { content?: string; reasoning_content?: string } }[]
+        }
+        const msg = data?.choices?.[0]?.message
+        const text = msg?.content
+        if (typeof text !== 'string') return { ok: false, error: '返回里没有文本内容' }
+        const reasoning = pickReasoning(msg as Record<string, unknown>)
+        if (reasoning) push({ reasoning })
+        push({ text })
+        return { ok: true, text, reasoning }
       }
-      const text = data?.choices?.[0]?.message?.content
-      if (typeof text !== 'string') return { ok: false, error: '返回里没有文本内容' }
-      return { ok: true, text }
-    } catch (e) {
-      return { ok: false, error: aiError(e) }
+
+      /* SSE：一段一段读，攒出回答与推理。每读到一块就发给渲染进程，
+         这样面板上的「思考过程」是真的在往外流，而不是转完圈才一次性冒出来。 */
+      const reader = res.body?.getReader()
+      if (!reader) return { ok: false, error: '响应没有内容' }
+      const decoder = new TextDecoder()
+      let buf = ''
+      let text = ''
+      let reasoning = ''
+      for (;;) {
+        const { done, value } = await reader.read()
+        if (done) break
+        buf += decoder.decode(value, { stream: true })
+        // SSE 以空行分帧；半截的留在 buf 里等下一块
+        let cut = buf.indexOf('\n\n')
+        while (cut >= 0) {
+          const frame = buf.slice(0, cut)
+          buf = buf.slice(cut + 2)
+          cut = buf.indexOf('\n\n')
+          for (const line of frame.split('\n')) {
+            const raw = line.startsWith('data:') ? line.slice(5).trim() : ''
+            if (!raw || raw === '[DONE]') continue
+            let piece: { choices?: { delta?: Record<string, unknown> }[] }
+            try {
+              piece = JSON.parse(raw)
+            } catch {
+              continue
+            }
+            const d = piece?.choices?.[0]?.delta
+            if (!d) continue
+            const r = pickReasoning(d)
+            if (r) {
+              reasoning += r
+              push({ reasoning: r })
+            }
+            const c = d.content
+            if (typeof c === 'string' && c) {
+              text += c
+              push({ text: c })
+            }
+          }
+        }
+      }
+      // 有些实现最后一帧不带空行收尾，把它也吃掉
+      decoder.decode()
+      if (!text && !reasoning) return { ok: false, error: '流里没有收到任何内容' }
+      push({ done: true })
+      return { ok: true, text: text || '（模型只返回了思考过程）', reasoning }
+    } catch (err) {
+      return { ok: false, error: aiError(err) }
     } finally {
       clearTimeout(timer)
     }

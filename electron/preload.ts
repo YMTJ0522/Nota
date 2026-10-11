@@ -64,12 +64,17 @@ contextBridge.exposeInMainWorld('api', {
   attachDelete: (root: string, rel: string): Promise<boolean> =>
     ipcRenderer.invoke('attach:delete', root, rel),
 
-  /* AI：请求在主进程发出，绕开渲染进程的 CORS 限制 */
+  /* AI：请求在主进程发出，绕开渲染进程的 CORS 限制。
+     回答是流式的：onAiDelta 收增量，aiChat 的 Promise 在流结束时才 resolve。 */
   aiChat: (
     cfg: { baseUrl: string; model: string; apiKey: string; system: string; temperature: number },
     messages: { role: string; content: string }[],
-  ): Promise<{ ok: boolean; text?: string; error?: string }> =>
+  ): Promise<{ ok: boolean; text?: string; reasoning?: string; error?: string }> =>
     ipcRenderer.invoke('ai:chat', cfg, messages),
+  onAiDelta: (cb: (d: { text?: string; reasoning?: string; done?: boolean }) => void): void => {
+    ipcRenderer.removeAllListeners('ai:delta')
+    ipcRenderer.on('ai:delta', (_e, d) => cb(d))
+  },
   aiTest: (cfg: {
     baseUrl: string
     model: string

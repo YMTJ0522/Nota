@@ -200,20 +200,22 @@ const libs = await evaluate(`(async () => {
   const hasRestore = !!document.querySelector('.col[data-view="trash"] .tv-restore')
   const bothAtOnce2 = !!document.querySelector('.av')
 
-  document.querySelector('.col-tab[data-view="notes"]')?.click()
-  await new Promise(r => setTimeout(r, 400))
+  // 从侧栏切回笔记：附件/回收站顶上没有页签，它们是一次单独的「去某个地方」
+  pick('所有笔记')?.click()
+  await new Promise(r => setTimeout(r, 600))
   return {
     cards, rows, hasRestore, bothAtOnce1, bothAtOnce2,
     tabs: document.querySelectorAll('.lib-tab').length,
     dialogs: document.querySelectorAll('.dlg, .dlg-mask').length,
     backToNotes: !!document.querySelector('.col[data-view="notes"] .nlist'),
+    tabsBack: document.querySelectorAll('.col-tab').length,
   }
 })()`)
 ok(
   '1.附件库与回收站是资料栏里的两个视图（不再是弹窗）',
   libs.cards === 1 && libs.rows === 1 && libs.hasRestore &&
     libs.tabs === 0 && libs.dialogs === 0 &&
-    !libs.bothAtOnce1 && !libs.bothAtOnce2 && libs.backToNotes,
+    !libs.bothAtOnce1 && !libs.bothAtOnce2 && libs.backToNotes && libs.tabsBack === 3,
   libs,
 )
 
@@ -259,16 +261,18 @@ ok(
   opened,
 )
 
-/* ── 4. 资料栏收起展开 + 落盘 ── */
+/* ── 4. 资料栏收起展开 + 落盘 ──
+   1.9.0：横贯整窗的标题栏去掉了，这枚开关跟着右侧编辑区走 ——
+   它现在在编辑区顶行（和侧栏顶行那枚各管各的）。 */
 const collapse = await evaluate(`(async () => {
-  const btn = document.querySelector('.bar .side-pill[data-role="column-toggle"]')
+  const pick = () => document.querySelector('.ph [data-role="column-toggle"]')
+  const btn = pick()
   if (!btn) return { err: 'no toggle' }
   btn.click()
   await new Promise(r => setTimeout(r, 400))
   const hidden = !document.querySelector('.col')
   const saved = localStorage.getItem('nota-column-open')
-  const btn2 = document.querySelector('.bar .side-pill[data-role="column-toggle"]')
-  btn2?.click()
+  pick()?.click()
   await new Promise(r => setTimeout(r, 400))
   return { hidden, saved, back: !!document.querySelector('.col') }
 })()`)
@@ -397,7 +401,7 @@ ok(
   sync,
 )
 
-/* ── 8. AI 模型选择（紧凑下徽标收成图标，菜单仍是同一套 .n-menu） ── */
+/* ── 8. AI 模型选择（底部那一行，菜单仍是同一套 .n-menu） ── */
 const model = await evaluate(`(async () => {
   const read = () => { try { return JSON.parse(localStorage.getItem('nota-ai') || '{}') } catch { return {} } }
   const nav = [...document.querySelectorAll('.panel .nav-item')]
@@ -405,35 +409,34 @@ const model = await evaluate(`(async () => {
   nav?.click()
   await new Promise(r => setTimeout(r, 600))
 
-  // 紧凑下不显示模型名，只读成一个图标徽标 —— 当前模型改由菜单里的选中态表达
-  const badge = document.querySelector('.chat.compact .model-wrap.model-icon-only .model')
+  // 底部那一行左边的模型名就是当前模型
+  const label = () => document.querySelector('.ag .ag-model-name')?.textContent?.trim() ?? ''
+  const badge = document.querySelector('.ag .m-wrap .ag-model')
   if (!badge) return { err: 'no model badge' }
-  const active = () => document.querySelector('.chat .model-menu .n-menu-item.on .n-menu-name')
+  const active = () => document.querySelector('.ag .m-menu .n-menu-item.on .n-menu-name')
     ?.textContent?.trim() ?? ''
+  const initial = label()
   badge.click()
   await new Promise(r => setTimeout(r, 900))
-  const menu = document.querySelector('.chat .model-menu')
+  const menu = document.querySelector('.ag .m-menu')
   const menuIsN = menu?.classList.contains('n-menu') ?? false
   const items = [...(menu?.querySelectorAll('.n-menu-item') ?? [])]
   const opts = items.map(b => b.querySelector('.n-menu-name')?.textContent?.trim() ?? '')
   const hasSettings = opts.includes('模型设置…')
-  const initial = active()
+  const marked = active()
   const target = items.find(b => (b.querySelector('.n-menu-name')?.textContent ?? '').trim() === 'qwen2.5:7b')
   target?.click()
   await new Promise(r => setTimeout(r, 400))
   const saved = read()
-  const closed = !document.querySelector('.chat .model-menu')
-  // 再开一次，选中态应当已经挪过去了
-  badge.click()
-  await new Promise(r => setTimeout(r, 700))
-  const after = active()
-  document.body.click()
-  await new Promise(r => setTimeout(r, 200))
-  return { initial, menuIsN, opts, hasSettings, after, savedModel: saved.model, closed }
+  const closed = !document.querySelector('.ag .m-menu')
+  return {
+    initial, menuIsN, opts, hasSettings, marked,
+    after: label(), savedModel: saved.model, closed,
+  }
 })()`)
 ok(
-  '8.AI 模型徽标可切换模型（紧凑下是图标徽标）',
-  model.initial === 'llama3.2' && model.menuIsN &&
+  '8.AI 底部的模型选择可切换模型',
+  model.initial === 'llama3.2' && model.menuIsN && model.marked === 'llama3.2' &&
     (model.opts ?? []).includes('qwen2.5:7b') && model.hasSettings &&
     model.after === 'qwen2.5:7b' && model.savedModel === 'qwen2.5:7b' && model.closed,
   model,

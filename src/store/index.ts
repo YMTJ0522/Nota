@@ -1,4 +1,5 @@
 import { reactive, computed } from 'vue'
+import type { HeadingItem } from '@/editor/preview-rich'
 
 /* ─────────────────────────────────────────────
    数据模型：字段名自己定，与任何外部项目无关
@@ -198,6 +199,15 @@ interface State {
   chat: ChatMessage[]
   /** 对话是否在进行中 */
   aiBusy: boolean
+  /** 正在干哪一步。给面板上那句话用，不是装饰：每个阶段都是真在发生的事 */
+  aiStage: string
+  /** AI 这一轮在改哪一篇。null = 跟着当前打开的那篇走 */
+  aiNote: string | null
+  /** 要不要把那一篇的正文一起交给模型 */
+  aiWithNote: boolean
+  /** 当前笔记的标题结构。由编辑区在渲染预览时写进来，
+      中间那一列的「大纲」视图直接读它，不重复解析一遍 Markdown */
+  headings: HeadingItem[]
 }
 
 /** AI 对话消息。role 只有 user / assistant 两种——system 单独放在配置里 */
@@ -207,6 +217,21 @@ export interface ChatMessage {
   content: string
   /** 出错时的提示文案，与 content 分开存，样式不同 */
   error?: string
+  /** 模型自己吐出来的推理过程。只有思考型模型（R1 / QwQ 这类）才有，
+      没有就是空的——面板据此决定「思考过程」那一行显不显示。 */
+  thinking?: string
+  /** 这一轮实际做过的事，按发生顺序记。不是装饰：每一条都能对上一个真动作 */
+  steps?: AgentStep[]
+  /** 这一轮从按下回车到收完答案花了多久 */
+  ms?: number
+}
+
+/** 执行过程里的一步。label 是一句话，detail 是这一步的具体结果 */
+export interface AgentStep {
+  label: string
+  detail?: string
+  status: 'run' | 'ok' | 'fail'
+  ms?: number
 }
 
 /** 一次对话。会话之间互不干扰，切来切去不会串台 */
@@ -271,6 +296,10 @@ const state = reactive<State>({
   activeSessionId: 0,
   chat: [],
   aiBusy: false,
+  aiStage: '',
+  aiNote: null,
+  aiWithNote: true,
+  headings: [],
 })
 
 /** 「最近编辑」的时间窗：7 天内有改动的算最近 */
@@ -482,6 +511,15 @@ function cancelNewFolder() {
 /** 点标签筛选；再点一次同一个标签就取消筛选 */
 function setActiveTag(tag: string | null) {
   state.activeTag = state.activeTag === tag ? null : tag
+  // 标签就是一份筛选结果，切了就得让列表露出来
+  showNoteList()
+}
+
+/** 把中间那一列拉回笔记列表。点导航、点标签时都要先走这一步，
+    否则「我点了最近编辑」会看起来毫无反应——那一列还停在附件库上。
+    AI 那格不动：它是用户明确打开的另一种东西，由 setMainView 负责切回来。 */
+function showNoteList() {
+  if (state.columnView !== 'notes' && state.columnView !== 'ai') setColumnView('notes')
 }
 
 /* ── 导出 ──
@@ -577,9 +615,16 @@ function toggleSidebar() {
 
    AI 编写也从「占满主区的独立页面」改成这一列的第四格 —— 开着对话
    还能看着正文，才是它真正的用法。 */
-export type ColumnView = 'notes' | 'attach' | 'trash' | 'ai'
+export type ColumnView = 'notes' | 'outline' | 'quote' | 'attach' | 'trash' | 'ai'
+
+/** 中间那一列的固定页签：笔记这一类里的三种看法。附件库 / 回收站 / AI 各占一屏，
+    它们由侧栏的入口切过去，不挤在这三个格子里 —— 参考图就是这么分的。 */
+export const NOTE_TABS: ColumnView[] = ['notes', 'outline', 'quote']
+const COLUMN_VIEWS: ColumnView[] = ['notes', 'outline', 'quote', 'attach', 'trash', 'ai']
 
 const COLUMN_KEY = 'nota-column'
+const AI_NOTE_KEY = 'nota-ai-note'
+const AI_WITH_NOTE_KEY = 'nota-ai-withnote'
 
 function setColumnView(v: ColumnView) {
   state.columnView = v
@@ -628,6 +673,9 @@ function setViewMode(m: ViewMode) {
 function setNavFilter(f: NavFilter) {
   state.navFilter = f
   if (f !== 'all') state.activeTag = null
+  // 换了筛选条件，中间那一列得回到笔记列表 —— 停在附件库或大纲上
+  // 会让「我点了最近编辑」看起来毫无反应
+  showNoteList()
 }
 
 function setSearchQuery(q: string) {
@@ -651,10 +699,13 @@ function initPrefs() {
   state.outline = localStorage.getItem('nota-outline') !== '0'
   state.column = localStorage.getItem('nota-column-open') !== '0'
   const cv = localStorage.getItem(COLUMN_KEY)
-  if (cv === 'notes' || cv === 'attach' || cv === 'trash' || cv === 'ai') {
-    state.columnView = cv
+  if (cv && (COLUMN_VIEWS as string[]).includes(cv)) {
+    state.columnView = cv as ColumnView
     state.mainView = cv === 'ai' ? 'ai' : 'note'
   }
+  const an = localStorage.getItem(AI_NOTE_KEY)
+  state.aiNote = an && an.length ? an : null
+  state.aiWithNote = localStorage.getItem(AI_WITH_NOTE_KEY) !== '0'
   for (const key of ['sidebar', 'column', 'outline'] as WidthKey[]) {
     const raw = Number(localStorage.getItem(`nota-w-${key}`))
     if (raw > 0) setWidth(key, raw)
@@ -940,19 +991,81 @@ function initSessions() {
  * 整篇笔记可能有几万字，塞进本地小模型的上下文只会挤掉真正的问题，
  * 所以截一段头部（标题、导语通常都在前面），并如实告诉用户截了多少。
  */
-function noteContext(limit = 1500) {
-  const body = state.draft.trim()
-  if (!body) return ''
-  const head = body.slice(0, limit)
-  const name = activeName.value || '当前笔记'
-  return `【${name}】\n${head}${body.length > limit ? '\n…（已截断）' : ''}`
+const CONTEXT_LIMIT = 1500
+
+function noteContext(body: string, name: string, limit = CONTEXT_LIMIT) {
+  const text = body.trim()
+  if (!text) return ''
+  return `【${name}】\n${text.slice(0, limit)}${text.length > limit ? '\n…（已截断）' : ''}`
+}
+
+/** AI 要处理哪一篇：用户手动指的那篇优先，否则就是当前打开的那篇 */
+function aiTargetPath() {
+  return state.aiNote ?? state.activePath
+}
+
+/** 目标笔记的名字（不带 .md），给面板上的下拉按钮显示 */
+const aiTargetName = computed(() => {
+  const p = aiTargetPath()
+  if (!p) return '未选笔记'
+  const parts = p.split(/[\\/]/)
+  return parts[parts.length - 1].replace(/\.md$/i, '')
+})
+
+/**
+ * 把目标笔记的正文读出来。
+ *
+ * 是当前打开的那篇就直接用草稿（可能还没落盘，读盘会读到旧的）；
+ * 是别的篇才去读盘 —— 用户明确指了另一篇，读盘才是他要的。
+ */
+async function readAiTarget(): Promise<{ name: string; path: string; text: string } | null> {
+  const path = aiTargetPath()
+  if (!path) return null
+  const name = path.split(/[\\/]/).pop()?.replace(/\.md$/i, '') ?? '当前笔记'
+  if (path === state.activePath) return { name, path, text: state.draft }
+  try {
+    const text = await window.api.readNote(path)
+    return { name, path, text: text ?? '' }
+  } catch {
+    return { name, path, text: '' }
+  }
+}
+
+/* ── 执行过程 ──
+   面板上那两行「思考过程 / 执行过程」不能是装饰：每一条都得对上一个
+   真动作。下面这几个小工具负责往当前这一轮的步骤表里记一笔，
+   连带这一步花了多久 —— 时间是真的，不是编的。 */
+
+function makeRecorder(msg: ChatMessage) {
+  const t0 = performance.now()
+  return {
+    begin(label: string, detail?: string) {
+      const s: AgentStep = { label, detail, status: 'run' }
+      // 必须整体换一个新数组再赋回去：直接 push 到原数组上，
+      // 走的是原始对象、不是 reactive 代理，视图收不到通知
+      msg.steps = [...(msg.steps ?? []), s]
+      return { step: s, at: performance.now() }
+    },
+    end(h: { step: AgentStep; at: number }, detail?: string, status: 'ok' | 'fail' = 'ok') {
+      h.step.status = status
+      if (detail !== undefined) h.step.detail = detail
+      h.step.ms = Math.round(performance.now() - h.at)
+      // 同上：换一份副本，让这一步的完成状态真的推给面板
+      msg.steps = [...(msg.steps ?? [])]
+    },
+    get elapsed() {
+      return Math.round(performance.now() - t0)
+    },
+  }
 }
 
 /**
  * 发一轮对话。
  *
- * 请求走主进程的 net.fetch（见 electron/main.ts），本地模型不会被
- * 渲染进程的 CORS 拦；这里只负责拼消息、管状态、把结果写回对话。
+ * 比起「发一句、等、回一句」，这里做的是 agent 该做的事：
+ * 先把这一轮要用的东西备齐（读哪篇笔记、怎么组织上下文），
+ * 每一步都记在消息的执行过程里；模型的推理过程则一边生成一边流进面板。
+ * 面板上看到的步骤和耗时都是真的，不是先摆好一排再逐条打勾。
  */
 async function sendChat(text: string, opts: { withNote?: boolean } = {}) {
   const q = text.trim()
@@ -964,27 +1077,104 @@ async function sendChat(text: string, opts: { withNote?: boolean } = {}) {
 
   pushChat('user', q)
   state.aiBusy = true
+  state.aiStage = '准备上下文…'
 
-  const system = opts.withNote && state.draft.trim()
-    ? `${state.ai.system}\n\n以下是用户正在写的笔记，回答时参考它：\n${noteContext()}`
-    : state.ai.system
+  // 先建一条空的助手消息：步骤、思考、回答都往它身上长，
+  // 这样面板在等第一个字的时候就已经有东西可看。
+  // 注意拿的是数组里那个**响应式代理**，后面所有改动都走它 ——
+  // 改本地那个原始对象不会触发更新，界面上会一直空着。
+  chatSeq += 1
+  state.chat.push({ id: chatSeq, role: 'assistant', content: '' })
+  const msg = state.chat[state.chat.length - 1] as ChatMessage
+  const rec = makeRecorder(msg)
+  const sess = currentSession()
+  if (sess) sess.updatedAt = Date.now()
 
-  const messages = [
-    { role: 'system', content: system },
-    ...state.chat
-      .filter((m) => !m.error)
-      .slice(-12) // 只带最近几轮，长对话不该把上下文无限撑大
-      .map((m) => ({ role: m.role, content: m.content })),
-  ]
+  // 流式增量进来时挂到这条消息上。只有一个请求在跑（aiBusy 守着），
+  // 所以不需要给增量打标记区分是哪一轮
+  let streaming = true
+  window.api.onAiDelta?.((d) => {
+    if (!streaming) return
+    if (d.reasoning) {
+      msg.thinking = (msg.thinking ?? '') + d.reasoning
+      state.aiStage = '正在思考…'
+    }
+    if (d.text) {
+      msg.content += d.text
+      state.aiStage = '正在写回答…'
+    }
+  })
+
+  const withNote = opts.withNote ?? state.aiWithNote
 
   try {
+    // ① 选笔记
+    const h1 = rec.begin(withNote ? '读取要处理的笔记' : '跳过笔记上下文')
+    let ctx: { name: string; text: string } | null = null
+    if (withNote) {
+      const t = await readAiTarget()
+      if (t) ctx = { name: t.name, text: t.text }
+      rec.end(
+        h1,
+        t
+          ? `${t.name} · ${t.text.trim().length} 字${t.text.trim() ? '' : '（空的）'}`
+          : '还没有打开任何笔记',
+      )
+    } else {
+      rec.end(h1, '按你的开关，这轮只带对话本身')
+    }
+
+    // ② 组织上下文
+    const h2 = rec.begin('组织上下文')
+    const noteBlock = ctx ? noteContext(ctx.text, ctx.name) : ''
+    const truncated = !!ctx && ctx.text.trim().length > CONTEXT_LIMIT
+    rec.end(
+      h2,
+      noteBlock
+        ? truncated
+          ? `笔记正文截到 ${CONTEXT_LIMIT} 字，近 12 轮对话一并带上`
+          : '笔记正文与近 12 轮对话一并带上'
+        : '只带近 12 轮对话',
+    )
+
+    const system = noteBlock
+      ? `${state.ai.system}\n\n以下是用户正在写的笔记，回答时参考它：\n${noteBlock}`
+      : state.ai.system
+
+    const messages = [
+      { role: 'system', content: system },
+      ...state.chat
+        .filter((m) => !m.error && m.id !== msg.id && m.content)
+        .slice(-12) // 只带最近几轮，长对话不该把上下文无限撑大
+        .map((m) => ({ role: m.role, content: m.content })),
+    ]
+
+    // ③ 调用模型
+    const h3 = rec.begin('调用模型', state.ai.model || '未配置模型')
+    state.aiStage = '正在等模型…'
     const r = await window.api.aiChat({ ...state.ai }, messages)
-    if (r.ok) pushChat('assistant', r.text ?? '（模型没有返回内容）')
-    else pushChat('assistant', '', r.error ?? '请求失败')
+    streaming = false
+
+    if (r.ok) {
+      rec.end(h3, `${state.ai.model || '模型'} 已返回`)
+      // 非流式（或流被中间掐断）时，把兜底结果补上
+      if (!msg.content) msg.content = r.text ?? ''
+      if (!msg.thinking && r.reasoning) msg.thinking = r.reasoning
+      const h4 = rec.begin('收到回答')
+      rec.end(h4, `${msg.content.length} 字${msg.thinking ? '，另带一段推理' : ''}`)
+    } else {
+      rec.end(h3, r.error ?? '请求失败', 'fail')
+      msg.error = r.error ?? '请求失败'
+    }
   } catch (e) {
-    pushChat('assistant', '', String(e))
+    streaming = false
+    msg.error = String(e)
   } finally {
     state.aiBusy = false
+    state.aiStage = ''
+    msg.ms = rec.elapsed
+    if (sess) sess.updatedAt = Date.now()
+    saveSessions()
   }
 }
 
@@ -1001,6 +1191,19 @@ async function retryChat() {
   // 那样它就和 sessions 里那条会话脱钩了，切走再切回来消息全没了
   state.chat.splice(last)
   await sendChat(q)
+}
+
+/** AI 这一轮改哪一篇。传 null 表示跟着当前打开的那篇走 */
+function setAiNote(path: string | null) {
+  state.aiNote = path
+  if (path) localStorage.setItem(AI_NOTE_KEY, path)
+  else localStorage.removeItem(AI_NOTE_KEY)
+}
+
+/** 要不要把笔记正文交给模型 */
+function setAiWithNote(v: boolean) {
+  state.aiWithNote = v
+  localStorage.setItem(AI_WITH_NOTE_KEY, v ? '1' : '0')
 }
 
 /** 首次展开所有顶层目录 */
@@ -1044,6 +1247,7 @@ export const store = {
   toggleSidebar,
   setColumnView,
   toggleColumn,
+  NOTE_TABS,
   setWidth,
   WIDTH_LIMITS,
   setViewMode,
@@ -1057,6 +1261,10 @@ export const store = {
   resetPrefs,
   /* AI 编写 */
   setMainView,
+  aiTargetName,
+  aiTargetPath,
+  setAiNote,
+  setAiWithNote,
   sendChat,
   retryChat,
   clearChat,

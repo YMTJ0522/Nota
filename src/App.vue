@@ -1,18 +1,18 @@
 <script setup lang="ts">
 import { onMounted, onBeforeUnmount, watch } from 'vue'
 import { store } from '@/store'
-import TitleBar from '@/components/TitleBar.vue'
 import SidePanel from '@/components/SidePanel.vue'
 import SideColumn from '@/components/SideColumn.vue'
 import SplitHandle from '@/components/SplitHandle.vue'
 import EditorPane from '@/components/EditorPane.vue'
 import WelcomeView from '@/components/WelcomeView.vue'
+import WindowControls from '@/components/WindowControls.vue'
 import ToastHost from '@/components/ToastHost.vue'
 
 const { state } = store
 
 /**
- * 附件库 / 回收站不再各开一个窗口，它们现在是中间那一列里的两个视图。
+ * 附件库 / 回收站不再各开一个窗口，它们现在是中间那一列里的视图。
  * 侧栏那两枚入口（可能还带着「我想看回收站」的意图）改成切这一列的视图。
  */
 function onLibrary(e: Event) {
@@ -74,7 +74,10 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="shell">
-    <TitleBar />
+    <!-- 顶部不再有一条横贯整窗的标题栏：
+         侧栏顶部放「资料库」和收起按钮，中间栏顶部放页签，
+         右侧编辑区顶部放标题与路径 —— 三块各管各的，像参考图那样。
+         窗口控制按钮跟着右侧编辑区走（见 EditorPane / 下面那条空态条）。 -->
     <div class="body" :style="widthVars()">
       <SidePanel v-if="state.root" />
       <SplitHandle v-if="state.root && state.sidebar" target="sidebar" label="拖动调整侧边栏宽度" />
@@ -82,6 +85,13 @@ onBeforeUnmount(() => {
       <SplitHandle v-if="state.root && state.column" target="column" label="拖动调整资料栏宽度" />
 
       <main class="main">
+        <!-- 右侧编辑区自己会画顶栏；没有打开笔记时它不出现，
+             所以这两种空态各自补一条顶栏，窗口才拖得动、关得掉 -->
+        <header v-if="!state.activePath" class="bare">
+          <span class="mark">Nota</span>
+          <WindowControls />
+        </header>
+
         <WelcomeView v-if="!state.root" />
         <EditorPane v-else-if="state.activePath" />
         <div v-else class="idle">
@@ -116,6 +126,28 @@ onBeforeUnmount(() => {
   display: flex;
   flex-direction: column;
   background: var(--n-bg);
+}
+
+/* 空态下的顶栏：只有名字和三颗窗口按钮，
+   整条都是拖动区（按钮自己声明 no-drag）。 */
+.bare {
+  flex: none;
+  height: var(--n-topbar);
+  display: flex;
+  align-items: center;
+  padding-left: 14px;
+  background: var(--n-surface);
+  border-bottom: 1px solid var(--n-line);
+  -webkit-app-region: drag;
+}
+
+.mark {
+  flex: 1;
+  min-width: 0;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--n-fg);
 }
 
 .idle {

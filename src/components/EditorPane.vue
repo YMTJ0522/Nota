@@ -12,6 +12,7 @@ import {
   Check,
   Loader2,
   ListTree,
+  PanelLeft,
   PanelRightClose,
   ChevronDown,
   ChevronUp,
@@ -36,6 +37,7 @@ import {
   renderMermaidInHtml,
   renderMathInHtml,
   stripFrontMatter,
+  outlineFromSource,
 } from '@/editor/preview-rich'
 import type { HeadingItem } from '@/editor/preview-rich'
 import { getMarked, highlightFences } from '@/editor/markdown'
@@ -45,6 +47,7 @@ import SlashMenu from '@/components/SlashMenu.vue'
 import EditorActions from '@/components/EditorActions.vue'
 import EditorOutline from '@/components/EditorOutline.vue'
 import SplitHandle from '@/components/SplitHandle.vue'
+import WindowControls from '@/components/WindowControls.vue'
 import {
   toolbarInline,
   toolbarWrap,
@@ -95,6 +98,51 @@ watch(
   },
   { immediate: true },
 )
+
+/** 顶栏第二行显示的相对路径：从工作区根算起，一眼能看出这篇在哪 */
+const relPath = computed(() => {
+  const p = state.activePath ?? ''
+  const root = state.root ?? ''
+  const rel = root && p.startsWith(root) ? p.slice(root.length) : p
+  return rel.replace(/^[\\/]+/, '') || p
+})
+
+/**
+ * 中间那一列「大纲」的数据源。
+ *
+ * 用源码提取的这一份，而不是等预览渲染后再取：分栏模式下两份都能有，
+ * 但纯写作模式预览根本没渲染过，那样大纲会一直是空的。而且从源码走的
+ * 好处是标题一改大纲立刻跟着改，不必等 600ms 的渲染防抖。
+ */
+watch(
+  () => [state.activePath, state.draft] as const,
+  ([p, raw]) => {
+    state.headings = p ? outlineFromSource(raw) : []
+  },
+  { immediate: true },
+)
+
+/** 中间那一列的「大纲」里点了某个标题：两栏都滚过去 */
+function onHeadingRequest(e: Event) {
+  const h = (e as CustomEvent<HeadingItem>).detail
+  if (!h) return
+
+  // 预览在的时候优先按 DOM 元素滚，位置最准（setext 标题也能对上）
+  const box = previewRef.value
+  const el = box?.querySelector<HTMLElement>(`#${CSS.escape(h.id)}`)
+  if (box && el) box.scrollTo({ top: el.offsetTop - 12, behavior: 'smooth' })
+
+  // 编辑区按行号滚：带源码行号的用现成的，没有才退回按文字找
+  const line =
+    h.line ??
+    state.draft
+      .split('\n')
+      .findIndex((l) => /^#{1,6}\s/.test(l) && l.replace(/^#{1,6}\s*/, '').trim() === h.text)
+  if (line < 0 || !view) return
+  const max = view.state.doc.length
+  const pos = Math.min(state.draft.split('\n').slice(0, line).reduce((a, l) => a + l.length + 1, 0), max)
+  view.dispatch({ effects: EditorView.scrollIntoView(pos, { y: 'start' }) })
+}
 
 /** 标题回车 / 失焦时改名 */
 async function commitTitle() {
@@ -663,6 +711,7 @@ onMounted(() => {
   window.addEventListener('keydown', onViewKey)
   window.addEventListener('nota:insert', onInsertRequest)
   window.addEventListener('nota:tag', onTagRequest)
+  window.addEventListener('nota:heading', onHeadingRequest)
 })
 
 /* 预览容器是 v-if 出来的：从「编辑」切到「分栏」时它才出现，
@@ -777,6 +826,7 @@ onBeforeUnmount(() => {
   window.removeEventListener('keydown', onViewKey)
   window.removeEventListener('nota:insert', onInsertRequest)
   window.removeEventListener('nota:tag', onTagRequest)
+  window.removeEventListener('nota:heading', onHeadingRequest)
 })
 
 // 切笔记：activePath 变化时把 draft 灌进 CM。
@@ -828,19 +878,23 @@ defineExpose({ getView: () => view })
 
 <template>
   <div class="pane">
-    <!-- 顶部标题栏：左边可编辑标题，右边视图切换 + 字数。
-         顺序与 inkstone 一致——标题栏在工具栏之上。 -->
+    <!-- 顶部：左边是可编辑的标题，下面一行是它在工作区里的位置；
+         右边是字数、保存状态、动作、视图切换，最右是三颗窗口按钮。
+         这一整条也是拖动窗口的地方（按钮自己声明不参与拖动）。 -->
     <header class="ph">
-      <input
-        v-model="titleDraft"
-        class="ph-title"
-        type="text"
-        placeholder="未命名笔记"
-        aria-label="笔记标题"
-        spellcheck="false"
-        @keydown="onTitleKey"
-        @blur="commitTitle"
-      />
+      <div class="ph-id">
+        <input
+          v-model="titleDraft"
+          class="ph-title"
+          type="text"
+          placeholder="未命名笔记"
+          aria-label="笔记标题"
+          spellcheck="false"
+          @keydown="onTitleKey"
+          @blur="commitTitle"
+        />
+        <span class="ph-path" :title="state.activePath ?? ''">{{ relPath }}</span>
+      </div>
 
       <div class="ph-right">
         <span class="ph-stat">{{ statText }}</span>
@@ -904,7 +958,21 @@ defineExpose({ getView: () => view })
             <Eye :size="12.5" :stroke-width="1.9" />
           </button>
         </div>
+
+        <!-- 中间那一列的开关。顶部按区域划分之后，那条全局标题栏没了，
+             这两枚开关也就各回各家：侧栏那枚在侧栏顶行，这枚在这里。 -->
+        <button
+          class="ph-icon"
+          data-role="column-toggle"
+          :class="{ on: state.column }"
+          :title="state.column ? '收起资料栏' : '展开资料栏'"
+          @click="store.toggleColumn()"
+        >
+          <PanelLeft :size="14" :stroke-width="1.9" />
+        </button>
       </div>
+
+      <WindowControls />
     </header>
 
     <Toolbar
@@ -1007,26 +1075,47 @@ defineExpose({ getView: () => view })
   min-height: 0;
 }
 
-/* ── 顶部标题栏 ──
-   44px，和 inkstone 一致。标题做成「平时像纯文本、悬停/聚焦才显形」的输入框，
-   避免一排边框把界面切得太碎。 */
+/* ── 顶部区域 ──
+   和侧栏、中间栏的顶栏同高（--n-topbar），三栏的分隔线才能连成一条。
+   左边是标题 + 它的位置，右边是动作与视图切换，最右是三颗窗口按钮。
+   整条是窗口拖动区，藏在这里比单开一条横贯整窗的标题栏省一行。 */
 .ph {
   flex: none;
-  height: 44px;
+  height: var(--n-topbar);
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 0 12px;
+  padding-left: 12px;
   border-bottom: 1px solid var(--n-line);
   background: var(--n-surface);
+  -webkit-app-region: drag;
+}
+
+/* 标题与路径竖着叠：参考图里标题下面那行就是「这篇在哪儿」 */
+.ph-id {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+
+.ph-path {
+  padding: 0 8px;
+  font-size: 10.5px;
+  line-height: 1.3;
+  color: var(--n-fg-faint);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .ph-title {
-  flex: 1;
+  width: 100%;
   min-width: 0;
-  height: 30px;
+  height: 20px;
   padding: 0 8px;
-  font-size: 14px;
+  font-size: 13.5px;
   font-weight: 600;
   letter-spacing: -0.01em;
   color: var(--n-fg);
@@ -1034,6 +1123,8 @@ defineExpose({ getView: () => view })
   border: 1px solid transparent;
   border-radius: var(--n-r-sm);
   outline: none;
+  /* 标题栏是拖动区，但标题本身要能点进去改——别把编辑也一起拖走 */
+  -webkit-app-region: no-drag;
   transition: background var(--n-dur) var(--n-ease), border-color var(--n-dur) var(--n-ease);
 }
 
@@ -1057,6 +1148,9 @@ defineExpose({ getView: () => view })
   display: flex;
   align-items: center;
   gap: 10px;
+  padding-right: 10px;
+  /* 里面的按钮都要能点，不能跟着顶栏一起拖 */
+  -webkit-app-region: no-drag;
 }
 
 /* 顶栏里的小图标按钮（侧栏开关等） */

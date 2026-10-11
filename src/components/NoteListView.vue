@@ -7,11 +7,14 @@
  * 下的笔记拍平成一列，标题 + 摘要 + 所属目录 + 标签 + 修改时间一次看全，
  * 不用像目录树那样一层层展开。
  *
+ * 顶上那条搜索框原来在侧栏：两个输入框写同一件事，用哪个都显得另一个多余。
+ * 现在只有这一条 —— 「筛选出哪些笔记」本来就属于这一栏。
+ *
  * 摘要由主进程在扫目录时顺手从文件头部摘出来（见 workspace:tree），
  * 不额外读盘，所以开着这一栏也不会让打开工作区变慢。
  */
-import { computed } from 'vue'
-import { FilePlus2, Star } from 'lucide-vue-next'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { FilePlus2, Search, Star, X } from 'lucide-vue-next'
 import { store } from '@/store'
 
 const { state } = store
@@ -19,8 +22,9 @@ const { state } = store
 const files = computed(() => store.visibleFiles.value)
 const title = computed(() => store.navTitle.value)
 const root = computed(() => state.root ?? '')
+const box = ref<HTMLInputElement | null>(null)
 
-/** 去掉工作区前缀，只留「目录 / 子目录」 */
+/** 去工作区前缀，只留「目录 / 子目录」 */
 function folderOf(p: string) {
   const rel = root.value && p.startsWith(root.value) ? p.slice(root.value.length) : p
   const parts = rel.replace(/^[\\/]+/, '').split(/[\\/]/)
@@ -45,11 +49,42 @@ function when(ms?: number) {
 function open(path: string) {
   void store.openNote(path)
 }
+
+/** 窄轨那枚放大镜点过来时，把焦点交给这里 */
+function focusSearch() {
+  box.value?.focus()
+  box.value?.select()
+}
+
+onMounted(() => window.addEventListener('nota:focus-search', focusSearch))
+onBeforeUnmount(() => window.removeEventListener('nota:focus-search', focusSearch))
 </script>
 
 <template>
   <div class="nlist">
-    <header class="nl-head">
+    <!-- 顶上先是一条筛选：和侧栏的导航一起决定「这一栏列出哪些」 -->
+    <div class="nl-search">
+      <Search class="nl-search-ico" :size="13" :stroke-width="2" />
+      <input
+        ref="box"
+        class="nl-search-input"
+        type="text"
+        placeholder="在笔记中筛选…"
+        spellcheck="false"
+        :value="state.searchQuery"
+        @input="store.setSearchQuery(($event.target as HTMLInputElement).value)"
+      />
+      <button
+        v-if="state.searchQuery"
+        class="nl-search-x"
+        title="清除"
+        @click="store.setSearchQuery('')"
+      >
+        <X :size="12" :stroke-width="2.2" />
+      </button>
+    </div>
+
+    <div class="nl-head">
       <span class="nl-title">{{ title }}</span>
       <span class="nl-count">{{ files.length }}</span>
       <span class="nl-acts">
@@ -57,7 +92,7 @@ function open(path: string) {
           <FilePlus2 :size="14" :stroke-width="1.9" />
         </button>
       </span>
-    </header>
+    </div>
 
     <div class="nl-scroll">
       <div v-if="state.loading" class="nl-empty">读取中…</div>
@@ -101,14 +136,84 @@ function open(path: string) {
   height: 100%;
 }
 
+/* ── 筛选行 ──
+   长得像输入框但更安静：它是这一栏的日常入口，不该比笔记本身还抢眼 */
+.nl-search {
+  flex: none;
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  margin: 8px 8px 2px;
+  padding: 0 8px;
+  border-radius: 10px;
+  border: 1px solid color-mix(in oklab, var(--n-line) 54%, transparent);
+  background: color-mix(in oklab, var(--n-raised) 42%, var(--n-sunken));
+  transition: border-color var(--n-dur) var(--n-ease),
+    background-color var(--n-dur) var(--n-ease);
+}
+
+.nl-search:hover,
+.nl-search:focus-within {
+  border-color: color-mix(in oklab, var(--n-line) 88%, transparent);
+  background: color-mix(in oklab, var(--n-raised) 72%, var(--n-sunken));
+}
+
+.nl-search:focus-within {
+  border-color: var(--n-accent);
+}
+
+.nl-search-ico {
+  flex: none;
+  fill: none;
+  stroke: currentColor;
+  color: var(--n-fg-faint);
+}
+
+.nl-search-input {
+  flex: 1;
+  min-width: 0;
+  font-size: 12px;
+  letter-spacing: -0.01em;
+  color: var(--n-fg);
+  background: none;
+  border: none;
+  outline: none;
+}
+
+.nl-search-input::placeholder {
+  color: color-mix(in oklab, var(--n-fg-faint) 82%, transparent);
+}
+
+.nl-search-x {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  color: var(--n-fg-faint);
+}
+
+.nl-search-x svg {
+  fill: none;
+  stroke: currentColor;
+}
+
+.nl-search-x:hover {
+  background: var(--n-raised);
+  color: var(--n-fg);
+}
+
 .nl-head {
   flex: none;
-  height: 38px;
+  height: 30px;
   display: flex;
   align-items: center;
   gap: 6px;
   padding: 0 8px 0 14px;
-  border-bottom: 1px solid var(--n-line);
 }
 
 .nl-title {

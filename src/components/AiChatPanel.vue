@@ -1,75 +1,185 @@
 <script setup lang="ts">
 /**
- * AI 编写：对话面板。
+ * AI 编写：住在中间那一列里的 agent 面板。
  *
- * 布局照常规 agent 的样子来：
- * - 会话列表能新建 / 切换 / 重命名 / 删除，刷新后还在；
- * - 消息流里 AI 靠左、我靠右——谁是说话的一眼分得清。
+ * 它是 agent，不是聊天框。差别不在话术，在于「看得见它在干什么」：
  *
- * 两种形态：
- * - 默认（宽）：左边一栏常驻会话列表；
- * - `compact`：住在中间那一列里，宽度只有两三百像素，会话列表放不下，
- *   改成头部一个下拉。此时模型选择也收成图标，把宽度让给正文。
+ * · 顶上那张卡片说明它盯的是哪一篇笔记（可以换、可以关掉）；
+ * · 「执行过程」是这一轮真做过的事 —— 读了哪篇、上下文怎么截的、
+ *   调用了哪个模型、收回多少字，每一步都带真实耗时；
+ * · 「思考过程」是模型自己吐出来的推理，边生成边往外流。
+ *   模型不返回推理时这一行直接不出现，而不是摆一行空的充数。
  *
- * 渲染复用预览区那条 Markdown 管线，所以模型吐出来的代码块、
- * 表格、公式长得和笔记预览一模一样。
+ * 布局照参考图来：卡片 → 指令行 → 笔记开关与选择 → 消息流 →
+ * 快捷指令 → 输入区 → 底部的模型与会话。
  */
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import {
   ArrowUp,
+  Bot,
+  BrainCircuit,
   Check,
   ChevronDown,
+  ChevronRight,
   Copy,
   CornerDownLeft,
   Cpu,
-  Eraser,
+  FilePlus2,
+  Heading1,
+  Languages,
+  ListChecks,
+  ListTree,
   Loader2,
   MessageSquare,
-  PanelLeft,
-  Paperclip,
   Pencil,
   Plus,
   RefreshCw,
   Settings,
   Sparkles,
-  Square,
   Trash2,
-  User,
+  Wand2,
+  X,
 } from 'lucide-vue-next'
 import { AI_PRESETS, store } from '@/store'
+import type { ChatMessage } from '@/store'
 import { markdownToHtml } from '@/editor/markdown'
 import { renderMathInHtml, renderMermaidInHtml } from '@/editor/preview-rich'
-
-const props = withDefaults(defineProps<{ compact?: boolean }>(), { compact: false })
 
 const { state } = store
 
 const scroller = ref<HTMLDivElement | null>(null)
 const box = ref<HTMLTextAreaElement | null>(null)
 const draft = ref('')
-/** 是否把当前笔记作为上下文一起发过去 */
-const withNote = ref(true)
-/** 会话栏的显隐。窄窗口下可以收起来，把宽度让给正文 */
-const railOpen = ref(true)
 /** 已渲染的消息 HTML：id → html */
 const rendered = ref<Record<number, string>>({})
 /** 这份 HTML 属于哪个会话。切会话时整段重渲染 */
-const renderedSid = ref(0)
+const renderedSid = ref(-1)
 const copied = ref(0)
-/** 正在改名的会话 id */
-const editingId = ref(0)
-const editingText = ref('')
+/** 顶上那张「AI 助手」卡片关掉后只留一条细边，点它再展开 */
+const cardOpen = ref(true)
+/** 每一段折叠区自己记状态：`<消息 id>:think` / `<消息 id>:steps` */
+const secOpen = ref<Record<string, boolean>>({})
 
 const modelLabel = computed(() => state.ai.model || '未配置模型')
+const noteLabel = computed(() => store.aiTargetName.value)
+const lastId = computed(() => state.chat[state.chat.length - 1]?.id ?? 0)
+const lastMsg = computed(() => state.chat[state.chat.length - 1])
 
-/* ── 模型选择 ──
-   对话中途想换个模型，不该逼人去设置页翻。头部那枚徽标直接做成下拉：
-   打开时顺手拉一次 /models（本地 Ollama、LM Studio 都支持这个接口），
-   拉不到就退回预设 + 当前填的名字，至少能换个已知的。 */
+/** 最近的指令：顶上那一行显示的就是它 */
+const lastAsk = computed(() => {
+  for (let i = state.chat.length - 1; i >= 0; i -= 1) {
+    if (state.chat[i].role === 'user') return state.chat[i].content
+  }
+  return ''
+})
+
+/** 卡片副标题：把「它现在在干什么」说清楚 */
+const cardSub = computed(() => {
+  if (state.aiBusy) return state.aiStage
+  if (!state.aiWithNote) return '只回答问题，不带笔记正文'
+  return `正在处理整篇笔记 · ${noteLabel.value}`
+})
+
+const canSend = computed(() => draft.value.trim().length > 0 && !state.aiBusy)
+
+/** 会话列表按最近发言倒序，跟大多数聊天工具一致 */
+const sessions = computed(() =>
+  [...state.sessions].sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0)),
+)
+
+const activeSessionTitle = computed(
+  () =>
+    state.sessions.find((s) => s.id === state.activeSessionId)?.title ??
+    (state.sessions.length ? '未命名会话' : '新对话'),
+)
+
+/* ── 消息渲染 ──
+   流式回答时长一直在变，不能每来一个字就重排一遍 Markdown 再高亮一次。
+   攒 140ms 渲染一次，视觉上还是「一个字一个字往外冒」。 */
+let renderTimer: ReturnType<typeof setTimeout> | null = null
+
+async function renderMessage(id: number, content: string) {
+  try {
+    const { html } = await markdownToHtml(content)
+    rendered.value = { ...rendered.value, [id]: html }
+  } catch {
+    rendered.value = { ...rendered.value, [id]: '' }
+  }
+}
+
+function scheduleRender(id: number, content: string) {
+  if (renderTimer) return
+  renderTimer = setTimeout(() => {
+    renderTimer = null
+    void (async () => {
+      await renderMessage(id, content)
+      await nextTick()
+      if (pinned) scrollToEnd()
+    })()
+  }, 140)
+}
+
+/** 流式期间贴住底部；用户往上翻就先别拽他回底部 */
+let pinned = true
+
+function onScroll() {
+  const el = scroller.value
+  if (!el) return
+  pinned = el.scrollTop + el.clientHeight >= el.scrollHeight - 48
+}
+
+function scrollToEnd() {
+  const el = scroller.value
+  if (el) el.scrollTop = el.scrollHeight
+}
+
+/** 会话一换、消息一多、回答一长，都在这里被接住 */
+const streamKey = computed(() => {
+  const last = lastMsg.value
+  return `${state.activeSessionId}|${state.chat.length}|${last?.id ?? 0}.${last?.content.length ?? 0}`
+})
+
+watch(
+  streamKey,
+  async () => {
+    if (renderedSid.value !== state.activeSessionId) {
+      renderedSid.value = state.activeSessionId
+      rendered.value = {}
+      for (const m of state.chat) {
+        if (m.role === 'assistant' && !m.error) await renderMessage(m.id, m.content)
+      }
+      await nextTick()
+      pinned = true
+      scrollToEnd()
+      await paintRich()
+      return
+    }
+
+    const last = lastMsg.value
+    if (last && last.role === 'assistant' && !last.error) {
+      if (rendered.value[last.id] === undefined) await renderMessage(last.id, last.content)
+      else if (state.aiBusy) scheduleRender(last.id, last.content)
+    }
+    await nextTick()
+    if (pinned) scrollToEnd()
+    // 公式与图表等回答停了再排：它们比 Markdown 贵得多，流式期间排没意义
+    if (!state.aiBusy) await paintRich()
+  },
+  { immediate: true },
+)
+
+/** 把 KaTeX 与 Mermaid 填进已经渲染好的消息里 */
+async function paintRich() {
+  const el = scroller.value
+  if (!el) return
+  await renderMathInHtml(el)
+  await renderMermaidInHtml(el)
+}
+
+/* ── 模型选择 ── */
 const modelMenu = ref(false)
 const modelLoading = ref(false)
 const serverModels = ref<string[]>([])
-/** 拉过一次就不再自动拉；用户点刷新才重来 */
 const modelsFetched = ref(false)
 
 const modelOptions = computed(() => {
@@ -108,43 +218,30 @@ function pickModel(m: string) {
   modelMenu.value = false
 }
 
-function closeModelMenu() {
-  modelMenu.value = false
-}
-
-/** 窄列里的会话下拉：一列放不下常驻的会话栏，收成菜单 */
+/* ── 笔记选择 ── */
+const noteMenu = ref(false)
 const sessMenu = ref(false)
 
-function toggleSess() {
-  sessMenu.value = !sessMenu.value
+const noteOptions = computed(() => store.allFiles.value)
+
+function pickNote(path: string | null) {
+  store.setAiNote(path)
+  noteMenu.value = false
 }
 
-function closeSess() {
-  sessMenu.value = false
-}
-
-async function pickSessionFromMenu(id: number) {
-  await pickSession(id)
-  closeSess()
-}
-
-async function newSessionFromMenu() {
-  await createSession()
-  closeSess()
-}
-
-/** 点击别处 / Esc 关闭下拉。头部没有 overflow 裁剪，直接用文档事件即可 */
+/** 点别处 / Esc 收起所有就地弹出的菜单 */
 function onDocPointer(e: PointerEvent) {
   const el = e.target as HTMLElement
-  if (!el.closest('.model-wrap')) closeModelMenu()
-  if (!el.closest('.sess-wrap')) closeSess()
+  if (!el.closest('.m-wrap')) modelMenu.value = false
+  if (!el.closest('.np-wrap')) noteMenu.value = false
+  if (!el.closest('.ss-wrap')) sessMenu.value = false
 }
 
 function onEsc(e: KeyboardEvent) {
-  if (e.key === 'Escape') {
-    closeModelMenu()
-    closeSess()
-  }
+  if (e.key !== 'Escape') return
+  modelMenu.value = false
+  noteMenu.value = false
+  sessMenu.value = false
 }
 
 onMounted(() => {
@@ -155,30 +252,22 @@ onMounted(() => {
 onBeforeUnmount(() => {
   document.removeEventListener('pointerdown', onDocPointer)
   document.removeEventListener('keydown', onEsc)
+  if (renderTimer) clearTimeout(renderTimer)
 })
 
-const canSend = computed(() => draft.value.trim().length > 0 && !state.aiBusy)
-/** 当前会话里最后一条助手消息（它才配拥有「重新生成」） */
-const lastAssistantId = computed(() => {
-  for (let i = state.chat.length - 1; i >= 0; i -= 1) {
-    if (state.chat[i].role === 'assistant') return state.chat[i].id
-  }
-  return 0
-})
+/* ── 折叠区 ── */
+function secIsOpen(id: number, kind: 'think' | 'steps') {
+  const k = `${id}:${kind}`
+  // 跑的时候默认摊开让人看见它在干什么，跑完收回参考图那种一行
+  return secOpen.value[k] ?? (state.aiBusy && id === lastId.value)
+}
 
-/** 会话列表按最近发言倒序，跟大多数聊天工具一致 */
-const sessions = computed(() =>
-  [...state.sessions].sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0)),
-)
+function toggleSec(id: number, kind: 'think' | 'steps') {
+  const k = `${id}:${kind}`
+  secOpen.value[k] = !secIsOpen(id, kind)
+}
 
-/** 当前会话的名字：窄列头部那个下拉按钮上要显示它 */
-const activeSessionTitle = computed(
-  () =>
-    state.sessions.find((s) => s.id === state.activeSessionId)?.title ??
-    (state.sessions.length ? '未命名会话' : '新对话'),
-)
-
-/** 列表里只显示「几点」或「几月几号」，完整时间交给 title */
+/* ── 会话 ── */
 function when(ts: number) {
   const d = new Date(ts || Date.now())
   const now = new Date()
@@ -188,107 +277,20 @@ function when(ts: number) {
   return `${d.getMonth() + 1}/${d.getDate()}`
 }
 
-function fullTime(ts: number) {
-  const d = new Date(ts || Date.now())
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(
-    d.getDate(),
-  ).padStart(2, '0')} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(
-    2,
-    '0',
-  )}`
-}
-
-/** 切会话：换完把视图滚到底，不然会停在上一条对话的中间 */
 async function pickSession(id: number) {
+  sessMenu.value = false
   if (id === state.activeSessionId) return
   store.switchSession(id)
   await nextTick()
+  pinned = true
   scrollToEnd()
 }
 
-function removeSession(id: number, e: MouseEvent) {
-  e.stopPropagation()
-  const s = state.sessions.find((x) => x.id === id)
-  if (!s) return
-  if (s.messages.length && !window.confirm(`删除会话「${s.title}」？`)) return
-  store.deleteSession(id)
-}
-
 async function createSession() {
+  sessMenu.value = false
   store.newChat()
   await nextTick()
   box.value?.focus()
-}
-
-/* ── 重命名 ── */
-function startRename(id: number, title: string) {
-  editingId.value = id
-  editingText.value = title
-  nextTick(() => {
-    const el = document.querySelector<HTMLInputElement>('.sess-edit')
-    el?.focus()
-    el?.select()
-  })
-}
-
-function commitRename() {
-  if (!editingId.value) return
-  store.renameSession(editingId.value, editingText.value)
-  editingId.value = 0
-}
-
-function cancelRename() {
-  editingId.value = 0
-}
-
-/** 快速开始：四个最常见的姿势，点一下填进输入框而不是直接发送——留一次反悔的机会 */
-const QUICK: { title: string; hint: string; text: string }[] = [
-  { title: '总结这篇笔记', hint: '抓出结论与待办', text: '把当前笔记总结成要点列表。' },
-  { title: '写个开头', hint: '给主题起头', text: '围绕这个主题写一段开头，两三句就够：' },
-  { title: '润色这段', hint: '改病句、顺表达', text: '把下面这段润色一下，保留原意：\n' },
-  { title: '列出大纲', hint: '先搭骨架', text: '给这个主题列一份三级大纲：' },
-]
-
-/* ── 渲染助手消息 ── */
-async function renderMessage(id: number, content: string) {
-  try {
-    const { html } = await markdownToHtml(content)
-    rendered.value = { ...rendered.value, [id]: html }
-  } catch {
-    rendered.value = { ...rendered.value, [id]: '' }
-  }
-}
-
-/** 新出现的助手消息（含刚重生成的那条）都要渲染一遍 */
-watch(
-  () => [state.chat.length, state.activeSessionId, state.chat[state.chat.length - 1]?.content],
-  async () => {
-    if (renderedSid.value !== state.activeSessionId) {
-      // 切会话时整段重渲染：换过去是别的会话，缓存里没有它的 HTML
-      renderedSid.value = state.activeSessionId
-      rendered.value = {}
-      for (const m of state.chat) {
-        if (m.role === 'assistant' && !m.error) await renderMessage(m.id, m.content)
-      }
-    } else {
-      const msg = state.chat[state.chat.length - 1]
-      if (msg && msg.role === 'assistant' && !msg.error && rendered.value[msg.id] === undefined) {
-        await renderMessage(msg.id, msg.content)
-      }
-    }
-    await nextTick()
-    scrollToEnd()
-    const el = scroller.value
-    if (el) {
-      void renderMathInHtml(el)
-      void renderMermaidInHtml(el)
-    }
-  },
-)
-
-function scrollToEnd() {
-  const el = scroller.value
-  if (el) el.scrollTop = el.scrollHeight
 }
 
 /* ── 输入 ── */
@@ -305,7 +307,8 @@ async function send() {
   draft.value = ''
   await nextTick()
   autoGrow()
-  await store.sendChat(text, { withNote: withNote.value })
+  pinned = true
+  await store.sendChat(text)
 }
 
 function onKey(e: KeyboardEvent) {
@@ -316,7 +319,16 @@ function onKey(e: KeyboardEvent) {
   }
 }
 
-function useQuick(text: string) {
+/** 快捷指令：点一下填进输入框而不是直接发送 —— 留一次反悔的机会 */
+const CHIPS: { label: string; icon: unknown; text: string }[] = [
+  { label: '总结全文', icon: Sparkles, text: '把当前这篇笔记总结成要点列表。' },
+  { label: '生成大纲', icon: ListTree, text: '给当前这篇笔记整理一份三级大纲。' },
+  { label: '起标题', icon: Heading1, text: '根据内容给这篇笔记起一个正式的标题。' },
+  { label: '润色', icon: Wand2, text: '润色当前笔记，使其更通顺、专业，保留原意。' },
+  { label: '译成英文', icon: Languages, text: '把当前笔记翻译成英文，保留 Markdown 结构。' },
+]
+
+function useChip(text: string) {
   draft.value = text
   nextTick(() => {
     box.value?.focus()
@@ -325,6 +337,10 @@ function useQuick(text: string) {
 }
 
 /* ── 消息上的动作 ── */
+function toast(text: string) {
+  window.dispatchEvent(new CustomEvent('nota:toast', { detail: text }))
+}
+
 function insertToNote(content: string) {
   if (!state.activePath) {
     toast('先打开一篇笔记，再插入')
@@ -346,602 +362,384 @@ async function copyMessage(id: number, content: string) {
   }
 }
 
-function toast(text: string) {
-  window.dispatchEvent(new CustomEvent('nota:toast', { detail: text }))
+/** 把这条回答单独存成一篇新笔记，放在当前笔记旁边 */
+async function saveAsNote(content: string) {
+  const dir = state.activePath
+    ? state.activePath.replace(/[\\/][^\\/]+$/, '')
+    : state.root
+  if (!dir) {
+    toast('还没有打开工作区')
+    return
+  }
+  try {
+    const path = await window.api.createNote(dir, lastAsk.value.slice(0, 20) || 'AI 回复')
+    await window.api.writeNote(path, content)
+    await store.refreshTree()
+    await store.openNote(path)
+    toast('已存成一篇新笔记')
+  } catch {
+    toast('存成新笔记失败')
+  }
+}
+
+function fillAsk() {
+  if (!lastAsk.value) return
+  useChip(lastAsk.value)
 }
 
 function openAiSettings() {
   window.dispatchEvent(new CustomEvent('nota:settings', { detail: 'ai' }))
 }
+
+/** 思考过程是一段一段流进来的，末尾跟着一个闪烁光标才像「正在想」 */
+const thinkingLive = computed(
+  () => state.aiBusy && lastMsg.value?.role === 'assistant' && !!lastMsg.value?.thinking,
+)
 </script>
 
 <template>
-  <div class="chat" :class="{ compact }">
-    <!-- 会话栏：默认展开，窄窗口可以收起让正文宽一点。
-         窄列形态下放不下常驻的会话栏，改用头部那个下拉（见 .sess-wrap） -->
-    <aside v-if="railOpen && !compact" class="rail">
-      <div class="rail-head">
-        <span class="rail-title">会话</span>
-        <button class="rail-add" title="新建会话" @click="createSession">
-          <Plus :size="14" :stroke-width="2.2" />
-        </button>
-      </div>
+  <div class="ag">
+    <!-- ① 这张卡片回答「它在为谁干活」：盯哪一篇、要不要带正文、可以关掉 -->
+    <div v-if="cardOpen" class="ag-card">
+      <span class="ag-avatar"><Bot :size="15" :stroke-width="1.9" /></span>
+      <span class="ag-id">
+        <span class="ag-name">AI 助手</span>
+        <span class="ag-sub">{{ cardSub }}</span>
+      </span>
+      <button class="ag-x" title="收起上方设定" @click="cardOpen = false">
+        <X :size="13" :stroke-width="2.2" />
+      </button>
+    </div>
 
-      <div class="rail-list">
-        <div
-          v-for="s in sessions"
-          :key="s.id"
-          class="sess"
-          :class="{ on: s.id === state.activeSessionId }"
-          @click="pickSession(s.id)"
-        >
-          <span class="sess-ico"><MessageSquare :size="13" :stroke-width="1.9" /></span>
+    <template v-else>
+      <button class="ag-stub" @click="cardOpen = true">
+        <Bot :size="12" :stroke-width="1.9" />
+        <span>AI 助手设定</span>
+        <ChevronRight :size="11" :stroke-width="2" />
+      </button>
+    </template>
 
-          <span v-if="editingId === s.id" class="sess-body">
-            <input
-              v-model="editingText"
-              class="sess-edit"
-              spellcheck="false"
-              @click.stop
-              @keydown.enter.prevent="commitRename"
-              @keydown.esc.prevent="cancelRename"
-              @blur="commitRename"
-            />
-          </span>
+    <!-- ② 指令行：这一轮在干嘛，顺手给两个动作 -->
+    <div class="ag-task">
+      <span class="ag-task-text" :class="{ dim: !lastAsk }" :title="lastAsk">
+        {{ lastAsk || '还没有下达指令' }}
+      </span>
+      <button class="ag-mini" :disabled="!lastAsk" title="把这条指令填回输入框，改完再发" @click="fillAsk">
+        <Pencil :size="12" :stroke-width="1.9" />
+      </button>
+      <button class="ag-mini danger" title="清空当前会话" @click="store.clearChat()">
+        <Trash2 :size="12" :stroke-width="1.9" />
+      </button>
+    </div>
 
-          <span v-else class="sess-body">
-            <span class="sess-name">{{ s.title }}</span>
-            <span class="sess-time" :title="fullTime(s.updatedAt)">{{ when(s.updatedAt) }}</span>
-          </span>
+    <!-- ③ 上下文：开关决定要不要把正文交出去，下拉决定交哪一篇 -->
+    <div class="ag-note">
+      <button
+        class="ag-switch"
+        :class="{ on: state.aiWithNote }"
+        role="switch"
+        :aria-checked="state.aiWithNote"
+        :title="state.aiWithNote ? '这一轮会带上笔记正文' : '这一轮只带对话'"
+        @click="store.setAiWithNote(!state.aiWithNote)"
+      >
+        <span class="ag-knob" />
+      </button>
 
-          <span class="sess-acts">
-            <button
-              class="sess-btn"
-              title="重命名"
-              @click.stop="startRename(s.id, s.title)"
-            >
-              <Pencil :size="12" :stroke-width="2" />
-            </button>
-            <button class="sess-btn danger" title="删除会话" @click.stop="removeSession(s.id, $event)">
-              <Trash2 :size="12" :stroke-width="2" />
-            </button>
-          </span>
-        </div>
-      </div>
-    </aside>
-
-    <div class="main">
-      <!-- 头部：和编辑区顶栏同高同语言，切换页面不会有跳感 -->
-      <header class="head">
-        <button
-          v-if="!compact"
-          class="hbtn"
-          :class="{ on: railOpen }"
-          title="会话列表"
-          @click="railOpen = !railOpen"
-        >
-          <PanelLeft :size="14" :stroke-width="1.9" />
+      <div class="np-wrap">
+        <button class="ag-pick" :class="{ on: noteMenu }" :title="`工作对象：${noteLabel}`" @click="noteMenu = !noteMenu">
+          <span class="ag-pick-name">{{ noteLabel }}</span>
+          <ChevronDown :size="11" :stroke-width="2" />
         </button>
 
-        <!-- 窄列：会话列表换成下拉，标题就是当前会话名 -->
-        <div v-if="compact" class="sess-wrap">
+        <div v-if="noteMenu" class="n-menu n-menu-inline np-menu">
+          <div class="n-menu-head"><span>让 AI 处理哪一篇</span></div>
           <button
-            class="hbtn hbtn-wide"
-            :class="{ on: sessMenu }"
-            :title="activeSessionTitle"
-            @click="toggleSess"
+            v-if="state.aiNote"
+            class="n-menu-item"
+            :class="{ on: !state.aiNote }"
+            @click="pickNote(null)"
           >
-            <MessageSquare :size="13" :stroke-width="1.9" />
-            <span class="hbtn-name">{{ activeSessionTitle }}</span>
-            <ChevronDown :size="11" :stroke-width="2" />
+            <span class="n-menu-name">跟随当前打开的笔记</span>
           </button>
-
-          <div v-if="sessMenu" class="n-menu n-menu-inline sess-menu">
-            <div class="n-menu-head">
-              <span>会话</span>
-              <span class="n-menu-head-acts">
-                <button class="sess-mini" title="新建会话" @click="newSessionFromMenu">
-                  <Plus :size="12" :stroke-width="2.2" />
-                </button>
-              </span>
-            </div>
-            <button
-              v-for="s in sessions"
-              :key="s.id"
-              class="n-menu-item"
-              :class="{ on: s.id === state.activeSessionId }"
-              @click="pickSessionFromMenu(s.id)"
-            >
-              <span class="n-menu-name">{{ s.title }}</span>
-              <span class="n-menu-tail">{{ when(s.updatedAt) }}</span>
-            </button>
-            <p v-if="sessions.length === 0" class="n-menu-hint">还没有会话，点上面的 + 开一个</p>
-          </div>
+          <button
+            v-for="f in noteOptions"
+            :key="f.path"
+            class="n-menu-item"
+            :class="{ on: (state.aiNote ?? state.activePath) === f.path }"
+            :title="f.path"
+            @click="pickNote(f.path)"
+          >
+            <span class="n-menu-name">{{ f.name.replace(/\.md$/i, '') }}</span>
+            <Check v-if="(state.aiNote ?? state.activePath) === f.path" :size="12" :stroke-width="2.2" />
+          </button>
+          <p v-if="noteOptions.length === 0" class="n-menu-hint">工作区里还没有笔记</p>
         </div>
+      </div>
+    </div>
 
-        <span v-if="!compact" class="head-ico"><Sparkles :size="15" :stroke-width="1.9" /></span>
-        <span v-if="!compact" class="head-title">AI 编写</span>
+    <!-- ④ 消息流 -->
+    <div ref="scroller" class="stream" @scroll.passive="onScroll">
+      <div v-if="state.chat.length === 0" class="ag-empty">
+        <p class="ag-empty-title">让 AI 帮你写</p>
+        <p class="ag-empty-sub">
+          对话走本机配置的模型（{{ modelLabel }}），也可以接云端 —— 在
+          <button class="link" @click="openAiSettings">AI 编写设置</button> 里改。
+        </p>
+      </div>
 
-        <!-- 模型徽标即选择器：点一下换模型。窄列里只留图标，把宽度让给正文 -->
-        <div class="model-wrap" :class="{ 'model-icon-only': compact }">
-          <button
-            class="model"
-            :class="{ on: modelMenu }"
-            :title="state.ai.model ? `当前模型：${state.ai.model}` : '未配置模型'"
-            @click="toggleModel"
-          >
-            <Cpu v-if="compact" class="model-ico" :size="13" :stroke-width="1.9" />
-            <span v-else class="model-name">{{ modelLabel }}</span>
-            <ChevronDown v-if="!compact" class="model-caret" :size="11" :stroke-width="2" />
-          </button>
+      <div v-for="m in state.chat" :key="m.id" class="row" :class="m.role">
+        <!-- 我说的：靠右，气泡 -->
+        <template v-if="m.role === 'user'">
+          <span class="who">你</span>
+          <div class="bubble">{{ m.content }}</div>
+        </template>
 
-          <div v-if="modelMenu" class="n-menu n-menu-inline model-menu">
-            <div class="n-menu-head">
-              <span>选择模型</span>
-              <span class="n-menu-head-acts">
-                <button
-                  class="sess-mini"
-                  :disabled="modelLoading"
-                  title="从接口重新拉一遍模型列表"
-                  @click="loadModels(true)"
-                >
-                  <Loader2 v-if="modelLoading" class="spin" :size="12" :stroke-width="2" />
-                  <RefreshCw v-else :size="12" :stroke-width="2" />
-                </button>
-              </span>
-            </div>
+        <!-- 它说的：靠左，一段一段摊开，不用气泡裹住 -->
+        <template v-else>
+          <span class="who asst">AI 助手</span>
 
-            <button
-              v-for="m in modelOptions"
-              :key="m"
-              class="n-menu-item"
-              :class="{ on: m === state.ai.model }"
-              @click="pickModel(m)"
-            >
-              <span class="n-menu-name">{{ m }}</span>
-              <Check v-if="m === state.ai.model" :size="12" :stroke-width="2.2" />
-            </button>
-
-            <p v-if="serverModels.length === 0" class="n-menu-hint">
-              {{ modelLoading ? '正在读取接口…' : '没读到接口的模型列表，先列出预设' }}
-            </p>
-
-            <span class="n-menu-sep" />
-            <button class="n-menu-item" @click="openAiSettings">
-              <Settings :size="12" :stroke-width="1.9" />
-              <span class="n-menu-name">模型设置…</span>
+          <div v-if="m.error" class="err">
+            <p class="err-text">{{ m.error }}</p>
+            <button class="err-btn" @click="store.retryChat()">
+              <RefreshCw :size="12" :stroke-width="2" /><span>重试</span>
             </button>
           </div>
-        </div>
 
-        <span class="head-right">
-          <button
-            v-if="state.chat.length"
-            class="hbtn"
-            title="清空当前会话"
-            @click="store.clearChat()"
-          >
-            <Eraser :size="14" :stroke-width="1.9" />
-          </button>
-          <button class="hbtn" title="AI 设置" @click="openAiSettings">
-            <Settings :size="14" :stroke-width="1.9" />
-          </button>
-        </span>
-      </header>
-
-      <div ref="scroller" class="stream">
-        <!-- 空态：给四个可以直接用的起手式，而不是一句「开始对话吧」 -->
-        <div v-if="state.chat.length === 0" class="hero">
-          <span class="hero-ico"><Sparkles :size="22" :stroke-width="1.7" /></span>
-          <h2 class="hero-title">让 AI 帮你写</h2>
-          <p class="hero-sub">
-            对话走本机配置的模型（{{ modelLabel }}），也可以接云端 —— 在
-            <button class="link" @click="openAiSettings">AI 编写设置</button> 里改。
-          </p>
-          <div class="quick">
-            <button
-              v-for="q in QUICK"
-              :key="q.title"
-              class="quick-card"
-              @click="useQuick(q.text)"
-            >
-              <span class="quick-title">{{ q.title }}</span>
-              <span class="quick-hint">{{ q.hint }}</span>
-            </button>
-          </div>
-        </div>
-
-        <!-- 消息：AI 靠左，我靠右 -->
-        <div v-for="m in state.chat" :key="m.id" class="row" :class="m.role">
-          <span class="avatar">
-            <User v-if="m.role === 'user'" :size="13" :stroke-width="2" />
-            <Sparkles v-else :size="13" :stroke-width="2" />
-          </span>
-          <div class="bubble-wrap">
-            <div class="who">{{ m.role === 'user' ? '我' : 'AI' }}</div>
-
-            <div v-if="m.error" class="bubble error">
-              <p class="err-text">{{ m.error }}</p>
-              <button class="err-btn" @click="store.retryChat()">
-                <RefreshCw :size="12" :stroke-width="2" /><span>重试</span>
+          <template v-else>
+            <!-- 思考过程：模型自己吐的推理。没有就整行不出现，不摆空壳 -->
+            <div v-if="m.thinking" class="sec">
+              <button class="sec-head" :aria-expanded="secIsOpen(m.id, 'think')" @click="toggleSec(m.id, 'think')">
+                <ChevronRight class="sec-caret" :class="{ open: secIsOpen(m.id, 'think') }" :size="11" :stroke-width="2.2" />
+                <BrainCircuit :size="12" :stroke-width="1.9" />
+                <span>思考过程</span>
+                <span class="sec-tail">{{ m.thinking.length }} 字</span>
               </button>
+              <div v-show="secIsOpen(m.id, 'think')" class="sec-body think">
+                {{ m.thinking }}<span v-if="thinkingLive && m.id === lastId" class="caret" />
+              </div>
             </div>
 
-            <div v-else-if="m.role === 'user'" class="bubble">{{ m.content }}</div>
+            <!-- 执行过程：这一轮真做过的事，带真实耗时 -->
+            <div v-if="m.steps?.length" class="sec">
+              <button class="sec-head" :aria-expanded="secIsOpen(m.id, 'steps')" @click="toggleSec(m.id, 'steps')">
+                <ChevronRight class="sec-caret" :class="{ open: secIsOpen(m.id, 'steps') }" :size="11" :stroke-width="2.2" />
+                <ListChecks :size="12" :stroke-width="1.9" />
+                <span>执行过程</span>
+                <span class="sec-tail">{{ m.ms ? `${(m.ms / 1000).toFixed(1)}s` : '' }}</span>
+              </button>
+              <ol v-show="secIsOpen(m.id, 'steps')" class="sec-body steps">
+                <li v-for="(s, i) in m.steps" :key="i" class="step" :data-status="s.status">
+                  <span class="step-dot" />
+                  <span class="step-label">{{ s.label }}</span>
+                  <span v-if="s.detail" class="step-detail">{{ s.detail }}</span>
+                  <span v-if="s.ms !== undefined" class="step-ms">{{ s.ms }}ms</span>
+                </li>
+              </ol>
+            </div>
 
             <div
-              v-else
-              class="bubble md md-body"
-              v-html="rendered[m.id] ?? '<p>…</p>'"
+              v-if="m.content"
+              class="md md-body body"
+              v-html="rendered[m.id] ?? ''"
             />
+            <div v-else-if="state.aiBusy && m.id === lastId" class="thinking-hint">
+              <Loader2 class="spin" :size="12" :stroke-width="2" />
+              <span>{{ state.aiStage }}</span>
+            </div>
 
-            <div v-if="!m.error" class="acts">
+            <!-- 动作：一行图标，不写字 —— 窄栏里写字会把这一行撑爆 -->
+            <div v-if="m.content" class="acts">
               <button class="act" title="复制" @click="copyMessage(m.id, m.content)">
-                <Check v-if="copied === m.id" :size="12" :stroke-width="2.2" />
-                <Copy v-else :size="12" :stroke-width="1.9" />
-                <span>{{ copied === m.id ? '已复制' : '复制' }}</span>
+                <Check v-if="copied === m.id" :size="13" :stroke-width="2.2" />
+                <Copy v-else :size="13" :stroke-width="1.9" />
               </button>
               <button class="act" title="插入到当前笔记" @click="insertToNote(m.content)">
-                <CornerDownLeft :size="12" :stroke-width="1.9" /><span>插入笔记</span>
+                <CornerDownLeft :size="13" :stroke-width="1.9" />
+              </button>
+              <button class="act" title="存成一篇新笔记" @click="saveAsNote(m.content)">
+                <FilePlus2 :size="13" :stroke-width="1.9" />
               </button>
               <button
-                v-if="m.role === 'assistant' && m.id === lastAssistantId && !state.aiBusy"
+                v-if="m.id === lastId && !state.aiBusy"
                 class="act"
                 title="重新生成"
                 @click="store.retryChat()"
               >
-                <RefreshCw :size="12" :stroke-width="1.9" /><span>重新生成</span>
+                <RefreshCw :size="13" :stroke-width="1.9" />
               </button>
             </div>
-          </div>
-        </div>
+          </template>
+        </template>
+      </div>
+    </div>
 
-        <!-- 等待中 -->
-        <div v-if="state.aiBusy" class="row assistant">
-          <span class="avatar"><Sparkles :size="13" :stroke-width="2" /></span>
-          <div class="bubble-wrap">
-            <div class="who">AI</div>
-            <div class="bubble typing"><span /><span /><span /></div>
+    <!-- ⑤ 快捷指令 -->
+    <div class="chips">
+      <button v-for="c in CHIPS" :key="c.label" class="chip" @click="useChip(c.text)">
+        <component :is="c.icon" :size="11" :stroke-width="2" />
+        <span>{{ c.label }}</span>
+      </button>
+    </div>
+
+    <!-- ⑥ 输入区 -->
+    <div class="composer">
+      <textarea
+        ref="box"
+        v-model="draft"
+        class="input"
+        rows="1"
+        placeholder="输入消息，Enter 发送"
+        title="Enter 发送，Shift+Enter 换行"
+        spellcheck="false"
+        @input="autoGrow"
+        @keydown="onKey"
+      />
+      <button class="send" :class="{ off: !canSend }" :disabled="!canSend" title="发送 (Enter)" @click="send">
+        <ArrowUp :size="15" :stroke-width="2.2" />
+      </button>
+    </div>
+
+    <!-- ⑦ 底部：模型与会话 -->
+    <div class="ag-foot">
+      <div class="m-wrap">
+        <button class="ag-model" :class="{ on: modelMenu }" :title="`当前模型：${modelLabel}`" @click="toggleModel">
+          <Cpu :size="12" :stroke-width="1.9" />
+          <span class="ag-model-name">{{ modelLabel }}</span>
+        </button>
+
+        <div v-if="modelMenu" class="n-menu n-menu-inline m-menu">
+          <div class="n-menu-head">
+            <span>选择模型</span>
+            <span class="n-menu-head-acts">
+              <button class="ag-mini" :disabled="modelLoading" title="重新拉一遍模型列表" @click="loadModels(true)">
+                <Loader2 v-if="modelLoading" class="spin" :size="12" :stroke-width="2" />
+                <RefreshCw v-else :size="12" :stroke-width="2" />
+              </button>
+            </span>
           </div>
+          <button
+            v-for="m in modelOptions"
+            :key="m"
+            class="n-menu-item"
+            :class="{ on: m === state.ai.model }"
+            @click="pickModel(m)"
+          >
+            <span class="n-menu-name">{{ m }}</span>
+            <Check v-if="m === state.ai.model" :size="12" :stroke-width="2.2" />
+          </button>
+          <p v-if="serverModels.length === 0" class="n-menu-hint">
+            {{ modelLoading ? '正在读取接口…' : '没读到接口的模型列表，先列出预设' }}
+          </p>
+          <span class="n-menu-sep" />
+          <button class="n-menu-item" @click="openAiSettings">
+            <Settings :size="12" :stroke-width="1.9" />
+            <span class="n-menu-name">模型设置…</span>
+          </button>
         </div>
       </div>
 
-      <!-- 输入区 -->
-      <div class="composer">
-        <div class="input-box">
-          <textarea
-            ref="box"
-            v-model="draft"
-            class="input"
-            rows="1"
-            placeholder="问点什么，或者贴一段文字让我改…（Enter 发送，Shift+Enter 换行）"
-            spellcheck="false"
-            @input="autoGrow"
-            @keydown="onKey"
-          />
+      <span class="ag-spacer" />
+
+      <div class="ss-wrap">
+        <button class="ag-mini" :class="{ on: sessMenu }" :title="`会话：${activeSessionTitle}`" @click="sessMenu = !sessMenu">
+          <MessageSquare :size="12" :stroke-width="1.9" />
+        </button>
+
+        <div v-if="sessMenu" class="n-menu n-menu-inline ss-menu">
+          <div class="n-menu-head">
+            <span>会话</span>
+            <span class="n-menu-head-acts">
+              <button class="ag-mini" title="新建会话" @click="createSession">
+                <Plus :size="12" :stroke-width="2.2" />
+              </button>
+            </span>
+          </div>
           <button
-            class="send"
-            :class="{ off: !canSend }"
-            :disabled="!canSend"
-            title="发送 (Enter)"
-            @click="send"
+            v-for="s in sessions"
+            :key="s.id"
+            class="n-menu-item"
+            :class="{ on: s.id === state.activeSessionId }"
+            @click="pickSession(s.id)"
           >
-            <ArrowUp :size="15" :stroke-width="2.2" />
+            <span class="n-menu-name">{{ s.title }}</span>
+            <span class="n-menu-tail">{{ when(s.updatedAt) }}</span>
           </button>
-        </div>
-        <div class="composer-foot">
-          <button
-            class="ctx"
-            :class="{ on: withNote }"
-            :aria-pressed="withNote"
-            @click="withNote = !withNote"
-          >
-            <Paperclip :size="11" :stroke-width="2" />
-            <span>带上当前笔记</span>
-          </button>
-          <span v-if="state.aiBusy" class="busy">
-            <Square :size="9" :stroke-width="3" />生成中…
-          </span>
         </div>
       </div>
+
+      <button class="ag-mini" title="新建会话" @click="createSession">
+        <Plus :size="12" :stroke-width="2.2" />
+      </button>
     </div>
   </div>
 </template>
 
 <style scoped>
-.chat {
+.ag {
   flex: 1;
   min-width: 0;
-  display: flex;
-  background: var(--n-bg);
-}
-
-/* ── 会话栏 ── */
-.rail {
-  flex: none;
-  width: 208px;
-  display: flex;
-  flex-direction: column;
-  border-right: 1px solid var(--n-line);
-  background: var(--n-surface);
-}
-
-.rail-head {
-  flex: none;
-  height: 44px;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 0 10px 0 14px;
-  border-bottom: 1px solid var(--n-line);
-}
-
-.rail-title {
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0.09em;
-  text-transform: uppercase;
-  color: var(--n-fg-faint);
-}
-
-.rail-add {
-  margin-left: auto;
-  width: 24px;
-  height: 24px;
-  padding: 0;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: var(--n-r-sm);
-  color: var(--n-fg-dim);
-  transition: background var(--n-dur) var(--n-ease), color var(--n-dur) var(--n-ease);
-}
-
-.rail-add:hover {
-  background: var(--n-raised);
-  color: var(--n-accent);
-}
-
-.rail-list {
-  flex: 1;
   min-height: 0;
-  overflow-y: auto;
-  padding: 6px;
-}
-
-.sess {
-  position: relative;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  height: 34px;
-  padding: 0 6px 0 9px;
-  border-radius: var(--n-r-md);
-  font-size: 12px;
-  color: var(--n-fg-mid);
-  cursor: pointer;
-  transition: background var(--n-dur) var(--n-ease), color var(--n-dur) var(--n-ease);
-}
-
-.sess:hover {
-  background: var(--n-raised);
-  color: var(--n-fg);
-}
-
-.sess.on {
-  background: color-mix(in oklab, var(--n-accent-soft) 76%, transparent);
-  color: var(--n-fg);
-  font-weight: 600;
-  box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--n-accent) 22%, transparent);
-}
-
-.sess-ico {
-  flex: none;
-  display: inline-flex;
-  color: var(--n-fg-faint);
-}
-
-.sess.on .sess-ico {
-  color: var(--n-accent);
-}
-
-.sess-body {
-  flex: 1;
-  min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 1px;
-}
-
-.sess-name {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.sess-time {
-  font-size: 10px;
-  color: var(--n-fg-faint);
-  font-variant-numeric: tabular-nums;
-}
-
-.sess-edit {
-  width: 100%;
-  height: 22px;
-  padding: 0 6px;
-  border: 1px solid var(--n-accent);
-  border-radius: var(--n-r-sm);
   background: var(--n-bg);
-  color: var(--n-fg);
-  font-size: 12px;
-  outline: none;
 }
 
-/* 操作按钮平时藏着，hover 或选中才出来——列表里不该一直飘着两个图标 */
-.sess-acts {
+/* ══ ① AI 助手卡片 ══ */
+.ag-card {
   flex: none;
-  display: none;
-  align-items: center;
-  gap: 1px;
-}
-
-.sess:hover .sess-acts,
-.sess.on .sess-acts {
-  display: inline-flex;
-}
-
-.sess-btn {
-  width: 22px;
-  height: 22px;
-  padding: 0;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: var(--n-r-sm);
-  color: var(--n-fg-faint);
-  transition: background var(--n-dur) var(--n-ease), color var(--n-dur) var(--n-ease);
-}
-
-.sess-btn:hover {
-  background: var(--n-bg);
-  color: var(--n-fg);
-}
-
-.sess-btn.danger:hover {
-  color: #d0453b;
-}
-
-/* ── 正文 ── */
-.main {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-}
-
-/* ── 头部 ── */
-.head {
-  flex: none;
-  height: 44px;
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 0 12px;
-  border-bottom: 1px solid var(--n-line);
+  gap: 9px;
+  margin: 8px 8px 0;
+  padding: 9px 9px 9px 10px;
+  border: 1px solid var(--n-line);
+  border-radius: var(--n-r-lg);
   background: var(--n-surface);
 }
 
-.head-ico {
-  display: inline-flex;
-  color: var(--n-accent);
-}
-
-.head-title {
-  font-size: 14px;
-  font-weight: 600;
-  letter-spacing: -0.01em;
-  color: var(--n-fg);
-}
-
-/* ── 模型选择 ──
-   徽标本身就是按钮，点开是一个列表。 */
-.model-wrap {
-  position: relative;
-  display: inline-flex;
-  min-width: 0;
-}
-
-.model {
+.ag-avatar {
+  flex: none;
+  width: 28px;
+  height: 28px;
   display: inline-flex;
   align-items: center;
-  gap: 4px;
-  height: 22px;
-  max-width: 260px;
-  padding: 0 6px 0 9px;
-  border-radius: 999px;
-  border: 1px solid var(--n-line);
-  background: var(--n-bg);
-  color: var(--n-fg-dim);
-  transition: border-color var(--n-dur) var(--n-ease), color var(--n-dur) var(--n-ease),
-    background var(--n-dur) var(--n-ease);
-}
-
-.model:hover {
-  border-color: color-mix(in oklab, var(--n-line-strong) 88%, transparent);
-  color: var(--n-fg);
-}
-
-.model.on {
-  border-color: var(--n-accent);
+  justify-content: center;
+  border-radius: 9px;
   background: var(--n-accent-soft);
   color: var(--n-accent);
 }
 
-.model-name {
+.ag-avatar svg {
+  fill: none;
+  stroke: currentColor;
+}
+
+.ag-id {
+  flex: 1;
   min-width: 0;
-  font-family: var(--n-font-mono);
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.ag-name {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--n-fg);
+}
+
+.ag-sub {
   font-size: 10.5px;
+  color: var(--n-fg-faint);
+  white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
-.model-caret {
+.ag-x {
   flex: none;
-  opacity: 0.72;
-}
-
-/* 窄列形态：模型只留一个图标，宽度让给正文 */
-.model-icon-only .model {
-  width: 24px;
-  height: 24px;
-  padding: 0;
-  justify-content: center;
-  border-radius: var(--n-r-sm);
-}
-
-.model-ico {
-  flex: none;
-}
-
-/* 菜单本体走全局那一套（styles/menu.css），这里只管它从哪儿弹、多宽 */
-.model-menu,
-.sess-menu {
-  width: 248px;
-  max-height: 320px;
-  overflow-y: auto;
-}
-
-.sess-menu {
-  left: 0;
-}
-
-/* 宽一点的图标按钮：图标 + 会话名 + 箭头 */
-.hbtn-wide {
-  width: auto;
-  max-width: 100%;
-  padding: 0 7px;
-  gap: 5px;
-}
-
-.hbtn-name {
-  min-width: 0;
-  font-size: 11.5px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.sess-wrap {
-  position: relative;
-  display: inline-flex;
-  min-width: 0;
-}
-
-.sess-mini {
-  width: 20px;
-  height: 20px;
-  padding: 0;
+  width: 22px;
+  height: 22px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -949,109 +747,186 @@ function openAiSettings() {
   color: var(--n-fg-faint);
 }
 
-.sess-mini svg {
+.ag-x svg {
   fill: none;
   stroke: currentColor;
 }
 
-.sess-mini:hover:not(:disabled) {
-  background: var(--n-bg);
-  color: var(--n-accent);
+.ag-x:hover {
+  background: var(--n-raised);
+  color: var(--n-fg);
 }
 
-.sess-mini:disabled {
-  opacity: 0.5;
-}
-
-/* 会话名可能很长，给个上限自己滚 */
-.sess-menu .n-menu-item .n-menu-name {
-  font-family: inherit;
-  font-size: 12px;
-}
-
-.head-right {
-  margin-left: auto;
+/* ══ ② 指令行 ══ */
+.ag-task {
+  flex: none;
   display: flex;
   align-items: center;
   gap: 2px;
+  margin: 6px 8px 0;
+  padding: 0 4px 0 10px;
+  height: 32px;
+  border: 1px solid var(--n-line);
+  border-radius: var(--n-r-lg);
+  background: var(--n-surface);
 }
 
-.hbtn {
-  width: 26px;
-  height: 24px;
-  padding: 0;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: var(--n-r-sm);
+.ag-task-text {
+  flex: 1;
+  min-width: 0;
+  font-size: 11.5px;
   color: var(--n-fg-dim);
-  transition: background var(--n-dur) var(--n-ease), color var(--n-dur) var(--n-ease);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
-.hbtn:hover {
+.ag-task-text.dim {
+  color: var(--n-fg-faint);
+}
+
+/* ══ ③ 上下文开关 + 笔记选择 ══ */
+.ag-note {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 6px 8px 0;
+}
+
+.ag-switch {
+  position: relative;
+  flex: none;
+  width: 34px;
+  height: 20px;
+  border-radius: 999px;
+  border: 1px solid var(--n-line);
+  background: color-mix(in oklab, var(--n-fg-faint) 26%, transparent);
+  transition: background var(--n-dur) var(--n-ease), border-color var(--n-dur) var(--n-ease);
+}
+
+.ag-switch.on {
+  background: var(--n-accent);
+  border-color: var(--n-accent);
+}
+
+.ag-knob {
+  position: absolute;
+  top: 50%;
+  left: 2px;
+  width: 14px;
+  height: 14px;
+  margin-top: -7px;
+  border-radius: 50%;
   background: var(--n-raised);
+  box-shadow: 0 1px 2px color-mix(in oklab, #000 26%, transparent);
+  transition: left var(--n-dur) var(--n-ease);
+}
+
+.ag-switch.on .ag-knob {
+  left: 16px;
+}
+
+.np-wrap,
+.m-wrap,
+.ss-wrap {
+  position: relative;
+  min-width: 0;
+}
+
+.np-wrap {
+  flex: 1;
+}
+
+.ag-pick {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  width: 100%;
+  height: 26px;
+  padding: 0 8px;
+  border: 1px solid var(--n-line);
+  border-radius: 999px;
+  background: var(--n-surface);
+  font-size: 11.5px;
+  color: var(--n-fg-dim);
+  transition: border-color var(--n-dur) var(--n-ease), color var(--n-dur) var(--n-ease);
+}
+
+.ag-pick:hover {
+  border-color: var(--n-line-strong);
+  color: var(--n-fg);
+}
+
+.ag-pick.on {
+  border-color: var(--n-accent);
   color: var(--n-accent);
 }
 
-.hbtn.on {
-  color: var(--n-accent);
+.ag-pick-name {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-align: left;
 }
 
-.hbtn svg,
-.rail-add svg,
-.model svg,
-.model-menu svg {
+.np-menu {
+  left: 0;
+  width: 100%;
+  min-width: 220px;
+  max-height: 320px;
+  overflow-y: auto;
+}
+
+/* 卡片收起来之后的那条细边 */
+.ag-stub {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin: 8px 8px 0;
+  padding: 5px 8px;
+  border-radius: var(--n-r-sm);
+  font-size: 11px;
+  color: var(--n-fg-faint);
+}
+
+.ag-stub svg {
   fill: none;
   stroke: currentColor;
 }
 
-.spin {
-  animation: hb-spin 900ms linear infinite;
+.ag-stub:hover {
+  background: var(--n-raised);
+  color: var(--n-fg-dim);
 }
 
-@keyframes hb-spin {
-  to { transform: rotate(360deg); }
-}
-
-/* ── 消息流 ── */
+/* ══ ④ 消息流 ══ */
 .stream {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
   overscroll-behavior: contain;
+  padding: 10px 10px 4px;
 }
 
-/* 空态 */
-.hero {
-  max-width: 640px;
-  margin: 0 auto;
-  padding: clamp(28px, 9vh, 80px) 24px 24px;
-  text-align: center;
+.ag-empty {
+  padding: 18px 4px 10px;
 }
 
-.hero-ico {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 44px;
-  height: 44px;
-  border-radius: 14px;
-  background: var(--n-accent-soft);
-  color: var(--n-accent);
-}
-
-.hero-title {
-  margin: 14px 0 6px;
-  font-size: 18px;
+.ag-empty-title {
+  margin: 0 0 5px;
+  font-size: 13.5px;
   font-weight: 700;
   letter-spacing: -0.02em;
   color: var(--n-fg);
 }
 
-.hero-sub {
-  margin: 0 auto;
-  max-width: 420px;
-  font-size: 12.5px;
+.ag-empty-sub {
+  margin: 0;
+  font-size: 11.5px;
   line-height: 1.7;
   color: var(--n-fg-dim);
 }
@@ -1062,135 +937,212 @@ function openAiSettings() {
   text-underline-offset: 3px;
 }
 
-.quick {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-  gap: 8px;
-  margin-top: 22px;
-}
-
-.quick-card {
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-  align-items: flex-start;
-  padding: 11px 13px;
-  border: 1px solid var(--n-line);
-  border-radius: var(--n-r-lg);
-  background: var(--n-surface);
-  text-align: left;
-  transition: border-color var(--n-dur) var(--n-ease), background var(--n-dur) var(--n-ease);
-}
-
-.quick-card:hover {
-  border-color: var(--n-accent);
-  background: var(--n-raised);
-}
-
-.quick-title {
-  font-size: 12.5px;
-  font-weight: 600;
-  color: var(--n-fg);
-}
-
-.quick-hint {
-  font-size: 11px;
-  color: var(--n-fg-faint);
-}
-
-/* 一轮对话 */
 .row {
   display: flex;
-  gap: 10px;
-  max-width: 760px;
-  margin: 0 auto;
-  padding: 14px 24px;
-}
-
-/* 我靠右：整行翻转，头像落到右侧，气泡右对齐 */
-.row.user {
-  flex-direction: row-reverse;
-}
-
-.row.user {
-  padding-top: 18px;
-}
-
-.avatar {
-  flex: none;
-  width: 24px;
-  height: 24px;
-  margin-top: 2px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 8px;
-  background: var(--n-surface);
-  color: var(--n-fg-dim);
-}
-
-.row.assistant .avatar {
-  background: var(--n-accent-soft);
-  color: var(--n-accent);
-}
-
-.row.user .avatar {
-  background: var(--n-raised);
-  color: var(--n-fg-mid);
-}
-
-.bubble-wrap {
-  min-width: 0;
-  display: flex;
   flex-direction: column;
-  gap: 4px;
+  /* 靠左是默认：助手那一段贴左边，我说的靠右（见 .row.user） */
+  align-items: flex-start;
+  gap: 5px;
+  margin-bottom: 14px;
 }
 
-.row.user .bubble-wrap {
+/* 我靠右：整条右对齐，只有气泡有底色 */
+.row.user {
   align-items: flex-end;
 }
 
 .who {
-  font-size: 10.5px;
+  font-size: 10px;
   font-weight: 600;
-  letter-spacing: 0.06em;
+  letter-spacing: 0.04em;
   color: var(--n-fg-faint);
 }
 
-.bubble {
-  max-width: 100%;
-  padding: 9px 13px;
-  border-radius: var(--n-r-lg);
+.who.asst {
+  color: var(--n-fg-mid);
+}
+
+.row.user .bubble {
+  max-width: 88%;
+  padding: 9px 11px;
+  border-radius: 11px;
   border: 1px solid var(--n-line);
-  background: var(--n-surface);
-  font-size: 13px;
-  line-height: 1.75;
+  background: var(--n-raised);
+  font-size: 12.5px;
+  line-height: 1.7;
   color: var(--n-fg);
   white-space: pre-wrap;
   word-break: break-word;
 }
 
-/* 我的气泡用强调色淡底，和 AI 的灰底分得开 */
-.row.user .bubble {
-  background: color-mix(in oklab, var(--n-accent-soft) 58%, var(--n-surface));
-  border-color: color-mix(in oklab, var(--n-accent) 18%, var(--n-line));
+/* 助手正文不走气泡：窄栏里一层边框少一层压迫 */
+.body {
+  font-size: 12.5px;
+  line-height: 1.75;
+  color: var(--n-fg);
 }
 
-/* 助手回答走完整排版，所以取消气泡自己的预格式化 */
-.bubble.md {
-  padding: 4px 2px;
-  border: 0;
-  background: transparent;
-  white-space: normal;
+/* ══ 思考过程 / 执行过程 ══ */
+.sec {
+  border-radius: var(--n-r-md);
+  background: color-mix(in oklab, var(--n-surface) 76%, transparent);
 }
 
-.bubble.error {
-  border-color: color-mix(in oklab, #d0453b 34%, var(--n-line));
+.sec-head {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  width: 100%;
+  padding: 5px 8px;
+  font-size: 11px;
+  color: var(--n-fg-dim);
+  border-radius: var(--n-r-md);
+}
+
+.sec-head:hover {
+  background: var(--n-raised);
+  color: var(--n-fg);
+}
+
+.sec-head svg {
+  flex: none;
+  fill: none;
+  stroke: currentColor;
+}
+
+.sec-caret {
+  transition: transform var(--n-dur) var(--n-ease);
+}
+
+.sec-caret.open {
+  transform: rotate(90deg);
+}
+
+.sec-tail {
+  margin-left: auto;
+  font-size: 9.5px;
+  font-variant-numeric: tabular-nums;
+  color: var(--n-fg-faint);
+}
+
+.sec-body {
+  margin: 0;
+  padding: 2px 9px 8px 24px;
+  font-size: 11px;
+  line-height: 1.7;
+}
+
+.think {
+  color: var(--n-fg-dim);
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 220px;
+  overflow-y: auto;
+}
+
+/* 思考时的光标：让「正在往外流」这件事看得见 */
+.caret {
+  display: inline-block;
+  width: 5px;
+  height: 11px;
+  margin-left: 2px;
+  vertical-align: -1px;
+  background: var(--n-accent);
+  animation: ag-blink 1s steps(2, start) infinite;
+}
+
+@keyframes ag-blink {
+  50% { opacity: 0; }
+}
+
+.steps {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.step {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+
+.step-dot {
+  flex: none;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--n-fg-faint);
+  transform: translateY(-1px);
+}
+
+.step[data-status='ok'] .step-dot {
+  background: var(--n-ok);
+}
+
+.step[data-status='fail'] .step-dot {
+  background: var(--n-danger);
+}
+
+.step[data-status='run'] .step-dot {
+  background: var(--n-accent);
+  animation: ag-pulse 1.1s ease-in-out infinite;
+}
+
+@keyframes ag-pulse {
+  50% { opacity: 0.28; }
+}
+
+.step-label {
+  flex: none;
+  color: var(--n-fg-mid);
+}
+
+.step-detail {
+  flex: 1;
+  min-width: 0;
+  color: var(--n-fg-faint);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.step-ms {
+  flex: none;
+  font-size: 9.5px;
+  font-variant-numeric: tabular-nums;
+  color: var(--n-fg-faint);
+}
+
+.thinking-hint {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 0;
+  font-size: 11px;
+  color: var(--n-fg-faint);
+}
+
+.spin {
+  animation: ag-spin 900ms linear infinite;
+}
+
+@keyframes ag-spin {
+  to { transform: rotate(360deg); }
+}
+
+/* 出错 */
+.err {
+  padding: 8px 10px;
+  border-radius: var(--n-r-md);
+  border: 1px solid color-mix(in oklab, #d0453b 34%, var(--n-line));
   background: color-mix(in oklab, #d0453b 7%, var(--n-surface));
+  font-size: 11.5px;
 }
 
 .err-text {
-  margin: 0 0 8px;
+  margin: 0 0 7px;
   color: #b3342b;
 }
 
@@ -1198,8 +1150,8 @@ function openAiSettings() {
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  height: 24px;
-  padding: 0 10px;
+  height: 22px;
+  padding: 0 9px;
   border-radius: var(--n-r-sm);
   border: 1px solid color-mix(in oklab, #d0453b 34%, var(--n-line));
   background: var(--n-bg);
@@ -1207,15 +1159,17 @@ function openAiSettings() {
   color: #b3342b;
 }
 
-.err-btn:hover {
-  background: color-mix(in oklab, #d0453b 10%, var(--n-bg));
+.err-btn svg {
+  fill: none;
+  stroke: currentColor;
 }
 
+/* 动作行：一行图标，悬停才明显 */
 .acts {
   display: flex;
   align-items: center;
-  gap: 2px;
-  opacity: 0;
+  gap: 1px;
+  opacity: 0.55;
   transition: opacity var(--n-dur) var(--n-ease);
 }
 
@@ -1225,15 +1179,19 @@ function openAiSettings() {
 }
 
 .act {
+  width: 24px;
+  height: 24px;
   display: inline-flex;
   align-items: center;
-  gap: 4px;
-  height: 22px;
-  padding: 0 7px;
+  justify-content: center;
   border-radius: var(--n-r-sm);
-  font-size: 10.5px;
   color: var(--n-fg-faint);
   transition: background var(--n-dur) var(--n-ease), color var(--n-dur) var(--n-ease);
+}
+
+.act svg {
+  fill: none;
+  stroke: currentColor;
 }
 
 .act:hover {
@@ -1241,93 +1199,94 @@ function openAiSettings() {
   color: var(--n-accent);
 }
 
-/* 打字中 */
-.bubble.typing {
+/* ══ ⑤ 快捷指令 ══ */
+.chips {
+  flex: none;
+  display: flex;
+  gap: 5px;
+  padding: 4px 10px 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.chips::-webkit-scrollbar {
+  display: none;
+}
+
+.chip {
+  flex: none;
   display: inline-flex;
   align-items: center;
-  gap: 4px;
-  padding: 12px 14px;
+  gap: 5px;
+  height: 24px;
+  padding: 0 9px;
+  border: 1px solid var(--n-line);
+  border-radius: 999px;
+  background: var(--n-surface);
+  font-size: 11px;
+  color: var(--n-fg-dim);
+  white-space: nowrap;
+  transition: border-color var(--n-dur) var(--n-ease), color var(--n-dur) var(--n-ease);
 }
 
-.bubble.typing span {
-  width: 5px;
-  height: 5px;
-  border-radius: 50%;
-  background: var(--n-fg-faint);
-  animation: blink 1.2s infinite ease-in-out;
+.chip svg {
+  fill: none;
+  stroke: currentColor;
+  color: var(--n-accent);
 }
 
-.bubble.typing span:nth-child(2) {
-  animation-delay: 0.18s;
+.chip:hover {
+  border-color: var(--n-accent);
+  color: var(--n-fg);
 }
 
-.bubble.typing span:nth-child(3) {
-  animation-delay: 0.36s;
-}
-
-@keyframes blink {
-  0%,
-  70%,
-  100% {
-    opacity: 0.22;
-  }
-  35% {
-    opacity: 1;
-  }
-}
-
-/* ── 输入区 ── */
+/* ══ ⑥ 输入区 ══ */
 .composer {
   flex: none;
-  padding: 10px 24px 14px;
-}
-
-.input-box {
-  display: flex;
-  align-items: flex-end;
-  gap: 8px;
-  padding: 8px 8px 8px 14px;
-  border: 1px solid var(--n-line);
-  border-radius: var(--n-r-lg);
-  background: var(--n-surface);
-  transition: border-color var(--n-dur) var(--n-ease);
-}
-
-.input-box:focus-within {
-  border-color: var(--n-accent);
+  position: relative;
+  margin: 8px 10px 0;
 }
 
 .input {
-  flex: 1;
-  min-width: 0;
+  display: block;
+  width: 100%;
+  min-height: 62px;
   max-height: 180px;
-  padding: 5px 0;
-  border: 0;
-  background: transparent;
+  padding: 10px 40px 10px 11px;
+  border: 1px solid var(--n-line);
+  border-radius: var(--n-r-lg);
+  background: var(--n-surface);
   color: var(--n-fg);
   font-family: inherit;
-  font-size: 13px;
+  font-size: 12.5px;
   line-height: 1.7;
   resize: none;
   outline: none;
+  transition: border-color var(--n-dur) var(--n-ease);
 }
 
+.input::placeholder {
+  color: var(--n-fg-faint);
+}
+
+.input:focus {
+  border-color: var(--n-accent);
+}
+
+/* 发送键落在输入框里右下角，像参考图那样 */
 .send {
-  flex: none;
-  width: 30px;
-  height: 30px;
-  padding: 0;
+  position: absolute;
+  right: 7px;
+  bottom: 7px;
+  width: 28px;
+  height: 28px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   border-radius: var(--n-r-md);
   background: var(--n-accent);
-  color: #fff;
+  color: var(--n-on-accent);
   transition: opacity var(--n-dur) var(--n-ease);
-}
-
-.send.off {
-  opacity: 0.34;
 }
 
 .send svg {
@@ -1335,43 +1294,107 @@ function openAiSettings() {
   stroke: currentColor;
 }
 
-.composer-foot {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin-top: 8px;
+.send.off {
+  opacity: 0.34;
 }
 
-.ctx {
+/* ══ ⑦ 底部 ══ */
+.ag-foot {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 7px 10px 8px;
+}
+
+.ag-spacer {
+  flex: 1;
+}
+
+.ag-model {
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  height: 24px;
-  padding: 0 9px;
-  border-radius: 999px;
-  border: 1px solid var(--n-line);
-  background: var(--n-surface);
+  max-width: 100%;
+  height: 22px;
+  padding: 0 6px;
+  border-radius: var(--n-r-sm);
   font-size: 10.5px;
-  color: var(--n-fg-dim);
+  color: var(--n-fg-faint);
   transition: background var(--n-dur) var(--n-ease), color var(--n-dur) var(--n-ease);
 }
 
-.ctx.on {
-  border-color: color-mix(in oklab, var(--n-accent) 34%, var(--n-line));
-  background: var(--n-accent-soft);
+.ag-model svg {
+  flex: none;
+  fill: none;
+  stroke: currentColor;
+}
+
+.ag-model:hover,
+.ag-model.on {
+  background: var(--n-raised);
+  color: var(--n-fg-dim);
+}
+
+.ag-model-name {
+  min-width: 0;
+  font-family: var(--n-font-mono);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ag-mini {
+  flex: none;
+  width: 22px;
+  height: 22px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--n-r-sm);
+  color: var(--n-fg-faint);
+  transition: background var(--n-dur) var(--n-ease), color var(--n-dur) var(--n-ease);
+}
+
+.ag-mini svg {
+  fill: none;
+  stroke: currentColor;
+}
+
+.ag-mini:hover:not(:disabled),
+.ag-mini.on {
+  background: var(--n-raised);
   color: var(--n-accent);
 }
 
-.busy {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  font-size: 10.5px;
-  color: var(--n-fg-faint);
+.ag-mini.danger:hover:not(:disabled) {
+  color: var(--n-danger);
 }
 
-.busy svg {
-  fill: currentColor;
-  stroke: none;
+.ag-mini:disabled {
+  opacity: 0.4;
+}
+
+/* 弹出的菜单：往上开，别被底边裁掉 */
+.m-menu,
+.ss-menu {
+  bottom: calc(100% + 6px);
+  top: auto;
+  width: 236px;
+  max-height: 320px;
+  overflow-y: auto;
+}
+
+.m-menu {
+  left: 0;
+}
+
+.ss-menu {
+  right: 0;
+}
+
+.ss-menu .n-menu-item .n-menu-name {
+  font-family: inherit;
+  font-size: 12px;
 }
 </style>

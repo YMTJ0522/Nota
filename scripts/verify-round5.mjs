@@ -279,51 +279,55 @@ ok(
   navSel,
 )
 
-/* ── 3. AI 编写在资料栏里（紧凑布局，不再占满主区） ──
+/* ── 3. AI 编写在资料栏里（agent 形态，不再占满主区） ──
    铺满整屏时它把要改的正文挡住了 —— 而它的用法本来就是「边看边改」。
-   所以挪进中间那一列：左边聊，右边正文还看得见。 */
+   所以挪进中间那一列：左边聊，右边正文还看得见。
+   1.9.0 起这一栏按参考图重排：卡片 → 指令行 → 上下文开关与笔记选择 →
+   消息流 → 快捷指令 → 输入区 → 底部模型与会话。 */
 const chat = await evaluate(`(async () => {
   await new Promise(r => setTimeout(r, 500))
-  const el = document.querySelector('.chat')
-  const col = el?.closest('.col')
+  const el = document.querySelector('.col[data-view="ai"] .ag')
   return {
     exists: !!el,
-    compact: el?.classList.contains('compact') ?? false,
-    inColumn: col?.getAttribute('data-view') === 'ai',
-    // 紧凑下标题让位给会话下拉，模型收成一个图标
-    sessPicker: !!el?.querySelector('.sess-wrap .hbtn'),
-    modelIconOnly: !!el?.querySelector('.model-wrap.model-icon-only'),
-    railHidden: !el?.querySelector('.rail'),
-    hero: !!el?.querySelector('.hero-title'),
-    quick: el?.querySelectorAll('.quick-card').length ?? 0,
+    inColumn: el?.closest('.col')?.getAttribute('data-view') === 'ai',
+    card: !!el?.querySelector('.ag-card'),
+    agentName: el?.querySelector('.ag-name')?.textContent?.trim() ?? '',
+    cardSub: el?.querySelector('.ag-sub')?.textContent?.trim() ?? '',
+    task: !!el?.querySelector('.ag-task'),
+    noteSwitch: !!el?.querySelector('.ag-switch'),
+    notePick: !!el?.querySelector('.ag-pick'),
+    chips: el?.querySelectorAll('.chip').length ?? 0,
     hasComposer: !!el?.querySelector('.composer .input'),
+    hasModel: !!el?.querySelector('.ag-model'),
+    hasSend: !!el?.querySelector('.composer .send'),
     width: Math.round(el?.getBoundingClientRect().width ?? 0),
     // 正文还得在 —— 这是搬进来的全部理由
     editorAlive: !!document.querySelector('.stage'),
   }
 })()`)
 ok(
-  '3.AI 编写在资料栏里（紧凑）且正文仍可见',
-  chat.exists && chat.compact && chat.inColumn && chat.sessPicker &&
-    chat.modelIconOnly && chat.railHidden &&
-    chat.hero && chat.quick === 4 && chat.hasComposer &&
-    chat.width > 200 && chat.width < 600 && chat.editorAlive,
+  '3.AI 编写在资料栏里（agent 卡片 + 上下文开关 + 输入区），正文仍可见',
+  chat.exists && chat.inColumn && chat.card && chat.agentName === 'AI 助手' &&
+    chat.cardSub.includes('笔记') &&
+    chat.task && chat.noteSwitch && chat.notePick && chat.chips >= 3 &&
+    chat.hasComposer && chat.hasSend && chat.hasModel &&
+    chat.width > 200 && chat.width < 700 && chat.editorAlive,
   chat,
 )
 
 /* ── 4. 发消息后助手回答被渲染成 Markdown ── */
 const asked = await evaluate(`(async () => {
-  const box = document.querySelector('.chat .composer .input')
+  const box = document.querySelector('.ag .composer .input')
   if (!box) return { err: 'no composer' }
   box.focus()
   box.value = '给我一段带代码的示例'
   box.dispatchEvent(new Event('input', { bubbles: true }))
   await new Promise(r => setTimeout(r, 200))
-  document.querySelector('.chat .composer .send')?.click()
+  document.querySelector('.ag .composer .send')?.click()
   await new Promise(r => setTimeout(r, 1200))
-  const rows = [...document.querySelectorAll('.chat .stream .row')]
+  const rows = [...document.querySelectorAll('.ag .stream .row')]
   const assistant = rows.filter(r => r.classList.contains('assistant'))
-  const bubble = assistant[assistant.length - 1]?.querySelector('.bubble.md')
+  const bubble = assistant[assistant.length - 1]?.querySelector('.body.md-body')
   const navCount = document.querySelector('.panel .nav-item .nav-label')
   return {
     rows: rows.length,
@@ -335,6 +339,9 @@ const asked = await evaluate(`(async () => {
     codeLines: bubble?.querySelectorAll('.pv-line').length ?? 0,
     paras: bubble?.querySelectorAll('p').length ?? 0,
     acts: assistant[assistant.length - 1]?.querySelectorAll('.act').length ?? 0,
+    // 执行过程与思考过程：两条都要在，且都带着真实内容
+    hasSteps: !!assistant[assistant.length - 1]?.querySelector('.steps'),
+    stepCount: assistant[assistant.length - 1]?.querySelectorAll('.step').length ?? 0,
     _nav: !!navCount,
   }
 })()`)
@@ -342,7 +349,8 @@ ok(
   '4.AI 回答渲染成 Markdown',
   asked.rows === 2 && asked.assistant === 1 && asked.hasMdBody &&
     asked.codeBlocks === 1 && asked.codeShell === 0 &&
-    asked.codeLangCls === 'language-ts' && asked.codeLines === 2 && asked.paras > 0,
+    asked.codeLangCls === 'language-ts' && asked.codeLines === 2 && asked.paras > 0 &&
+    asked.hasSteps && asked.stepCount >= 3,
   asked,
 )
 
@@ -641,12 +649,18 @@ const sess = await evaluate(`(async () => {
   nav?.click()
   await wait(500)
 
+  // 1.9.0：会话不再占一栏常驻，收到底部那一枚按钮里
   const openMenu = async () => {
-    document.querySelector('.chat .sess-wrap .hbtn')?.click()
+    const btn = document.querySelector('.ag .ss-wrap .ag-mini')
+    if (!btn?.classList.contains('on')) btn?.click()
     await wait(320)
-    return document.querySelector('.chat .sess-menu')
+    return document.querySelector('.ag .ss-menu')
   }
-  const names = () => [...document.querySelectorAll('.chat .sess-menu .n-menu-name')]
+  const closeMenu = async () => {
+    document.body.click()
+    await wait(200)
+  }
+  const names = () => [...document.querySelectorAll('.ag .ss-menu .n-menu-name')]
     .map(e => e.textContent.trim())
 
   const menu = await openMenu()
@@ -654,54 +668,59 @@ const sess = await evaluate(`(async () => {
   const before = menu?.querySelectorAll('.n-menu-item').length ?? 0
 
   // 新建：菜单顶栏那个 +
-  menu?.querySelector('.sess-mini')?.click()
+  menu?.querySelector('.n-menu-head-acts .ag-mini')?.click()
   await wait(450)
-  const titleAfterNew = document.querySelector('.chat .sess-wrap .hbtn-name')?.textContent?.trim() ?? ''
-  const emptyRows = document.querySelectorAll('.chat .stream .row').length
+  // 底部那枚按钮的 title 里写着当前会话名
+  const titleAfterNew = document.querySelector('.ag .ss-wrap .ag-mini')?.getAttribute('title') ?? ''
+  const emptyRows = document.querySelectorAll('.ag .stream .row').length
 
   await openMenu()
   const after = names().length
-  const activeFirst = document.querySelector('.chat .sess-menu .n-menu-item')?.classList.contains('on') ?? false
-  document.body.click()
-  await wait(200)
+  const activeFirst = document.querySelector('.ag .ss-menu .n-menu-item')?.classList.contains('on') ?? false
+  await closeMenu()
 
   // 发一条，会话标题应自动变成那句提问
-  const box = document.querySelector('.chat .composer .input')
+  const box = document.querySelector('.ag .composer .input')
   box.focus(); box.value = '这是一句用来当标题的提问'
   box.dispatchEvent(new Event('input', { bubbles: true }))
   await wait(150)
-  document.querySelector('.chat .composer .send')?.click()
+  document.querySelector('.ag .composer .send')?.click()
   await wait(1300)
-  const titleAfterAsk = document.querySelector('.chat .sess-wrap .hbtn-name')?.textContent?.trim() ?? ''
+  await openMenu()
+  const titleAfterAsk = names().join('|')
+  await closeMenu()
 
-  // 我的消息靠右、AI 靠左
-  const userRow = document.querySelector('.chat .stream .row.user')
-  const aiRow = document.querySelector('.chat .stream .row.assistant')
-  const dir = { user: userRow ? getComputedStyle(userRow).flexDirection : '', ai: aiRow ? getComputedStyle(aiRow).flexDirection : '' }
+  // 我的消息靠右、AI 靠左（现在是竖向排列，靠的是对齐方式）
+  const userRow = document.querySelector('.ag .stream .row.user')
+  const aiRow = document.querySelector('.ag .stream .row.assistant')
+  const align = {
+    user: userRow ? getComputedStyle(userRow).alignItems : '',
+    ai: aiRow ? getComputedStyle(aiRow).alignItems : '',
+  }
 
   // 切回最早那条，消息要跟着换
   const m2 = await openMenu()
   const list = [...(m2?.querySelectorAll('.n-menu-item') ?? [])]
   list[list.length - 1]?.click()
   await wait(700)
-  const rowsAfterSwitch = document.querySelectorAll('.chat .stream .row').length
+  const rowsAfterSwitch = document.querySelectorAll('.ag .stream .row').length
 
   let saved = {}
   try { saved = JSON.parse(localStorage.getItem('nota-chat-sessions') || '{}') } catch {}
   return {
     menuIsDropdown, before, after, activeFirst, titleAfterNew, emptyRows,
-    titleAfterAsk, dir, rowsAfterSwitch,
+    titleAfterAsk, align, rowsAfterSwitch,
     savedCount: (saved.sessions || []).length,
     savedActive: saved.active,
     savedMsgs: (saved.sessions || []).reduce((n, s) => n + (s.messages || []).length, 0),
   }
 })()`)
 ok(
-  '15.会话管理：头部下拉里新建 / 自动起名 / 左右分明 / 落盘',
+  '15.会话管理：底部下拉里新建 / 自动起名 / 左右分明 / 落盘',
   sess.menuIsDropdown && sess.after === sess.before + 1 && sess.activeFirst &&
-    sess.titleAfterNew === '新对话' && sess.emptyRows === 0 &&
+    sess.titleAfterNew.includes('新对话') && sess.emptyRows === 0 &&
     sess.titleAfterAsk.includes('这是一句用来当标题的提问') &&
-    sess.dir.user === 'row-reverse' && sess.dir.ai === 'row' &&
+    sess.align.user === 'flex-end' && sess.align.ai === 'flex-start' &&
     sess.rowsAfterSwitch > 0 &&
     sess.savedCount >= 2 && sess.savedActive > 0 && sess.savedMsgs >= 2,
   sess,

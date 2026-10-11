@@ -41,7 +41,9 @@ interface NoteApi {
   aiChat(
     cfg: { baseUrl: string; model: string; apiKey: string; system: string; temperature: number },
     messages: { role: string; content: string }[],
-  ): Promise<{ ok: boolean; text?: string; error?: string }>
+  ): Promise<{ ok: boolean; text?: string; reasoning?: string; error?: string }>
+  /** 流式增量：回答和推理过程都是边生成边到 */
+  onAiDelta(cb: (d: { text?: string; reasoning?: string; done?: boolean }) => void): void
   aiTest(cfg: {
     baseUrl: string
     model: string

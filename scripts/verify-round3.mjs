@@ -382,7 +382,10 @@ const side = await evaluate(`(() => {
     width: Math.round(p.getBoundingClientRect().width),
     nav: [...p.querySelectorAll('.nav-item .nav-label')].map(e => e.textContent.trim()),
     navIcons: p.querySelectorAll('.nav-item svg').length,
-    search: !!p.querySelector('.search-input'),
+    // 1.9.0：筛选框从侧栏搬到中间那一列的笔记视图（两个输入框写同一件事，
+    // 用哪个都显得另一个多余）。侧栏这里就不该再有了
+    search: !!p.querySelector('.search-input') || !!p.querySelector('.nl-search-input'),
+    noOwnSearch: !p.querySelector('.search-input'),
     secTitles: [...p.querySelectorAll('.sec-title')].map(e => e.textContent.trim()),
     folderRows: p.querySelectorAll('.tree .row.dir').length,
     fileRows: p.querySelectorAll('.tree .row.file').length,
@@ -394,7 +397,7 @@ const side = await evaluate(`(() => {
 // 1.4.0：导航扩成两组 —— 四个笔记视图 + 附件库/回收站/AI 编写
 ok(
   '7.侧边栏结构',
-  side.exists && side.nav.length === 7 && side.navIcons >= 7 && side.search &&
+  side.exists && side.nav.length === 7 && side.navIcons >= 7 && side.noOwnSearch &&
     side.nav.includes('所有笔记') && side.nav.includes('附件库') &&
     side.nav.includes('回收站') && side.nav.includes('AI 编写') &&
     side.secTitles.includes('文件夹') && side.secTitles.includes('标签') &&

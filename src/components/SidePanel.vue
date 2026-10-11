@@ -29,7 +29,6 @@ const settingsOpen = ref(false)
 /** 设置面板要停在哪个分区（工具栏 AI 菜单的「模型设置…」会指定） */
 const settingsSection = ref<SettingsSection>('general')
 const folderInput = ref<HTMLInputElement | null>(null)
-const searchInput = ref<HTMLInputElement | null>(null)
 
 /** 笔记视图的四项：图标 + 名称 + 计数来源 */
 const NAV: { id: NavFilter; label: string; icon: typeof FileText; countKey: keyof typeof store.navCounts.value }[] = [
@@ -95,15 +94,14 @@ function commitFolder(e: Event) {
   store.commitNewFolder((e.target as HTMLInputElement).value)
 }
 
-/** 折叠态点搜索：先展开侧栏，再把焦点交给搜索框 */
+/** 折叠态点搜索：先把中间那一列打开并切到笔记列表，再把焦点交给它的搜索框。
+    搜索框现在住在那一列的顶部（参考图的分布就是这样：侧栏负责去哪找，
+    那一列负责有哪些，搜索属于「有哪些」）。 */
 async function focusSearch() {
-  if (!state.sidebar) store.toggleSidebar()
+  if (!state.column) store.toggleColumn()
+  store.setColumnView('notes')
   await nextTick()
-  searchInput.value?.focus()
-}
-
-function clearSearch() {
-  store.setSearchQuery('')
+  window.dispatchEvent(new CustomEvent('nota:focus-search'))
 }
 
 /**
@@ -212,27 +210,16 @@ const rootTail = computed(() => {
           <button class="mini" data-tip="新建文件夹" @click="store.startNewFolder()">
             <FolderPlus :size="15" :stroke-width="1.9" />
           </button>
-          <button class="mini" data-tip="收起侧边栏 (Ctrl+\)" @click="store.toggleSidebar()">
+          <button
+            class="mini"
+            data-role="sidebar-toggle"
+            data-tip="收起侧边栏 (Ctrl+\)"
+            @click="store.toggleSidebar()"
+          >
             <PanelLeftClose :size="15" :stroke-width="1.9" />
           </button>
         </span>
       </header>
-
-      <div class="search">
-        <Search class="search-ico" :size="13" :stroke-width="2" />
-        <input
-          ref="searchInput"
-          class="search-input"
-          type="text"
-          placeholder="在笔记中筛选…"
-          spellcheck="false"
-          :value="state.searchQuery"
-          @input="store.setSearchQuery(($event.target as HTMLInputElement).value)"
-        />
-        <button v-if="state.searchQuery" class="search-x" data-tip="清除" @click="clearSearch">
-          <X :size="12" :stroke-width="2.2" />
-        </button>
-      </div>
 
       <div class="scroll">
         <!-- 笔记视图 -->
@@ -457,11 +444,14 @@ const rootTail = computed(() => {
 /* ══ 展开态 ══ */
 .head {
   flex: none;
-  height: 44px;
+  height: var(--n-topbar);
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 0 8px 0 12px;
+  padding: 0 6px 0 12px;
+  /* 侧栏这一条也是窗口的拖动区：全局标题栏去掉之后，
+     三栏的顶栏各自都是抓手，从哪儿都能拖窗口 */
+  -webkit-app-region: drag;
 }
 
 .logo {
@@ -487,6 +477,7 @@ const rootTail = computed(() => {
   display: flex;
   align-items: center;
   gap: 1px;
+  -webkit-app-region: no-drag;
 }
 
 .mini {
@@ -508,76 +499,6 @@ const rootTail = computed(() => {
 .mini:hover {
   background: var(--n-raised);
   color: var(--n-accent);
-}
-
-/* ── 搜索 ── */
-.search {
-  flex: none;
-  position: relative;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  height: 30px;
-  margin: 0 8px 10px;
-  padding: 0 8px;
-  border-radius: 10px;
-  border: 1px solid color-mix(in oklab, var(--n-line) 54%, transparent);
-  background: color-mix(in oklab, var(--n-raised) 42%, var(--n-sunken));
-  transition: border-color var(--n-dur) var(--n-ease),
-    background-color var(--n-dur) var(--n-ease);
-}
-
-.search:hover,
-.search:focus-within {
-  border-color: color-mix(in oklab, var(--n-line) 88%, transparent);
-  background: color-mix(in oklab, var(--n-raised) 72%, var(--n-sunken));
-}
-
-.search:focus-within {
-  border-color: var(--n-accent);
-}
-
-.search-ico {
-  flex: none;
-  fill: none;
-  stroke: currentColor;
-  color: var(--n-fg-faint);
-}
-
-.search-input {
-  flex: 1;
-  min-width: 0;
-  font-size: 12px;
-  letter-spacing: -0.01em;
-  color: var(--n-fg);
-  background: none;
-  border: none;
-  outline: none;
-}
-
-.search-input::placeholder {
-  color: color-mix(in oklab, var(--n-fg-faint) 82%, transparent);
-}
-
-.search-x {
-  flex: none;
-  width: 18px;
-  height: 18px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 4px;
-  color: var(--n-fg-faint);
-}
-
-.search-x svg {
-  fill: none;
-  stroke: currentColor;
-}
-
-.search-x:hover {
-  background: var(--n-raised);
-  color: var(--n-fg);
 }
 
 /* ── 滚动区 ── */
@@ -845,10 +766,15 @@ const rootTail = computed(() => {
 /* ══ 折叠态窄轨 ══ */
 .rail-head {
   flex: none;
-  height: 44px;
+  height: var(--n-topbar);
   display: flex;
   align-items: center;
   justify-content: center;
+  -webkit-app-region: drag;
+}
+
+.rail-head .rail-btn {
+  -webkit-app-region: no-drag;
 }
 
 .rail-group {

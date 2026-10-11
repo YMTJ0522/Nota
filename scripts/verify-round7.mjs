@@ -202,46 +202,74 @@ await evaluate(`localStorage.setItem('nota-ai', ${JSON.stringify(JSON.stringify(
 }))})`)
 await boot()
 
-/* ── 1. 资料栏四个视图共用一个栏 ──
-   四样东西（笔记 / 附件 / 回收站 / AI）在使用上是同一件事——「这一类有
-   哪些，我要挑一个」，所以共用一个栏换着看，而不是各占一个弹窗。 */
+/* ── 1. 资料栏的两种顶部 + 每个视图各占一屏 ──
+   「笔记 / 大纲 / 引用」看的是同一批东西，所以并排成一排页签；
+   附件库 / 回收站 / AI 是一次单独的「去某个地方」，顶上只写自己的名字。
+   不管哪一种，同一时刻只有一个视图在场。 */
 const views = await evaluate(`(async () => {
   const wait = (ms) => new Promise(r => setTimeout(r, ms))
   const col = document.querySelector('.col')
   if (!col) return { err: 'no column' }
+
   const tabs = [...col.querySelectorAll('.col-tab')].map(b => b.getAttribute('data-view'))
-  const seen = []
+  const tabsSeen = []
   for (const v of tabs) {
-    col.querySelector('.col-tab[data-view="' + v + '"]')?.click()
+    document.querySelector('.col-tab[data-view="' + v + '"]')?.click()
     await wait(520)
     const cur = document.querySelector('.col')?.getAttribute('data-view')
     const body = document.querySelector('.col-body')
-    seen.push({
-      v,
-      cur,
-      // 每个视图的招牌元素，只应有一个在场
+    tabsSeen.push({
+      v, cur,
       nlist: !!body?.querySelector('.nlist'),
-      av: !!body?.querySelector('.av'),
-      tv: !!body?.querySelector('.tv'),
-      chat: !!body?.querySelector('.chat.compact'),
+      ov: !!body?.querySelector('.ov'),
+      qv: !!body?.querySelector('.qv'),
+      others: ['.av', '.tv', '.ag'].filter((s) => body?.querySelector(s)).length,
     })
   }
-  document.querySelector('.col-tab[data-view="notes"]')?.click()
-  await wait(400)
+  // 页签这一排不该出现附件 / 回收站 / AI —— 它们由侧栏入口切
+  const tabRowHasSolo = tabs.some((v) => v === 'attach' || v === 'trash' || v === 'ai')
+
+  // 另外三个：点侧栏入口过去，顶栏是「名字」而不是页签
+  const pick = (label) => [...document.querySelectorAll('.panel .nav-item')]
+    .find(b => (b.querySelector('.nav-label')?.textContent ?? '').trim() === label)
+  const soloSeen = []
+  for (const [label, key, sel, name] of [
+    ['附件库', 'av', '.av', '附件库'],
+    ['回收站', 'tv', '.tv', '回收站'],
+    ['AI 编写', 'ag', '.ag', 'AI 编写'],
+  ]) {
+    pick(label)?.click()
+    await wait(560)
+    const c = document.querySelector('.col')
+    soloSeen.push({
+      key,
+      view: c?.getAttribute('data-view'),
+      alive: !!document.querySelector('.col-body ' + sel),
+      tabs: document.querySelectorAll('.col-tab').length,
+      label: document.querySelector('.col-name span')?.textContent?.trim() ?? '',
+      want: name,
+    })
+  }
+  // 收尾：回到笔记
+  pick('所有笔记')?.click()
+  await wait(420)
   return {
-    tabs, seen,
+    tabs, tabsSeen, tabRowHasSolo, soloSeen,
+    back: document.querySelector('.col')?.getAttribute('data-view'),
     cols: document.querySelectorAll('.col').length,
     editorAlive: !!document.querySelector('.stage'),
   }
 })()`)
-const viewMap = { notes: 'nlist', attach: 'av', trash: 'tv', ai: 'chat' }
 ok(
-  '1.资料栏四个视图共用一个栏，一次只显示一个',
-  !views.err && views.cols === 1 &&
-    ['notes', 'attach', 'trash', 'ai'].every((v) => views.tabs.includes(v)) &&
-    views.seen.every((s) => s.cur === s.v && s[viewMap[s.v]] &&
-      Object.keys(viewMap).filter((k) => k !== s.v).every((k) => !s[viewMap[k]])) &&
-    views.editorAlive,
+  '1.资料栏：笔记这一类是三个页签，附件/回收站/AI 各自一屏，同时只显示一个',
+  !views.err && views.cols === 1 && views.editorAlive &&
+    views.tabs.join() === 'notes,outline,quote' && !views.tabRowHasSolo &&
+    views.tabsSeen.every((s) =>
+      s.cur === s.v && s.others === 0 &&
+      (s.v === 'notes' ? s.nlist : s.v === 'outline' ? s.ov : s.qv),
+    ) &&
+    views.soloSeen.every((s) => s.alive && s.tabs === 0 && s.label === s.want) &&
+    views.back === 'notes',
   views,
 )
 
