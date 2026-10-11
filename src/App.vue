@@ -21,6 +21,10 @@ function onKey(e: KeyboardEvent) {
   } else if (e.key === 'o') {
     e.preventDefault()
     store.openWorkspace()
+  } else if (e.key === '\\') {
+    // 侧边栏折叠/展开
+    e.preventDefault()
+    store.toggleSidebar()
   }
 }
 

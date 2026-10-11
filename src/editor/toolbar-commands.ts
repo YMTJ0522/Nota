@@ -168,22 +168,43 @@ export function toolbarAdvancedCodeBlock(view: EditorView) {
   );
 }
 
+/**
+ * 插入表格。
+ *
+ * 两种调用方式：
+ *  - 传表头字符串（旧式）→ 按 cols 生成 `| 列 1 | 列 2 |` 这样的表头
+ *  - 直接传 header / separator / body 三行（九宫格选尺寸用）→ 原样拼装
+ *
+ * 光标落在第一个表头格里（offset 2 跳过 `| `），方便直接改名。
+ */
 export function toolbarTable(
   view: EditorView,
   headerRow: string,
-  rows = 1,
+  rowsOrSep: number | string = 1,
   cols = 3,
+  bodyRows?: string[],
 ) {
-  // Column headers mirror the user locale; the data rows below keep the
-  // inkstone placeholder form ("|  |  |  |" — one blank cell per column).
-  const header = Array.from({ length: cols }, (_, index) => `| ${headerLabel(headerRow, index)}`);
-  header.push("|");
-  const delimiter = `|${" --- |".repeat(cols)}`;
-  const dataRows = Array.from(
-    { length: Math.max(1, rows - 1) },
-    () => `|${"  |".repeat(cols)}`,
-  );
-  const template = [header.join(""), delimiter, ...dataRows, ""].join("\n");
+  let template: string;
+
+  if (typeof rowsOrSep === "string") {
+    // 九宫格路径：三行都由调用方给好
+    const parts = [headerRow, rowsOrSep, ...(bodyRows ?? [])];
+    template = [...parts, ""].join("\n");
+  } else {
+    // 旧式路径：表头按列数生成，数据行留空
+    const header = Array.from(
+      { length: cols },
+      (_, index) => `| ${headerLabel(headerRow, index)}`,
+    );
+    header.push("|");
+    const delimiter = `|${" --- |".repeat(cols)}`;
+    const dataRows = Array.from(
+      { length: Math.max(1, rowsOrSep - 1) },
+      () => `|${"  |".repeat(cols)}`,
+    );
+    template = [header.join(""), delimiter, ...dataRows, ""].join("\n");
+  }
+
   dispatchResult(view, insertLineBlockCommand(doc(view), headSelection(view), template, 2));
 }
 

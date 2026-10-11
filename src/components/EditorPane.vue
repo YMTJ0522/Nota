@@ -19,6 +19,7 @@ import { countWords, formatWordCount } from '@/editor/word-count'
 import { createSlashCommandsExtension } from '@/editor/slash-commands'
 import type { SlashMenuRenderState, SlashCommandId } from '@/editor/slash-commands'
 import { setMediaBase } from '@/editor/media-preview'
+import { enhancePreview, renderMermaidInHtml } from '@/editor/preview-rich'
 import { highlightCode, langFromClass } from '@/editor/highlight-code'
 import Toolbar from '@/components/Toolbar.vue'
 import SlashMenu from '@/components/SlashMenu.vue'
@@ -49,6 +50,8 @@ import {
 const { state } = store
 
 const host = ref<HTMLDivElement | null>(null)
+/** 预览容器：mermaid 要在 DOM 挂载后往里填 SVG */
+const previewRef = ref<HTMLDivElement | null>(null)
 /** 视图模式：编辑 / 分栏 / 预览（对齐 inkstone 的三段式切换） */
 type ViewMode = 'write' | 'split' | 'read'
 const mode = ref<ViewMode>('write')
@@ -136,7 +139,15 @@ async function render() {
     markedMod.marked.setOptions({ gfm: true, breaks: true })
   }
   const raw = markedMod.marked.parse(state.draft, { async: false }) as string
-  html.value = await resolveMediaInHtml(await highlightFences(raw))
+  // 先补高亮与媒体路径，再做富块增强——顺序有讲究：
+  // 富块会重新包裹 HTML 结构，先高亮能保证代码块（含 mermaid）已被标记成 language-*。
+  const lit = await highlightFences(raw)
+  const media = await resolveMediaInHtml(lit)
+  html.value = enhancePreview(media)
+  // mermaid 是异步画图，等 DOM 挂上再填
+  await nextTick()
+  const pane = previewRef.value
+  if (pane) void renderMermaidInHtml(pane)
 }
 
 /**
@@ -457,7 +468,7 @@ defineExpose({ getView: () => view })
         ref="host"
         class="host"
       />
-      <div v-if="showPreview" class="preview" v-html="html" />
+      <div v-if="showPreview" ref="previewRef" class="preview" v-html="html" />
 
       <SlashMenu
         v-if="slash && mode === 'write'"
@@ -824,5 +835,175 @@ defineExpose({ getView: () => view })
 .preview :deep(img) {
   max-width: 100%;
   border-radius: var(--n-r-md);
+}
+.preview :deep(video) {
+  max-width: 100%;
+  border-radius: var(--n-r-md);
+  border: 1px solid var(--n-line);
+}
+
+/* ── 富块：Callout / 折叠 / 分栏 / Mermaid ──
+   这些结构由 preview-rich.ts 在 marked 产出之后补出来。 */
+.preview :deep(.pv-callout) {
+  margin: 1em 0;
+  border: 1px solid var(--n-block-line);
+  border-left: 3px solid var(--n-accent);
+  border-radius: var(--n-r-md);
+  background: var(--n-block-bg);
+  overflow: hidden;
+}
+.preview :deep(.pv-callout-head) {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 7px 12px;
+  background: var(--n-block-head);
+  font-size: 0.86em;
+  font-weight: 600;
+}
+.preview :deep(.pv-callout-icon) {
+  color: var(--n-accent);
+}
+.preview :deep(.pv-callout-body) {
+  padding: 4px 12px;
+}
+.preview :deep(.pv-callout-body > :last-child) {
+  margin-bottom: 0.5em;
+}
+.preview :deep(.pv-badge) {
+  margin-left: auto;
+  padding: 1px 7px;
+  border-radius: 9px;
+  border: 1px solid var(--n-block-line);
+  background: var(--n-raised);
+  font-size: 0.72em;
+  font-weight: 600;
+  color: var(--n-fg-dim);
+}
+.preview :deep(.pv-callout[data-type='note']),
+.preview :deep(.pv-callout[data-type='info']) {
+  border-left-color: var(--n-info);
+  background: var(--n-info-soft);
+}
+.preview :deep(.pv-callout[data-type='note'] .pv-callout-icon),
+.preview :deep(.pv-callout[data-type='info'] .pv-callout-icon) {
+  color: var(--n-info);
+}
+.preview :deep(.pv-callout[data-type='tip']),
+.preview :deep(.pv-callout[data-type='success']),
+.preview :deep(.pv-callout[data-type='example']) {
+  border-left-color: var(--n-ok);
+  background: var(--n-ok-soft);
+}
+.preview :deep(.pv-callout[data-type='tip'] .pv-callout-icon),
+.preview :deep(.pv-callout[data-type='success'] .pv-callout-icon),
+.preview :deep(.pv-callout[data-type='example'] .pv-callout-icon) {
+  color: var(--n-ok);
+}
+.preview :deep(.pv-callout[data-type='warning']),
+.preview :deep(.pv-callout[data-type='caution']),
+.preview :deep(.pv-callout[data-type='important']),
+.preview :deep(.pv-callout[data-type='question']) {
+  border-left-color: var(--n-warn);
+  background: var(--n-warn-soft);
+}
+.preview :deep(.pv-callout[data-type='warning'] .pv-callout-icon),
+.preview :deep(.pv-callout[data-type='caution'] .pv-callout-icon),
+.preview :deep(.pv-callout[data-type='important'] .pv-callout-icon),
+.preview :deep(.pv-callout[data-type='question'] .pv-callout-icon) {
+  color: var(--n-warn);
+}
+.preview :deep(.pv-callout[data-type='danger']) {
+  border-left-color: var(--n-danger);
+  background: var(--n-danger-soft);
+}
+.preview :deep(.pv-callout[data-type='danger'] .pv-callout-icon) {
+  color: var(--n-danger);
+}
+
+.preview :deep(.pv-details) {
+  margin: 1em 0;
+  border: 1px solid var(--n-block-line);
+  border-radius: var(--n-r-md);
+  background: var(--n-block-bg);
+  overflow: hidden;
+}
+.preview :deep(.pv-details > summary) {
+  padding: 8px 12px;
+  background: var(--n-block-head);
+  font-weight: 600;
+  font-size: 0.92em;
+  cursor: pointer;
+  user-select: none;
+}
+.preview :deep(.pv-details[open] > summary) {
+  border-bottom: 1px solid var(--n-block-line);
+}
+.preview :deep(.pv-details > *:not(summary)) {
+  padding: 0 12px;
+}
+
+.preview :deep(.pv-tabs) {
+  margin: 1em 0;
+  border: 1px solid var(--n-block-line);
+  border-radius: var(--n-r-md);
+  background: var(--n-block-bg);
+  overflow: hidden;
+}
+.preview :deep(.pv-tabbar) {
+  display: flex;
+  gap: 2px;
+  padding: 6px 10px 0;
+  border-bottom: 1px solid var(--n-block-line);
+}
+.preview :deep(.pv-tab) {
+  padding: 5px 12px;
+  border-radius: var(--n-r-sm) var(--n-r-sm) 0 0;
+  font-size: 0.88em;
+  color: var(--n-fg-dim);
+  cursor: default;
+}
+.preview :deep(.pv-tab.on) {
+  background: var(--n-block-bg);
+  color: var(--n-accent);
+  font-weight: 600;
+  box-shadow: inset 0 -2px var(--n-accent);
+}
+.preview :deep(.pv-tab-pane) {
+  display: none;
+  padding: 2px 12px;
+}
+.preview :deep(.pv-tab-pane.on) {
+  display: block;
+}
+
+.preview :deep(.pv-mermaid) {
+  margin: 1em 0;
+  padding: 12px;
+  border: 1px solid var(--n-block-line);
+  border-radius: var(--n-r-md);
+  background: var(--n-block-bg);
+  text-align: center;
+  overflow-x: auto;
+}
+.preview :deep(.pv-mermaid-graph svg) {
+  max-width: 100%;
+  height: auto;
+}
+.preview :deep(.pv-mermaid-src) {
+  font-family: var(--n-font-mono);
+  font-size: 0.84em;
+  color: var(--n-fg-dim);
+  white-space: pre;
+  text-align: left;
+}
+.preview :deep(.pv-mermaid-graph.is-error) {
+  color: var(--n-danger);
+  font-family: var(--n-font-mono);
+  font-size: 0.84em;
+}
+.preview :deep(.pv-table-wrap) {
+  overflow-x: auto;
+  margin: 1em 0;
 }
 </style>

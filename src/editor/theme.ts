@@ -76,7 +76,9 @@ export const notaTheme = EditorView.theme({
   },
   ".cm-editor:hover .cm-foldGutter .cm-gutterElement": { opacity: 1 },
 
-  /* ── 光标与选区 ── */
+  /* ── 光标与选区 ──
+     选区除了给背景色，还要把文字压深（--n-selection-fg）。
+     只加背景的话，正文的灰字压在绿底上会"糊在一起"，看起来像没选中。 */
   ".cm-cursor, .cm-dropCursor": {
     borderLeftColor: "var(--n-accent)",
     borderLeftWidth: "2px",
@@ -84,6 +86,7 @@ export const notaTheme = EditorView.theme({
   },
   "&.cm-focused .cm-selectionBackground, .cm-selectionBackground, .cm-content ::selection": {
     backgroundColor: "var(--n-selection)",
+    color: "var(--n-selection-fg)",
   },
   ".cm-selectionMatch": {
     backgroundColor: "var(--n-selection)",

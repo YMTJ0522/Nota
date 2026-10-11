@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, nextTick } from 'vue'
+import { Trash2 } from 'lucide-vue-next'
 import { store } from '@/store'
 import type { TreeNode } from '@/store'
 import ConfirmDialog from '@/components/ConfirmDialog.vue'
@@ -100,9 +101,7 @@ function onKey(e: KeyboardEvent) {
         <span class="name">{{ displayName() }}</span>
       </button>
       <button class="del" title="删除笔记" @click.stop="askDelete">
-        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
-          <path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14" />
-        </svg>
+        <Trash2 :size="16" :stroke-width="1.9" />
       </button>
 
       <!-- 删除前先确认一次，避免误点把笔记删掉。
@@ -179,16 +178,22 @@ function onKey(e: KeyboardEvent) {
 
 .del {
   position: absolute;
-  right: 6px;
-  width: 22px;
-  height: 22px;
+  right: 4px;
+  width: 26px;
+  height: 26px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   border-radius: var(--n-r-sm);
-  color: var(--n-fg-faint);
+  color: var(--n-fg-dim);
   opacity: 0;
-  transition: opacity var(--n-dur) var(--n-ease), color var(--n-dur) var(--n-ease);
+  transition: opacity var(--n-dur) var(--n-ease), color var(--n-dur) var(--n-ease),
+    background var(--n-dur) var(--n-ease);
+}
+
+.del svg {
+  fill: none;
+  stroke: currentColor;
 }
 
 .rowwrap:hover .del {
@@ -196,6 +201,7 @@ function onKey(e: KeyboardEvent) {
 }
 
 .del:hover {
+  background: var(--n-danger-soft);
   color: var(--n-danger);
 }
 

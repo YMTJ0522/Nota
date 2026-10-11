@@ -273,12 +273,14 @@ const header = await evaluate(`(async () => {
     menuItems: items,
   }
 })()`)
+/* 「设置」已经按需求从顶栏菜单挪到侧边栏左下角，
+   所以这里反过来断言：顶栏菜单里**不该**再有设置。 */
 ok(
   '6.顶栏功能簇',
   header.saveText && header.hasMenuBtn &&
     header.menuItems.some((t) => t.includes('Markdown')) &&
     header.menuItems.some((t) => t.includes('版本历史')) &&
-    header.menuItems.some((t) => t.includes('设置')),
+    !header.menuItems.some((t) => t.includes('设置')),
   header,
 )
 
@@ -317,11 +319,8 @@ await viewAlive('after-8')
 
 /* ── 9. 设置面板 ── */
 const settings = await evaluate(`(async () => {
-  const menuBtn = document.querySelector('.hm-anchor')
-  menuBtn.click()
-  await new Promise(r => setTimeout(r, 220))
-  const items = [...document.querySelectorAll('.hm-menu .hm-item')]
-  const s = items.find(b => b.textContent.trim() === '设置')
+  // 设置入口改在侧边栏左下角（.foot .foot-btn），不再走顶栏菜单
+  const s = document.querySelector('.foot .foot-btn')
   if (s) s.click()
   await new Promise(r => setTimeout(r, 400))
   const dlg = document.querySelector('.st')

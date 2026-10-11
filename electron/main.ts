@@ -1,6 +1,7 @@
 import { app, BrowserWindow, ipcMain, dialog, shell, protocol, net } from 'electron'
 import path from 'node:path'
 import fs from 'node:fs/promises'
+import { existsSync } from 'node:fs'
 import { pathToFileURL } from 'node:url'
 
 // Vite 注入：开发环境指向 dev server，生产环境加载打包后的 dist
@@ -38,6 +39,24 @@ function createWindow() {
     autoHideMenuBar: true,
     backgroundColor: '#fbfaf6',
     title: 'Nota',
+    /* 标题栏与任务栏图标。
+       打包后 icon.png 会被 electron-builder 放进 resources/，
+       开发时则直接读仓库里的 build/icon.png——两条路径都试一下，
+       拿不到就让系统用 exe 自带的图标兜底。 */
+    icon: (() => {
+      const candidates = [
+        path.join(process.resourcesPath ?? '', 'icon.png'),
+        path.join(__dirname, '..', 'build', 'icon.png'),
+      ]
+      for (const p of candidates) {
+        try {
+          if (p && existsSync(p)) return p
+        } catch {
+          /* 忽略：继续试下一个 */
+        }
+      }
+      return undefined
+    })(),
     // 完全自绘标题栏：用 frame:false 去掉系统边框与按钮，
     // 最小化/最大化/关闭由渲染层自己画，布局完全可控
     frame: false,
@@ -93,7 +112,48 @@ ipcMain.handle('workspace:pick', async () => {
 })
 
 // 递归读取目录树（只读 .md，跳过隐藏目录）
+// 顺带把每篇笔记 frontmatter 里的 tags 摘出来挂在节点上，
+// 这样侧栏的标签筛选不用再为每个文件单独发一次 IPC。
 ipcMain.handle('workspace:tree', async (_e, root: string) => {
+  async function readTags(file: string): Promise<string[]> {
+    try {
+      // 只读文件头部：frontmatter 一定在最前面，不必整篇读进来
+      const fd = await fs.open(file, 'r')
+      try {
+        const buf = Buffer.alloc(2048)
+        const { bytesRead } = await fd.read(buf, 0, 2048, 0)
+        const head = buf.subarray(0, bytesRead).toString('utf-8')
+        const m = head.match(/^---\r?\n([\s\S]*?)\r?\n---/)
+        if (!m) return []
+        const tags: string[] = []
+        // inline 形式：tags: [a, b]
+        const inline = m[1].match(/^tags:\s*\[([^\]]*)\]/m)
+        if (inline) {
+          for (const t of inline[1].split(',')) {
+            const v = t.trim().replace(/^["']|["']$/g, '')
+            if (v) tags.push(v)
+          }
+        }
+        // 列表形式：
+        // tags:
+        //   - a
+        //   - b
+        const listBlock = m[1].match(/^tags:\s*\n((?:[ \t]*-[ \t]*.+\n?)*)/m)
+        if (listBlock) {
+          for (const line of listBlock[1].split('\n')) {
+            const v = line.replace(/^[ \t]*-[ \t]*/, '').trim().replace(/^["']|["']$/g, '')
+            if (v) tags.push(v)
+          }
+        }
+        return [...new Set(tags)]
+      } finally {
+        await fd.close()
+      }
+    } catch {
+      return []
+    }
+  }
+
   async function walk(dir: string, depth: number): Promise<any[]> {
     if (depth > 6) return []
     let entries
@@ -115,7 +175,7 @@ ipcMain.handle('workspace:tree', async (_e, root: string) => {
           children: await walk(full, depth + 1),
         })
       } else if (e.name.toLowerCase().endsWith('.md')) {
-        nodes.push({ type: 'file', name: e.name, path: full })
+        nodes.push({ type: 'file', name: e.name, path: full, tags: await readTags(full) })
       }
     }
     // 目录在前，文件在后，各自按名称排序
@@ -126,6 +186,24 @@ ipcMain.handle('workspace:tree', async (_e, root: string) => {
     return nodes
   }
   return walk(root, 0)
+})
+
+// 新建文件夹（父目录下，重名自动加序号）
+ipcMain.handle('folder:create', async (_e, parent: string, name: string) => {
+  const safe = name.replace(/[\\/:*?"<>|]/g, '-').trim() || '新建文件夹'
+  let target = path.join(parent, safe)
+  let i = 1
+  while (true) {
+    try {
+      await fs.access(target)
+      target = path.join(parent, `${safe} ${i}`)
+      i++
+    } catch {
+      break
+    }
+  }
+  await fs.mkdir(target, { recursive: true })
+  return target
 })
 
 // 读单个文件

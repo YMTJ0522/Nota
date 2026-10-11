@@ -12,6 +12,7 @@ interface NoteApi {
   readNote(file: string): Promise<string>
   writeNote(file: string, content: string): Promise<boolean>
   createNote(dir: string, name: string): Promise<string>
+  createFolder(parent: string, name: string): Promise<string>
   deleteNote(file: string): Promise<boolean>
   renameNote(file: string, newName: string): Promise<string>
   pickImage(
@@ -37,6 +38,8 @@ interface TreeNode {
   name: string
   path: string
   children?: TreeNode[]
+  /** 仅文件：从 frontmatter 里摘出来的标签 */
+  tags?: string[]
 }
 
 declare global {

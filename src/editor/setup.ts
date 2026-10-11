@@ -35,6 +35,7 @@ import { codeLangCompleteExtensions } from "./code-lang-complete";
 import { fencedCodeBlockHighlighter } from "./code-languages";
 import { markdownLivePreview } from "./live-preview";
 import { markdownMediaPreview } from "./media-preview";
+import { markdownRichBlocks } from "./rich-blocks";
 
 /**
  * Baseline CodeMirror extension set for the Markdown editor.
@@ -73,6 +74,7 @@ export function baseExtensions(options: {
     }),
     markdownLivePreview,
     markdownMediaPreview,
+    markdownRichBlocks,
     fencedCodeBlockHighlighter(),
     codeLangCompleteExtensions(),
     keymap.of([

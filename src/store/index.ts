@@ -9,6 +9,8 @@ export interface TreeNode {
   name: string
   path: string
   children?: TreeNode[]
+  /** 仅文件：从 frontmatter 里摘出来的标签 */
+  tags?: string[]
 }
 
 interface State {
@@ -29,6 +31,10 @@ interface State {
   autoSave: boolean
   /** 侧栏是否可见 */
   sidebar: boolean
+  /** 当前选中的标签（null = 不筛选，显示全部笔记） */
+  activeTag: string | null
+  /** 新建文件夹的父目录；非 null 时侧栏弹出一个输入框 */
+  newFolderIn: string | null
 }
 
 const state = reactive<State>({
@@ -45,6 +51,8 @@ const state = reactive<State>({
   lastSavedAt: null,
   autoSave: true,
   sidebar: true,
+  activeTag: null,
+  newFolderIn: null,
 })
 
 /* ── 派生 ── */
@@ -54,6 +62,27 @@ const activeName = computed(() => {
   if (!state.activePath) return ''
   const parts = state.activePath.split(/[\\/]/)
   return parts[parts.length - 1].replace(/\.md$/i, '')
+})
+
+/**
+ * 全工作区的标签清单：把树里每个文件节点上的 tags 收拢、去重。
+ * 标签来源是 frontmatter（主进程读树时已经摘好），不额外读盘。
+ */
+const allTags = computed(() => {
+  const set = new Map<string, number>()
+  const visit = (nodes: TreeNode[]) => {
+    for (const n of nodes) {
+      if (n.type === 'dir') {
+        if (n.children) visit(n.children)
+      } else if (n.tags) {
+        for (const t of n.tags) set.set(t, (set.get(t) ?? 0) + 1)
+      }
+    }
+  }
+  visit(state.tree)
+  return [...set.entries()]
+    .map(([name, count]) => ({ name, count }))
+    .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name, 'zh-CN'))
 })
 
 /* ── 动作 ── */
@@ -126,6 +155,30 @@ async function renameNote(path: string, newName: string) {
 
 function toggleDir(path: string) {
   state.expanded[path] = !state.expanded[path]
+}
+
+/** 打开「新建文件夹」输入框；parent 为空时建在工作区根目录 */
+function startNewFolder(parent?: string) {
+  state.newFolderIn = parent ?? state.root ?? ''
+}
+
+/** 提交新建文件夹 */
+async function commitNewFolder(name: string) {
+  const parent = state.newFolderIn
+  state.newFolderIn = null
+  if (!parent || !name.trim()) return
+  await window.api.createFolder(parent, name.trim())
+  state.expanded[parent] = true
+  await refreshTree()
+}
+
+function cancelNewFolder() {
+  state.newFolderIn = null
+}
+
+/** 点标签筛选；再点一次同一个标签就取消筛选 */
+function setActiveTag(tag: string | null) {
+  state.activeTag = state.activeTag === tag ? null : tag
 }
 
 /* ── 导出 ──
@@ -226,6 +279,7 @@ export const store = {
   state,
   dirty,
   activeName,
+  allTags,
   openWorkspace,
   refreshTree,
   openNote,
@@ -234,6 +288,10 @@ export const store = {
   removeNote,
   renameNote,
   toggleDir,
+  startNewFolder,
+  commitNewFolder,
+  cancelNewFolder,
+  setActiveTag,
   setTheme,
   initTheme,
   autoExpand,

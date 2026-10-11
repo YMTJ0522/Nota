@@ -6,17 +6,14 @@ import {
   FileText,
   FileCode2,
   History,
-  Settings,
 } from 'lucide-vue-next'
 import { store } from '@/store'
 import HistoryPanel from '@/components/HistoryPanel.vue'
-import SettingsDialog from '@/components/SettingsDialog.vue'
 
 const { state } = store
 
 const openMenu = ref(false)
 const historyOpen = ref(false)
-const settingsOpen = ref(false)
 
 const anchor = ref<HTMLElement | null>(null)
 const menu = ref<HTMLElement | null>(null)
@@ -62,11 +59,6 @@ async function doExport(kind: 'md' | 'html') {
 function openHistory() {
   close()
   historyOpen.value = true
-}
-
-function openSettings() {
-  close()
-  settingsOpen.value = true
 }
 
 function onDocPointer(e: PointerEvent) {
@@ -125,15 +117,10 @@ onBeforeUnmount(() => {
           <History :size="14" :stroke-width="1.8" />
           <span>版本历史</span>
         </button>
-        <button class="hm-item" @click="openSettings">
-          <Settings :size="14" :stroke-width="1.8" />
-          <span>设置</span>
-        </button>
       </div>
     </Teleport>
 
     <HistoryPanel :open="historyOpen" @close="historyOpen = false" />
-    <SettingsDialog :open="settingsOpen" @close="settingsOpen = false" />
   </div>
 </template>
 

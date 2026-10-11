@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
+import { PanelLeftOpen, PanelLeftClose } from 'lucide-vue-next'
 import { store } from '@/store'
 
 const { state, dirty, activeName } = store
@@ -21,6 +22,16 @@ const winClose = () => window.api.closeWindow()
 <template>
   <header class="bar">
     <div class="left">
+      <!-- 侧栏开关放在最左：折叠后仍能在这里重新打开 -->
+      <button
+        v-if="state.root"
+        class="icon side-pill"
+        :title="state.sidebar ? '收起侧边栏 (Ctrl+\\)' : '展开侧边栏 (Ctrl+\\)'"
+        @click="store.toggleSidebar()"
+      >
+        <PanelLeftClose v-if="state.sidebar" :size="15" :stroke-width="1.8" />
+        <PanelLeftOpen v-else :size="15" :stroke-width="1.8" />
+      </button>
       <span class="mark">Nota</span>
       <span v-if="state.activePath" class="sep">/</span>
       <span v-if="state.activePath" class="file">
@@ -102,6 +113,19 @@ const winClose = () => window.api.closeWindow()
   gap: 6px;
   min-width: 0;
   overflow: hidden;
+}
+
+/* 侧栏开关跟标题同排，做成一个低调的小药丸 */
+.side-pill {
+  width: 26px;
+  height: 24px;
+  flex: none;
+  -webkit-app-region: no-drag;
+}
+
+.side-pill svg {
+  fill: none;
+  stroke: currentColor;
 }
 
 .right {

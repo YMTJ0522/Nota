@@ -85,6 +85,7 @@ type MenuId =
   | 'code'
   | 'math'
   | 'block'
+  | 'table'
   | null
 
 const openMenu = ref<MenuId>(null)
@@ -211,7 +212,7 @@ function onArrow(e: KeyboardEvent) {
   if (!openMenu.value) return
   if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return
   const ids: Exclude<MenuId, null>[] = [
-    'heading', 'reference', 'image', 'note', 'code', 'math', 'block',
+    'heading', 'reference', 'image', 'note', 'code', 'table', 'math', 'block',
   ]
   const at = ids.indexOf(openMenu.value)
   if (at < 0) return
@@ -265,6 +266,40 @@ async function uploadMedia(kind: 'image' | 'video' | 'any') {
   if (!ok) {
     emit('toast', kind === 'video' ? '未选择视频，已取消' : '未选择文件，已取消')
   }
+}
+
+/* ── 表格：8×8 九宫格选尺寸 ──
+   点「插入表格」不再直接插一个死板的 3 列，而是弹出一张网格：
+   鼠标划过时高亮 "行 × 列" 的区域，同时在右上角显示 `3 × 4`，
+   点下去就按选中的行列数生成表头（含分隔行）。 */
+const GRID_MAX = 8
+
+/** 当前 hover 到的行列（0 表示没选中任何格） */
+const gridRow = ref(0)
+const gridCol = ref(0)
+
+function onGridEnter(r: number, c: number) {
+  gridRow.value = r
+  gridCol.value = c
+}
+
+function onGridLeave() {
+  gridRow.value = 0
+  gridCol.value = 0
+}
+
+/** 生成 rows×cols 的 Markdown 表格，光标落在第一个表头格内 */
+function insertTable(rows: number, cols: number) {
+  const view = v()
+  close()
+  if (!view) return
+  const header = `| ${Array.from({ length: cols }, (_, i) => `列 ${i + 1}`).join(' | ')} |`
+  const sep = `| ${Array.from({ length: cols }, () => '---').join(' | ')} |`
+  const body = Array.from({ length: Math.max(0, rows - 1) }, () =>
+    `| ${Array.from({ length: cols }, () => '   ').join(' | ')} |`,
+  )
+  // 第 3 个参数传分隔行（字符串）即走上「三行都由调用方给」的路径
+  toolbarTable(view, header, sep, cols, body)
 }
 </script>
 
@@ -487,9 +522,43 @@ async function uploadMedia(kind: 'image' | 'video' | 'any') {
       </Teleport>
     </div>
 
-    <button class="tb-btn" title="插入表格" @click="run((v) => toolbarTable(v, '| 列 1 | 列 2 | 列 3 |'))">
-      <Table :size="ICON" :stroke-width="STROKE" />
-    </button>
+    <div :ref="wrapRef('table')" class="tb-group tb-menu-wrap">
+      <button
+        class="tb-btn"
+        :class="{ on: openMenu === 'table' }"
+        title="插入表格"
+        @click="toggle('table')"
+      >
+        <Table :size="ICON" :stroke-width="STROKE" />
+        <ChevronDown class="caret" :size="10" :stroke-width="2" />
+      </button>
+      <Teleport to="body">
+        <div
+          v-if="openMenu === 'table'"
+          :ref="menuRef('table')"
+          class="tb-menu tb-menu--float tb-grid-menu"
+          :style="menuStyle"
+        >
+          <div class="tb-grid-size">
+            {{ gridRow > 0 ? `${gridRow} × ${gridCol}` : '选择表格大小' }}
+          </div>
+          <div class="tb-grid" @pointerleave="onGridLeave">
+            <template v-for="r in GRID_MAX" :key="r">
+              <button
+                v-for="c in GRID_MAX"
+                :key="`${r}-${c}`"
+                class="tb-grid-cell"
+                :class="{ on: r <= gridRow && c <= gridCol }"
+                :title="`${r} 行 × ${c} 列`"
+                @pointerenter="onGridEnter(r, c)"
+                @click="insertTable(r, c)"
+              />
+            </template>
+          </div>
+          <div class="tb-grid-foot">{{ gridRow > 0 ? `${gridRow} 行 ${gridCol} 列` : '默认 3 × 3' }}</div>
+        </div>
+      </Teleport>
+    </div>
 
     <div :ref="wrapRef('math')" class="tb-group tb-menu-wrap">
       <button
@@ -674,6 +743,51 @@ async function uploadMedia(kind: 'image' | 'video' | 'any') {
 /* 说明：原来靠 .tb-menu-wrap--end 做右边缘避让，
    现在改由 placeMenu() 在算坐标时判断（左对齐会超出窗口就翻成右对齐），
    这个类已不再需要。 */
+
+/* ── 表格九宫格 ──
+   宽度由格子决定，不能被 .tb-menu 的 max-width 压扁。 */
+.tb-grid-menu {
+  width: auto;
+  min-width: 0;
+  max-width: none;
+  padding: 8px;
+}
+
+.tb-grid-size {
+  height: 18px;
+  margin-bottom: 6px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--n-fg-dim);
+  text-align: center;
+}
+
+.tb-grid {
+  display: grid;
+  grid-template-columns: repeat(8, 15px);
+  grid-auto-rows: 15px;
+  gap: 3px;
+}
+
+.tb-grid-cell {
+  border: 1px solid var(--n-line-strong);
+  border-radius: 2px;
+  background: var(--n-raised);
+  transition: background 80ms linear, border-color 80ms linear;
+}
+
+.tb-grid-cell.on {
+  background: var(--n-accent-soft);
+  border-color: var(--n-accent);
+}
+
+.tb-grid-foot {
+  margin-top: 6px;
+  font-size: 10.5px;
+  color: var(--n-fg-faint);
+  text-align: center;
+}
 
 @keyframes menu-in {
   from { opacity: 0; transform: translateY(-4px); }

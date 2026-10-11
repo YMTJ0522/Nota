@@ -26,9 +26,20 @@
   /* 强调色之上的文字色（按钮/选中态用） */
   --n-on-accent: #ffffff;
   --n-danger: #c0503f;
+  --n-danger-soft: #f7e7e3;
+  /* 警告 / 信息 / 成功：Callout 提示块按类型取色 */
+  --n-warn: #9a6b1f;
+  --n-warn-soft: #f9f0dd;
+  --n-info: #34688f;
+  --n-info-soft: #e4eef5;
+  --n-ok: #3f7d52;
+  --n-ok-soft: #e5f1e8;
 
   /* 编辑器专用 */
-  --n-selection: rgba(63, 111, 90, 0.18);
+  /* 选中色要能压得住正文又不吃掉文字：透明度过低会"看不清选中了哪"，
+     过高则文字与底色糊在一起。这里用强调色 0.3 + 一层描边感的深底。 */
+  --n-selection: rgba(63, 111, 90, 0.3);
+  --n-selection-fg: #1c2b22;
   --n-active-line: rgba(63, 111, 90, 0.05);
   --n-code-bg: #f1efe9;
   --n-code-fg: #7a4a2b;
@@ -37,6 +48,11 @@
   --n-code-number: #a05c22;
   --n-code-func: #2f5e8c;
   --n-code-type: #7a5a1e;
+
+  /* 富块（Callout / 折叠 / 分栏 / 表格）在编辑区里的底色 */
+  --n-block-bg: #f6f4ef;
+  --n-block-line: #e3ded4;
+  --n-block-head: #f0ede6;
 
   /* 排版 */
   --n-font-ui: "Inter", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
@@ -84,8 +100,16 @@
   /* 深色下强调色偏亮，文字改用深色才够对比 */
   --n-on-accent: #10160f;
   --n-danger: #e07a68;
+  --n-danger-soft: #3a2422;
+  --n-warn: #d9a95c;
+  --n-warn-soft: #3a3122;
+  --n-info: #7fb2d8;
+  --n-info-soft: #22313c;
+  --n-ok: #7fc196;
+  --n-ok-soft: #22332a;
 
-  --n-selection: rgba(111, 174, 143, 0.24);
+  --n-selection: rgba(111, 174, 143, 0.34);
+  --n-selection-fg: #eef5f0;
   --n-active-line: rgba(111, 174, 143, 0.06);
   --n-code-bg: #191a1e;
   --n-code-fg: #e0b48c;
@@ -94,6 +118,10 @@
   --n-code-number: #e8b57f;
   --n-code-func: #8bb8e0;
   --n-code-type: #d9c07a;
+
+  --n-block-bg: #1e1f23;
+  --n-block-line: #33343a;
+  --n-block-head: #232428;
 
   --n-shadow: 0 6px 24px rgba(0, 0, 0, 0.4);
   --n-shadow-lg: 0 18px 48px rgba(0, 0, 0, 0.55);
@@ -211,4 +239,200 @@ textarea {
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
+}
+
+/* ══════════════════════════════════════════════
+   编辑区里的「富块」卡片（rich-blocks.ts 生成）
+   Callout / 折叠详情 / 分栏标签 / Mermaid / 表格
+   ══════════════════════════════════════════════ */
+.cm-rich {
+  margin: 4px 0 14px;
+  border: 1px solid var(--n-block-line);
+  border-radius: var(--n-r-md);
+  background: var(--n-block-bg);
+  overflow: hidden;
+  font-family: var(--n-font-ui);
+  font-size: 13px;
+  line-height: 1.7;
+  color: var(--n-fg);
+}
+
+.cm-rich-head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 7px 12px;
+  background: var(--n-block-head);
+  border-bottom: 1px solid var(--n-block-line);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.cm-rich-icon {
+  flex: none;
+  width: 16px;
+  text-align: center;
+  color: var(--n-accent);
+}
+
+.cm-rich-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cm-rich-badge {
+  flex: none;
+  padding: 1px 7px;
+  border-radius: 9px;
+  border: 1px solid var(--n-block-line);
+  background: var(--n-raised);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  color: var(--n-fg-dim);
+}
+
+.cm-rich-hint {
+  font-size: 10.5px;
+  font-weight: 500;
+  color: var(--n-fg-faint);
+}
+
+.cm-rich-body {
+  padding: 9px 12px;
+}
+
+.cm-rich-code {
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: var(--n-code-bg);
+  color: var(--n-code-fg);
+  font-family: var(--n-font-mono);
+  font-size: 0.9em;
+}
+
+/* ── Callout 按类型取色：左边一条竖线 + 头部着色 ── */
+.cm-rich-callout {
+  position: relative;
+  border-left-width: 3px;
+  border-left-style: solid;
+}
+.cm-rich-callout[data-type='note'],
+.cm-rich-callout[data-type='info'] {
+  border-left-color: var(--n-info);
+  background: var(--n-info-soft);
+}
+.cm-rich-callout[data-type='note'] .cm-rich-icon,
+.cm-rich-callout[data-type='info'] .cm-rich-icon {
+  color: var(--n-info);
+}
+.cm-rich-callout[data-type='tip'],
+.cm-rich-callout[data-type='success'],
+.cm-rich-callout[data-type='example'] {
+  border-left-color: var(--n-ok);
+  background: var(--n-ok-soft);
+}
+.cm-rich-callout[data-type='tip'] .cm-rich-icon,
+.cm-rich-callout[data-type='success'] .cm-rich-icon,
+.cm-rich-callout[data-type='example'] .cm-rich-icon {
+  color: var(--n-ok);
+}
+.cm-rich-callout[data-type='warning'],
+.cm-rich-callout[data-type='caution'],
+.cm-rich-callout[data-type='important'],
+.cm-rich-callout[data-type='question'] {
+  border-left-color: var(--n-warn);
+  background: var(--n-warn-soft);
+}
+.cm-rich-callout[data-type='warning'] .cm-rich-icon,
+.cm-rich-callout[data-type='caution'] .cm-rich-icon,
+.cm-rich-callout[data-type='important'] .cm-rich-icon,
+.cm-rich-callout[data-type='question'] .cm-rich-icon {
+  color: var(--n-warn);
+}
+.cm-rich-callout[data-type='danger'] {
+  border-left-color: var(--n-danger);
+  background: var(--n-danger-soft);
+}
+.cm-rich-callout[data-type='danger'] .cm-rich-icon {
+  color: var(--n-danger);
+}
+
+/* ── 折叠详情：正文压暗，提示它现在是收起来的状态 ── */
+.cm-rich-details .cm-rich-title {
+  font-weight: 600;
+}
+.cm-rich-collapsed {
+  color: var(--n-fg-dim);
+  max-height: 96px;
+  overflow: hidden;
+  mask-image: linear-gradient(to bottom, #000 60%, transparent);
+  -webkit-mask-image: linear-gradient(to bottom, #000 60%, transparent);
+}
+
+/* ── 分栏标签：一排可点样子的标签 ──
+   注意：`.cm-rich-tabs` 是外层卡片的类型标识，标签条本身是 `.cm-rich-tabbar`。
+   两者不能同名，否则下面的 flex / border-bottom 会套到卡片外层，把整块撑歪。 */
+.cm-rich-tabbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px;
+  padding: 6px 10px 0;
+  border-bottom: 1px solid var(--n-block-line);
+}
+.cm-rich-tab {
+  padding: 5px 12px;
+  border-radius: var(--n-r-sm) var(--n-r-sm) 0 0;
+  font-size: 12.5px;
+  color: var(--n-fg-dim);
+}
+.cm-rich-tab.on {
+  background: var(--n-block-bg);
+  color: var(--n-accent);
+  font-weight: 600;
+  box-shadow: inset 0 -2px var(--n-accent);
+}
+
+/* ── Mermaid 图表 ──
+   `.cm-rich-graph` 是卡片里真正装图的那一层；外层卡片是 `.cm-rich-mermaid`。 */
+.cm-rich-graph {
+  display: flex;
+  justify-content: center;
+  min-height: 44px;
+  font-family: var(--n-font-mono);
+  font-size: 12px;
+  color: var(--n-fg-dim);
+  white-space: pre;
+  overflow-x: auto;
+}
+.cm-rich-graph.is-rendered {
+  white-space: normal;
+}
+.cm-rich-graph svg {
+  max-width: 100%;
+  height: auto;
+}
+.cm-rich-graph.is-error {
+  color: var(--n-danger);
+}
+
+/* ── 表格预览 ──
+   `.cm-rich-grid` 是卡片里的 <table>；外层卡片是 `.cm-rich-table`。 */
+.cm-rich-grid {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12.5px;
+}
+.cm-rich-grid th,
+.cm-rich-grid td {
+  padding: 6px 10px;
+  border: 1px solid var(--n-block-line);
+  text-align: left;
+}
+.cm-rich-grid th {
+  background: var(--n-block-head);
+  font-weight: 600;
 }

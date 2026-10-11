@@ -4,7 +4,6 @@ import {
   WidgetType,
   ViewPlugin,
   type DecorationSet,
-  type ViewUpdate,
 } from '@codemirror/view'
 import { StateEffect, StateField, type EditorState, type Range } from '@codemirror/state'
 
@@ -219,28 +218,23 @@ const mediaField = StateField.define<DecorationSet>({
   provide: (f) => EditorView.decorations.from(f),
 })
 
-/** 可视区变了要重扫（块级 widget 只扫可见行，长文档才不至于每帧全量扫描） */
-const viewportTrigger = ViewPlugin.fromClass(
+/**
+ * 只负责把 view 登记进 `liveViews`，别的什么都不做。
+ *
+ * ⚠️ 这里以前会在 `update()` 里 `view.dispatch({effects: mediaResolved.of()})`，
+ * 想「滚到哪扫到哪」。两个问题：
+ *  1. `mediaField` 本来就扫整篇文档，DecorationSet 是全量的，
+ *     CodeMirror 自己只渲染视口内的部分 —— 滚动时不需要重算。
+ *  2. 在 `update()` 里同步 dispatch 会抛
+ *     "Calls to EditorView.update are not allowed while an update is in progress"，
+ *     插件崩溃后装饰清不干净，同一张图会重复出现。
+ *
+ * URL 真正就绪时的刷新走 `requestResolveByState` 的异步回调（不在 update 周期内）。
+ */
+const viewRegistry = ViewPlugin.fromClass(
   class {
     constructor(private view: EditorView) {
       liveViews.add(view)
-    }
-    update(update: ViewUpdate) {
-      if (update.viewportChanged && !update.docChanged) {
-        // 空 transaction 里的 mediaResolved 会让 mediaField 重算
-        const ranges = update.view.visibleRanges
-        const hasImage = ranges.some(({ from, to }) => {
-          let pos = from
-          while (pos <= to) {
-            const line = update.state.doc.lineAt(pos)
-            if (IMAGE_LINE.test(line.text)) return true
-            if (line.to >= to) break
-            pos = line.to + 1
-          }
-          return false
-        })
-        if (hasImage) update.view.dispatch({ effects: mediaResolved.of() })
-      }
     }
     destroy() {
       liveViews.delete(this.view)
@@ -256,4 +250,4 @@ export function setMediaBase(base: string) {
   for (const v of liveViews) v.dispatch({ effects: mediaResolved.of() })
 }
 
-export const markdownMediaPreview = [mediaField, viewportTrigger]
+export const markdownMediaPreview = [mediaField, viewRegistry]

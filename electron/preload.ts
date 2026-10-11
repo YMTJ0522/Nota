@@ -12,6 +12,8 @@ contextBridge.exposeInMainWorld('api', {
     ipcRenderer.invoke('note:write', file, content),
   createNote: (dir: string, name: string): Promise<string> =>
     ipcRenderer.invoke('note:create', dir, name),
+  createFolder: (parent: string, name: string): Promise<string> =>
+    ipcRenderer.invoke('folder:create', parent, name),
   deleteNote: (file: string): Promise<boolean> => ipcRenderer.invoke('note:delete', file),
   renameNote: (file: string, newName: string): Promise<string> =>
     ipcRenderer.invoke('note:rename', file, newName),
