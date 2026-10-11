@@ -255,12 +255,43 @@ export function toolbarFind(view: EditorView) {
  * @param kind 选择哪一类文件：image / video / any（不限）
  * @returns 是否真的插入了（用户取消返回 false，便于外层提示）
  */
+/**
+ * 把一段块级 Markdown 插成「独占一行」。
+ *
+ * 图片和视频都是块级元素，可光标可能停在一行文字的中间甚至开头——
+ * 直接拿片段替换选区，它会和上一行的文字挤在一起；连着插第二张时，
+ * 光标停在第一个片段的末尾，第二张又紧跟上去，两张图全叠在同一行。
+ *
+ * 所以这里按行边界补换行：
+ *  - 当前行只剩空白 → 就地写
+ *  - 光标在行首 → 就地写，原本那行文字被结尾的换行推到下一行
+ *  - 其余（行中间 / 行尾）→ 先换行再写
+ * 写完统一补一个换行，光标落在片段末尾，下一次插入自然就到下一行。
+ */
+function insertBlock(view: EditorView, snippet: string) {
+  const range = view.state.selection.main;
+  const line = view.state.doc.lineAt(range.from);
+
+  const blank = line.text.trim().length === 0;
+  const atLineStart = range.from === line.from;
+  const prefix = blank || atLineStart ? "" : "\n";
+
+  const text = prefix + snippet + "\n";
+  dispatchResult(view, {
+    change: { from: range.from, to: range.to, insert: text },
+    selection: { anchor: range.from + prefix.length + snippet.length },
+  });
+}
+
 export async function pickImageAndInsert(
   view: EditorView,
   kind: "image" | "video" | "any" = "image",
 ): Promise<boolean> {
   const api = (globalThis as { window?: { api?: Window["api"] } }).window?.api;
   if (!api?.pickImage) return false;
+
+  // 文件对话框是异步的：先按住当前光标，避免等待期间来回切焦点把位置丢了
+  const range = view.state.selection.main;
 
   const picked = await api.pickImage(store.state.root ?? "", kind);
   if (!picked) return false;
@@ -270,15 +301,14 @@ export async function pickImageAndInsert(
 
   if (isVideo) {
     // Markdown 没有原生视频语法，用 <video> 标签，预览里能直接播。
-    // 结尾留一个光标位，插完可以紧接着写东西。
-    const snippet = `<video src="${picked.rel}" controls></video>`;
-    dispatchResult(
-      view,
-      insertTextCommand(selection(view), snippet, snippet.length),
-    );
+    insertBlock(view, `<video src="${picked.rel}" controls></video>`);
   } else {
-    const snippet = `![${alt}](${picked.rel})`;
-    dispatchResult(view, insertTextCommand(selection(view), snippet, snippet.length));
+    insertBlock(view, `![${alt}](${picked.rel})`);
+  }
+
+  // 拿旧位置派发一次空事务，让用户取消 / 切窗口回来时光标还在原地
+  if (view.state.selection.main.from !== range.from) {
+    view.dispatch({ selection: { anchor: range.from } });
   }
   return true;
 }

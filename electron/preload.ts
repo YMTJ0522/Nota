@@ -41,6 +41,50 @@ contextBridge.exposeInMainWorld('api', {
   historyRead: (snapshot: string): Promise<string | null> =>
     ipcRenderer.invoke('history:read', snapshot),
 
+  /* 回收站：删除的笔记进 .nota/trash，可恢复可彻底删 */
+  trashList: (
+    root: string,
+  ): Promise<{ key: string; rel: string; name: string; deletedAt: number; size: number }[]> =>
+    ipcRenderer.invoke('trash:list', root),
+  trashRestore: (root: string, key: string): Promise<string> =>
+    ipcRenderer.invoke('trash:restore', root, key),
+  trashPurge: (root: string, key: string): Promise<boolean> =>
+    ipcRenderer.invoke('trash:purge', root, key),
+  trashEmpty: (root: string): Promise<boolean> => ipcRenderer.invoke('trash:empty', root),
+
+  /* 附件库：工作区 attachments/ 下的图片与视频 */
+  attachList: (
+    root: string,
+  ): Promise<
+    { rel: string; name: string; size: number; mtime: number; isVideo: boolean }[]
+  > => ipcRenderer.invoke('attach:list', root),
+  attachDelete: (root: string, rel: string): Promise<boolean> =>
+    ipcRenderer.invoke('attach:delete', root, rel),
+
+  /* AI：请求在主进程发出，绕开渲染进程的 CORS 限制 */
+  aiChat: (
+    cfg: { baseUrl: string; model: string; apiKey: string; system: string; temperature: number },
+    messages: { role: string; content: string }[],
+  ): Promise<{ ok: boolean; text?: string; error?: string }> =>
+    ipcRenderer.invoke('ai:chat', cfg, messages),
+  aiTest: (cfg: {
+    baseUrl: string
+    model: string
+    apiKey: string
+    system: string
+    temperature: number
+  }): Promise<{ ok: boolean; models?: string[]; error?: string }> =>
+    ipcRenderer.invoke('ai:test', cfg),
+
+  /* 运行环境版本（关于页展示） */
+  appInfo: (): Promise<{
+    electron: string
+    chrome: string
+    node: string
+    platform: string
+    arch: string
+  }> => ipcRenderer.invoke('app:info'),
+
   /* 窗口控制（自绘标题栏用） */
   minimize: (): Promise<void> => ipcRenderer.invoke('window:minimize'),
   toggleMaximize: (): Promise<boolean> => ipcRenderer.invoke('window:toggleMaximize'),

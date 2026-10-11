@@ -1,12 +1,19 @@
 <script setup lang="ts">
-import { onMounted, onBeforeUnmount } from 'vue'
+import { onMounted, onBeforeUnmount, ref } from 'vue'
 import { store } from '@/store'
 import TitleBar from '@/components/TitleBar.vue'
 import SidePanel from '@/components/SidePanel.vue'
 import EditorPane from '@/components/EditorPane.vue'
 import WelcomeView from '@/components/WelcomeView.vue'
+import LibraryDialog from '@/components/LibraryDialog.vue'
 
 const { state } = store
+
+/** 附件库 + 回收站：由侧边栏抛事件打开 */
+const libraryOpen = ref(false)
+function onLibrary() {
+  libraryOpen.value = true
+}
 
 function onKey(e: KeyboardEvent) {
   const mod = e.ctrlKey || e.metaKey
@@ -32,9 +39,13 @@ onMounted(() => {
   store.initTheme()
   store.initPrefs()
   window.addEventListener('keydown', onKey)
+  window.addEventListener('nota:library', onLibrary)
 })
 
-onBeforeUnmount(() => window.removeEventListener('keydown', onKey))
+onBeforeUnmount(() => {
+  window.removeEventListener('keydown', onKey)
+  window.removeEventListener('nota:library', onLibrary)
+})
 </script>
 
 <template>
@@ -50,6 +61,8 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey))
         </div>
       </main>
     </div>
+
+    <LibraryDialog :open="libraryOpen" @close="libraryOpen = false" />
   </div>
 </template>
 

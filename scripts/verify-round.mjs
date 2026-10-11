@@ -346,8 +346,9 @@ await viewAlive('after-8')
 
 /* ── 9. 设置面板 ── */
 const settings = await evaluate(`(async () => {
-  // 设置入口改在侧边栏左下角（.foot .foot-btn），不再走顶栏菜单
-  const s = document.querySelector('.foot .foot-btn')
+  // 设置入口在侧边栏左下角（.foot .foot-btn）。那里现在还有一个「附件库」
+  // 按钮，所以必须按 data-tip 精确定位，不能取第一个。
+  const s = document.querySelector('.foot .foot-btn[data-tip="设置"]')
   if (s) s.click()
   await new Promise(r => setTimeout(r, 400))
   const dlg = document.querySelector('.st')
@@ -367,7 +368,7 @@ const settings = await evaluate(`(async () => {
 ok(
   '9.设置面板',
   settings.present && settings.horizontal && settings.switches >= 3 &&
-    settings.themeBtns === 2 && settings.sect.length === 8 && settings.closed,
+    settings.themeBtns === 2 && settings.sect.length === 9 && settings.closed,
   settings,
 )
 await viewAlive('after-9')

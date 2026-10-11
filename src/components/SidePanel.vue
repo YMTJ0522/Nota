@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { ref, watch, nextTick, computed } from 'vue'
+import { ref, watch, nextTick, computed, onMounted, onBeforeUnmount } from 'vue'
 import {
   Clock,
+  Database,
   FilePlus2,
   FileText,
   FolderPlus,
@@ -67,6 +68,22 @@ async function focusSearch() {
 function clearSearch() {
   store.setSearchQuery('')
 }
+
+/**
+ * 附件库与回收站的开关。抛全局事件而不是 emit：
+ * 对话框挂在 App 层（它要跨侧栏和编辑区工作），一层层传 props 会把两边焊死。
+ */
+function openLibrary() {
+  window.dispatchEvent(new CustomEvent('nota:library'))
+}
+
+/** 工具栏 AI 菜单的「模型设置…」：打开对话框，具体分区由对话框自己切 */
+function onSettingsRequest() {
+  settingsOpen.value = true
+}
+
+onMounted(() => window.addEventListener('nota:settings', onSettingsRequest))
+onBeforeUnmount(() => window.removeEventListener('nota:settings', onSettingsRequest))
 
 /** 导航项点击：再点一次当前项就回到「所有笔记」 */
 function pickNav(id: NavFilter) {
@@ -191,6 +208,9 @@ function pickNav(id: NavFilter) {
 
       <div class="foot">
         <span class="root" :title="state.root ?? ''">{{ state.root }}</span>
+        <button class="foot-btn" data-tip="附件库与回收站" @click="openLibrary">
+          <Database :size="16" :stroke-width="1.9" />
+        </button>
         <button class="foot-btn" data-tip="设置" @click="settingsOpen = true">
           <Settings :size="16" :stroke-width="1.9" />
         </button>
@@ -228,6 +248,9 @@ function pickNav(id: NavFilter) {
       </div>
       <span class="rail-spacer" />
       <div class="rail-group rail-bottom">
+        <button class="rail-btn" data-tip="附件库与回收站" @click="openLibrary">
+          <Database :size="16" :stroke-width="1.9" />
+        </button>
         <button class="rail-btn" data-tip="设置" @click="settingsOpen = true">
           <Settings :size="16" :stroke-width="1.9" />
         </button>

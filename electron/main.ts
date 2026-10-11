@@ -98,7 +98,146 @@ ipcMain.handle('window:toggleMaximize', () => {
 })
 ipcMain.handle('window:close', () => win?.close())
 
+/* ── AI ──
+   请求走主进程而不是渲染进程：渲染进程的 fetch 会被目标服务的 CORS 拦
+   （尤其是 Ollama 这类本地服务），主进程的 net.fetch 没有同源限制。
+   接口统一用 OpenAI 兼容的 /chat/completions，本地与云端都能覆盖。 */
+
+interface AiRequest {
+  baseUrl: string
+  model: string
+  apiKey: string
+  system: string
+  temperature: number
+}
+type ChatMessage = { role: string; content: string }
+
+function aiEndpoint(baseUrl: string) {
+  return baseUrl.trim().replace(/\/+$/, '') + '/chat/completions'
+}
+
+function aiHeaders(apiKey: string): Record<string, string> {
+  const h: Record<string, string> = { 'Content-Type': 'application/json' }
+  if (apiKey.trim()) h.Authorization = `Bearer ${apiKey.trim()}`
+  return h
+}
+
+/** 本地模型可能几十秒才吐第一个字，超时给得宽一点 */
+const AI_TIMEOUT_MS = 120_000
+
+function aiError(e: unknown): string {
+  const err = e as { name?: string; message?: string }
+  if (err?.name === 'AbortError') return `请求超时（超过 ${AI_TIMEOUT_MS / 1000} 秒）`
+  const msg = err?.message ?? String(e)
+  // 连接不上是最常见的情况，把最可能的病因直接说出来
+  if (/ECONNREFUSED|fetch failed|net::ERR_CONNECTION_REFUSED/i.test(msg)) {
+    return '连不上目标地址。确认服务已启动、地址和端口没写错。'
+  }
+  return msg
+}
+
+ipcMain.handle(
+  'ai:chat',
+  async (
+    _e,
+    cfg: AiRequest,
+    messages: ChatMessage[],
+  ): Promise<{ ok: boolean; text?: string; error?: string }> => {
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), AI_TIMEOUT_MS)
+    try {
+      const body: ChatMessage[] = cfg.system.trim()
+        ? [{ role: 'system', content: cfg.system.trim() }, ...messages]
+        : messages
+      const res = await net.fetch(aiEndpoint(cfg.baseUrl), {
+        method: 'POST',
+        headers: aiHeaders(cfg.apiKey),
+        body: JSON.stringify({
+          model: cfg.model,
+          messages: body,
+          temperature: cfg.temperature,
+          stream: false,
+        }),
+        signal: controller.signal,
+      })
+      if (!res.ok) {
+        const detail = await res.text().catch(() => '')
+        return { ok: false, error: `HTTP ${res.status} ${detail.slice(0, 200)}` }
+      }
+      const data = (await res.json()) as {
+        choices?: { message?: { content?: string } }[]
+      }
+      const text = data?.choices?.[0]?.message?.content
+      if (typeof text !== 'string') return { ok: false, error: '返回里没有文本内容' }
+      return { ok: true, text }
+    } catch (e) {
+      return { ok: false, error: aiError(e) }
+    } finally {
+      clearTimeout(timer)
+    }
+  },
+)
+
+/** 测试连接：拉一次 /models，顺带把可用模型列出来方便直接挑 */
+ipcMain.handle(
+  'ai:test',
+  async (
+    _e,
+    cfg: AiRequest,
+  ): Promise<{ ok: boolean; models?: string[]; error?: string }> => {
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), 15_000)
+    try {
+      const base = cfg.baseUrl.trim().replace(/\/+$/, '')
+      const res = await net.fetch(base + '/models', {
+        method: 'GET',
+        headers: aiHeaders(cfg.apiKey),
+        signal: controller.signal,
+      })
+      if (!res.ok) {
+        const detail = await res.text().catch(() => '')
+        return { ok: false, error: `HTTP ${res.status} ${detail.slice(0, 160)}` }
+      }
+      const data = (await res.json()) as { data?: { id?: string }[] }
+      const models = (data?.data ?? []).map((m) => m.id ?? '').filter(Boolean)
+      return { ok: true, models }
+    } catch (e) {
+      return { ok: false, error: aiError(e) }
+    } finally {
+      clearTimeout(timer)
+    }
+  },
+)
+
+/** 运行环境版本：设置里「关于」一页要展示，只能从主进程拿 */
+ipcMain.handle('app:info', () => ({
+  electron: process.versions.electron,
+  chrome: process.versions.chrome,
+  node: process.versions.node,
+  platform: process.platform,
+  arch: process.arch,
+}))
+
 /* ── IPC：文件系统操作，全部在主进程执行，渲染进程只能通过白名单调用 ── */
+
+/* ── 工作区内的隐藏目录 ──
+   .nota 放应用自己产生的东西（回收站、索引等），和笔记混在一起会污染目录树，
+   所以单独藏起来；名字带点前缀，文件管理器里也不显眼。 */
+const NOTA_DIR = '.nota'
+const TRASH_DIR = 'trash'
+const ATTACH_DIR = 'attachments'
+
+/** 当前工作区根。删除/回收站都要知道"相对工作区的路径"才能还原回去 */
+let workspaceRoot: string | null = null
+
+function trashDirOf(root: string) {
+  return path.join(root, NOTA_DIR, TRASH_DIR)
+}
+
+/** 原路径 → 安全文件名。Windows 文件名吃不下 `\ / :` 这些，用 base64url 编码 */
+function trashKey(rel: string) {
+  return Buffer.from(rel, 'utf8').toString('base64url')
+}
 
 // 选择工作区目录
 ipcMain.handle('workspace:pick', async () => {
@@ -115,6 +254,7 @@ ipcMain.handle('workspace:pick', async () => {
 // 顺带把每篇笔记 frontmatter 里的 tags 摘出来挂在节点上，
 // 这样侧栏的标签筛选不用再为每个文件单独发一次 IPC。
 ipcMain.handle('workspace:tree', async (_e, root: string) => {
+  workspaceRoot = root
   async function readMeta(file: string): Promise<{ tags: string[]; starred: boolean }> {
     const empty = { tags: [] as string[], starred: false }
     try {
@@ -257,9 +397,127 @@ ipcMain.handle('note:create', async (_e, dir: string, name: string) => {
   return target
 })
 
-// 删除（移入回收站，不直接抹掉）
+// 删除：移进工作区内的 .nota/trash，而不是系统回收站。
+// 系统回收站只认"文件名"，笔记恢复时不知道该放回哪个子目录，
+// 所以这里把「相对工作区的原路径」一并存进 sidecar json。
 ipcMain.handle('note:delete', async (_e, file: string) => {
-  await shell.trashItem(file)
+  const root = workspaceRoot
+  if (!root || !file.startsWith(root)) {
+    // 没有工作区上下文（比如单文件预览）时退回系统回收站，总比直接删除好
+    await shell.trashItem(file)
+    return true
+  }
+  const rel = path.relative(root, file).replace(/\\/g, '/')
+  const key = trashKey(rel)
+  const dir = trashDirOf(root)
+  await fs.mkdir(dir, { recursive: true })
+  await fs.rename(file, path.join(dir, `${key}.md`))
+  await fs.writeFile(
+    path.join(dir, `${key}.json`),
+    JSON.stringify({ rel, name: path.basename(file), deletedAt: Date.now() }),
+    'utf8',
+  )
+  return true
+})
+
+/* ── 回收站 ── */
+interface TrashItem {
+  key: string
+  rel: string
+  name: string
+  deletedAt: number
+  size: number
+}
+
+ipcMain.handle('trash:list', async (_e, root: string): Promise<TrashItem[]> => {
+  const dir = trashDirOf(root)
+  try {
+    await fs.access(dir)
+  } catch {
+    return []
+  }
+  const files = await fs.readdir(dir)
+  const out: TrashItem[] = []
+  for (const f of files) {
+    if (!f.endsWith('.json')) continue
+    const key = f.slice(0, -5)
+    try {
+      const meta = JSON.parse(await fs.readFile(path.join(dir, f), 'utf8'))
+      const size = await fs.stat(path.join(dir, `${key}.md`)).then(
+        (s) => s.size,
+        () => 0,
+      )
+      out.push({ key, rel: meta.rel, name: meta.name, deletedAt: meta.deletedAt, size })
+    } catch {
+      /* 元信息坏了就跳过这一条，别让整页挂掉 */
+    }
+  }
+  return out.sort((a, b) => b.deletedAt - a.deletedAt)
+})
+
+ipcMain.handle('trash:restore', async (_e, root: string, key: string) => {
+  const dir = trashDirOf(root)
+  const meta = JSON.parse(await fs.readFile(path.join(dir, `${key}.json`), 'utf8'))
+  const target = path.join(root, meta.rel)
+  await fs.mkdir(path.dirname(target), { recursive: true })
+  await fs.rename(path.join(dir, `${key}.md`), target)
+  await fs.rm(path.join(dir, `${key}.json`), { force: true })
+  return target
+})
+
+ipcMain.handle('trash:purge', async (_e, root: string, key: string) => {
+  const dir = trashDirOf(root)
+  await fs.rm(path.join(dir, `${key}.md`), { force: true })
+  await fs.rm(path.join(dir, `${key}.json`), { force: true })
+  return true
+})
+
+ipcMain.handle('trash:empty', async (_e, root: string) => {
+  await fs.rm(trashDirOf(root), { recursive: true, force: true })
+  return true
+})
+
+/* ── 附件库 ──
+   工作区 attachments/ 下的图片视频。笔记引用它们是相对路径，
+   这里列出真实文件，方便直接插入到正在写的笔记里。 */
+const MEDIA_EXT = /\.(png|jpe?g|gif|webp|svg|bmp|avif|mp4|webm|mov|m4v|ogv|mkv|avi)$/i
+
+ipcMain.handle(
+  'attach:list',
+  async (
+    _e,
+    root: string,
+  ): Promise<{ rel: string; name: string; size: number; mtime: number; isVideo: boolean }[]> => {
+    const dir = path.join(root, ATTACH_DIR)
+    try {
+      await fs.access(dir)
+    } catch {
+      return []
+    }
+    const files = await fs.readdir(dir)
+    const out: { rel: string; name: string; size: number; mtime: number; isVideo: boolean }[] = []
+    for (const name of files) {
+      if (!MEDIA_EXT.test(name)) continue
+      try {
+        const s = await fs.stat(path.join(dir, name))
+        if (!s.isFile()) continue
+        out.push({
+          rel: `${ATTACH_DIR}/${name}`,
+          name,
+          size: s.size,
+          mtime: s.mtimeMs,
+          isVideo: /\.(mp4|webm|mov|m4v|ogv|mkv|avi)$/i.test(name),
+        })
+      } catch {
+        /* 单个文件读不到不影响其余 */
+      }
+    }
+    return out.sort((a, b) => b.mtime - a.mtime)
+  },
+)
+
+ipcMain.handle('attach:delete', async (_e, root: string, rel: string) => {
+  await fs.rm(path.join(root, rel), { force: true })
   return true
 })
 

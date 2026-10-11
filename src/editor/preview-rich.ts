@@ -12,6 +12,8 @@
  * 出错时最坏也就是退化成原文，不会整页渲染失败。
  */
 
+import { langFromClass } from './highlight-code'
+
 const CALLOUT_RE =
   /<blockquote>\s*<p>\[!([A-Za-z]+)\]([+-]?)\s*([\s\S]*?)<\/p>([\s\S]*?)<\/blockquote>/g
 
@@ -449,10 +451,74 @@ export function enhancePreview(html: string): { html: string; headings: HeadingI
   // 行内改写要在 mermaid 还原成容器之前做：那时候图表源码还在 <pre><code> 里，
   // protectCode 能挡住它，不会把 mermaid 里的 $ 或 == 当成公式和高亮。
   out = transformMark(out)
+  out = transformEmbeds(out)
   out = transformMath(out)
+  // mermaid 必须先走：它要把 <pre><code> 还原成图表容器，
+  // 晚一步的话会被下面的代码块包装当成普通代码框起来。
   out = transformMermaid(out)
+  out = transformCodeBlocks(out)
   out = transformTables(out)
   return decorateHeadings(out)
+}
+
+/**
+ * 笔记嵌入 `![[笔记名]]`。
+ *
+ * marked 不认这个写法，会原样输出成一串方括号文本。这里补成一个卡片：
+ * 真正意义上的「把另一篇的正文拉进来渲染」要等双链那一版，
+ * 现在先把它的样子和别的行内文本区分开，免得看着像没解析成功的乱码。
+ */
+function transformEmbeds(src: string): string {
+  return protectCode(src, (s) =>
+    s.replace(/!\[\[([^\]\n]+)\]\]/g, (_w, name: string) => {
+      const label = escapeHtml(name.trim())
+      return (
+        `<span class="pv-embed" data-note="${escapeAttr(name.trim())}">` +
+        `<span class="pv-embed-ico">${'\u{1F4C4}'}</span>` +
+        `<span class="pv-embed-name">${label}</span>` +
+        `</span>`
+      )
+    }),
+  )
+}
+
+/* ── 代码块：标题栏 + 语言 + 复制 + 折叠 ──
+   marked 只吐 <pre><code>，直接裸着放出来既没有语言标识也没法复制。
+   这里给每个代码块套一层外壳，形态对齐参考项目：
+     .pv-code > .pv-code-head(语言 / 折叠 / 复制) + pre > code > .pv-line*           */
+
+/** 超过这么多行就默认折叠，长代码块不该一上来吃掉整屏 */
+const CODE_COLLAPSE_LINES = 24
+/** 折叠后露出的高度，留一点「下面还有」的暗示 */
+export const CODE_COLLAPSE_HEIGHT = 260
+
+function transformCodeBlocks(src: string): string {
+  return src.replace(
+    /<pre><code([^>]*)>([\s\S]*?)<\/code><\/pre>/g,
+    (whole, attrs: string, body: string) => {
+      const lang = langFromClass(attrs)
+      const lines = (body.match(/<span class="pv-line"/g) ?? []).length
+      const collapsible = lines > CODE_COLLAPSE_LINES
+
+      const head = [
+        `<span class="pv-code-lang">${lang ? escapeHtml(lang.toUpperCase()) : "TEXT"}</span>`,
+        collapsible
+          ? `<button type="button" class="pv-code-fold" data-fold data-lines="${lines}">${lines} 行</button>`
+          : "",
+        `<button type="button" class="pv-code-copy" data-copy>复制</button>`,
+      ].join("")
+
+      const style = collapsible
+        ? ` style="max-height:${CODE_COLLAPSE_HEIGHT}px"`
+        : ""
+      return (
+        `<div class="pv-code${collapsible ? " is-folded" : ""}" data-lang="${escapeAttr(lang)}">` +
+        `<div class="pv-code-head">${head}</div>` +
+        `<div class="pv-code-body"${style}>${whole}</div>` +
+        `</div>`
+      )
+    },
+  )
 }
 
 /* ── Mermaid 异步渲染 ── */

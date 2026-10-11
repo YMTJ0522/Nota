@@ -40,8 +40,23 @@ function escapeHtml(s: string) {
     .replace(/"/g, "&quot;");
 }
 
+interface Segment {
+  from: number;
+  to: number;
+  classes: string;
+}
+
 /**
- * 把一段代码渲染成带高亮 class 的 HTML。
+ * 把一段代码渲染成「按行切开」的高亮 HTML。
+ *
+ * 比朴素做法多做的那一步是行切分：每行包一个 `<span class="pv-line">`，
+ * 行号、高亮行、折叠都要靠它——没有行容器，CSS 只能整块着色，
+ * 做不到「第几行」这种粒度。
+ *
+ * 难点在于 token 会跨行（块注释、模板字符串）。处理办法是先收下全部
+ * token 区间，再按行边界把跨行的那段切成两半，各自留在自己的行里，
+ * 而不是简单地按 \n 把 HTML 字符串劈开——那样会把未闭合的 span 切断。
+ *
  * 语言未知或解析失败时原样转义返回，绝不因为高亮失败而丢内容。
  */
 export async function highlightCode(code: string, lang: string): Promise<string> {
@@ -57,17 +72,14 @@ export async function highlightCode(code: string, lang: string): Promise<string>
     if (language) {
       const state = EditorState.create({ doc: code, extensions: [language] });
       const tree = syntaxTree(state);
-      let pos = 0;
-      const parts: string[] = [];
+      const segments: Segment[] = [];
       highlightTree(tree, notaHighlightClass, (from, to, classes) => {
-        if (from > pos) parts.push(escapeHtml(code.slice(pos, from)));
-        parts.push(
-          `<span class="${classes}">${escapeHtml(code.slice(from, to))}</span>`,
-        );
-        pos = to;
+        if (to > from) segments.push({ from, to, classes });
       });
-      if (pos < code.length) parts.push(escapeHtml(code.slice(pos)));
-      out = parts.join("");
+      segments.sort((a, b) => a.from - b.from);
+      out = renderLines(code, segments);
+    } else {
+      out = renderLines(code, []);
     }
   } catch {
     out = fallback;
@@ -76,6 +88,42 @@ export async function highlightCode(code: string, lang: string): Promise<string>
   if (cache.size > CACHE_LIMIT) cache.clear();
   cache.set(key, out);
   return out;
+}
+
+/** 按行组装。没有 token 信息时也走同一条路，保证结构一致（都有 .pv-line）。 */
+function renderLines(code: string, segments: Segment[]): string {
+  const lines = code.split("\n");
+  const parts: string[] = [];
+  let cursor = 0; // 行首在原文中的位置
+  let seg = 0; // 第一个可能还没用完的 token
+
+  for (let i = 0; i < lines.length; i += 1) {
+    const start = cursor;
+    const end = cursor + lines[i].length;
+    cursor = end + 1; // +1 是那个被 split 吃掉的 \n
+
+    // 跨行的 token 要留在指针里，所以只推进「已经彻底走完」的段
+    while (seg < segments.length && segments[seg].to <= start) seg += 1;
+
+    const inner: string[] = [];
+    let at = start;
+    for (let s = seg; s < segments.length && segments[s].from < end; s += 1) {
+      const g = segments[s];
+      const a = Math.max(g.from, start);
+      const b = Math.min(g.to, end);
+      if (a > at) inner.push(escapeHtml(code.slice(at, a)));
+      if (b > a) {
+        inner.push(`<span class="${g.classes}">${escapeHtml(code.slice(a, b))}</span>`);
+      }
+      at = Math.max(at, b);
+    }
+    if (at < end) inner.push(escapeHtml(code.slice(at, end)));
+
+    parts.push(`<span class="pv-line" data-line="${i + 1}">${inner.join("")}</span>`);
+  }
+
+  // 行与行之间补回真实换行：空行的 span 内容为空，靠 CSS 的 min-height 撑高度
+  return parts.join("\n");
 }
 
 /** 从 marked 生成的 `<pre><code class="language-js">` 里取出语言名 */

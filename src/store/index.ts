@@ -21,6 +21,49 @@ export interface TreeNode {
 export type ViewMode = 'write' | 'split' | 'read'
 /** 侧栏导航筛选 */
 export type NavFilter = 'all' | 'recent' | 'starred' | 'unfiled'
+/** 强调色板。id 直接写进 <html data-accent>，与 tokens.css 里的选择器一一对应 */
+export type AccentName =
+  | 'celadon' | 'cinnabar' | 'indigo' | 'amber' | 'lagoon' | 'wisteria'
+
+/* ── AI 配置 ──
+   走 OpenAI 兼容的 /chat/completions：Ollama、LM Studio、vLLM、各类网关
+   都是这个接口，所以一套设置就能覆盖「本地跑模型」和「接云端」。 */
+export interface AiConfig {
+  /** 形如 http://localhost:11434/v1，末尾不要带 /chat/completions */
+  baseUrl: string
+  model: string
+  /** 本地模型一般不需要，留空就不发 Authorization 头 */
+  apiKey: string
+  /** 每次请求都会带上的全局指令，用来约束语气和语言 */
+  system: string
+  temperature: number
+}
+
+export const AI_DEFAULTS: AiConfig = {
+  baseUrl: 'http://localhost:11434/v1',
+  model: 'llama3.2',
+  apiKey: '',
+  system: '你是写作助手。回答要简洁，直接给出结果，不要复述问题。',
+  temperature: 0.7,
+}
+
+/** 常见本地/云端服务的预设，省得手打地址 */
+export const AI_PRESETS: { label: string; baseUrl: string; model: string }[] = [
+  { label: 'Ollama（本地）', baseUrl: 'http://localhost:11434/v1', model: 'llama3.2' },
+  { label: 'LM Studio（本地）', baseUrl: 'http://localhost:1234/v1', model: 'local-model' },
+  { label: 'OpenAI', baseUrl: 'https://api.openai.com/v1', model: 'gpt-4o-mini' },
+  { label: 'DeepSeek', baseUrl: 'https://api.deepseek.com/v1', model: 'deepseek-chat' },
+]
+
+/** 设置里的色板列表：swatch 只用于画圆点，不参与真正的取色 */
+export const ACCENTS: { id: AccentName; label: string }[] = [
+  { id: 'celadon', label: '青瓷' },
+  { id: 'cinnabar', label: '朱砂' },
+  { id: 'indigo', label: '靛蓝' },
+  { id: 'amber', label: '琥珀' },
+  { id: 'lagoon', label: '湖蓝' },
+  { id: 'wisteria', label: '紫藤' },
+]
 
 interface State {
   root: string | null
@@ -52,6 +95,21 @@ interface State {
   searchQuery: string
   /** 右侧大纲是否展开 */
   outline: boolean
+  /** 强调色（对应 tokens.css 里的 data-accent 色板） */
+  accent: AccentName
+  /** AI 接入配置：地址、模型、密钥、系统提示词 */
+  ai: AiConfig
+}
+
+/** 色板的预览色。给设置页画圆点用——真正生效的颜色仍在 CSS 里，
+    这里只是把两套主题的主色各写一份，免得选择器读不到。 */
+export const ACCENT_SWATCH: Record<AccentName, { light: string; dark: string }> = {
+  celadon: { light: 'oklch(49% 0.13 150)', dark: 'oklch(74% 0.12 150)' },
+  cinnabar: { light: 'oklch(54% 0.15 30)', dark: 'oklch(66.5% 0.15 32)' },
+  indigo: { light: 'oklch(52% 0.14 252)', dark: 'oklch(72% 0.13 252)' },
+  amber: { light: 'oklch(56% 0.105 95)', dark: 'oklch(80% 0.14 95)' },
+  lagoon: { light: 'oklch(49% 0.075 205)', dark: 'oklch(76% 0.105 205)' },
+  wisteria: { light: 'oklch(52% 0.14 300)', dark: 'oklch(72% 0.13 300)' },
 }
 
 const state = reactive<State>({
@@ -74,6 +132,8 @@ const state = reactive<State>({
   navFilter: 'all',
   searchQuery: '',
   outline: true,
+  accent: 'celadon',
+  ai: { ...AI_DEFAULTS },
 })
 
 /** 「最近编辑」的时间窗：7 天内有改动的算最近 */
@@ -360,12 +420,51 @@ function initPrefs() {
   state.outline = localStorage.getItem('nota-outline') !== '0'
   const v = localStorage.getItem('nota-view')
   if (v === 'write' || v === 'split' || v === 'read') state.viewMode = v
+  initAccent()
+  initAi()
+}
+
+/**
+ * 强调色。只切 <html data-accent>，颜色本身全在 tokens.css 里，
+ * 配套色（soft / selection / 活动行）由 color-mix 从主色派生。
+ */
+function setAccent(a: AccentName) {
+  state.accent = a
+  document.documentElement.setAttribute('data-accent', a)
+  localStorage.setItem('nota-accent', a)
+}
+
+function initAccent() {
+  const saved = localStorage.getItem('nota-accent')
+  setAccent(ACCENTS.some((a) => a.id === saved) ? (saved as AccentName) : 'celadon')
 }
 
 function setTheme(t: 'light' | 'dark') {
   state.theme = t
   document.documentElement.setAttribute('data-theme', t)
   localStorage.setItem('nota-theme', t)
+}
+
+/** 改一项 AI 配置并落盘。密钥也存 localStorage——这是本机应用，
+    跟系统钥匙串集成的收益远小于它带来的复杂度。 */
+function setAiConfig(patch: Partial<AiConfig>) {
+  state.ai = { ...state.ai, ...patch }
+  try {
+    localStorage.setItem('nota-ai', JSON.stringify(state.ai))
+  } catch {
+    /* 存不下就算了，本次会话内仍然有效 */
+  }
+}
+
+function initAi() {
+  try {
+    const raw = localStorage.getItem('nota-ai')
+    if (!raw) return
+    const saved = JSON.parse(raw) as Partial<AiConfig>
+    state.ai = { ...AI_DEFAULTS, ...saved }
+  } catch {
+    state.ai = { ...AI_DEFAULTS }
+  }
 }
 
 function initTheme() {
@@ -404,6 +503,8 @@ export const store = {
   cancelNewFolder,
   setActiveTag,
   setTheme,
+  setAccent,
+  setAiConfig,
   initTheme,
   autoExpand,
   exportNote,

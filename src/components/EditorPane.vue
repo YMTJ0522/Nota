@@ -12,22 +12,35 @@ import {
   Loader2,
   ListTree,
   PanelRightClose,
+  ChevronDown,
+  ChevronUp,
+  Search,
+  X,
 } from 'lucide-vue-next'
 import { store } from '@/store'
 import { baseExtensions } from '@/editor/setup'
+import {
+  SearchQuery,
+  findNext,
+  findPrevious,
+  setSearchQuery,
+} from '@codemirror/search'
 import { notaThemeExtensions } from '@/editor/theme'
 import { countWords, formatWordCount } from '@/editor/word-count'
 import { createSlashCommandsExtension } from '@/editor/slash-commands'
+import { runAi, type AiAction } from '@/editor/ai'
 import type { SlashMenuRenderState, SlashCommandId } from '@/editor/slash-commands'
 import {
   enhancePreview,
   renderMermaidInHtml,
   renderMathInHtml,
   stripFrontMatter,
+  CODE_COLLAPSE_HEIGHT,
 } from '@/editor/preview-rich'
 import type { HeadingItem } from '@/editor/preview-rich'
 import { highlightCode, langFromClass } from '@/editor/highlight-code'
 import Toolbar from '@/components/Toolbar.vue'
+import NotePickerDialog from '@/components/NotePickerDialog.vue'
 import SlashMenu from '@/components/SlashMenu.vue'
 import HeaderMenu from '@/components/HeaderMenu.vue'
 import EditorOutline from '@/components/EditorOutline.vue'
@@ -163,6 +176,161 @@ async function render() {
   }
 }
 
+/* ── 编辑区查找条 ──
+   只做「找」不做「换」：替换在笔记场景里用得极少，却要占一整行控件。
+   匹配逻辑仍交给 @codemirror/search（setSearchQuery + findNext/Previous），
+   这样高亮和滚动行为与编辑器原生一致，画出来的只是上面那条输入框。 */
+const findOpen = ref(false)
+const findText = ref('')
+const findTotal = ref(0)
+const findAt = ref(0)
+const findInput = ref<HTMLInputElement | null>(null)
+
+const findCountText = computed(() => {
+  if (!findText.value) return ''
+  if (findTotal.value === 0) return '无匹配'
+  return findAt.value ? `${findAt.value} / ${findTotal.value}` : `${findTotal.value} 处`
+})
+
+function openFind() {
+  findOpen.value = true
+  nextTick(() => {
+    findInput.value?.focus()
+    findInput.value?.select()
+    // 有选区就把选中内容带进搜索框——多数人按 Ctrl+F 时想找的就是刚选中的词
+    const v = view
+    if (v) {
+      const sel = v.state.sliceDoc(
+        v.state.selection.main.from,
+        v.state.selection.main.to,
+      )
+      if (sel && !sel.includes('\n')) {
+        findText.value = sel
+        refreshFind()
+      }
+    }
+  })
+}
+
+function closeFind() {
+  findOpen.value = false
+  findText.value = ''
+  findTotal.value = 0
+  findAt.value = 0
+  const v = view
+  if (v) v.dispatch({ effects: setSearchQuery.of(new SearchQuery({ search: '' })) })
+  v?.focus()
+}
+
+/** 重新计数，并标出光标当前停在第几个匹配上 */
+function refreshFind() {
+  const v = view
+  if (!v) return
+  const text = findText.value
+  const query = new SearchQuery({ search: text, caseSensitive: false })
+  v.dispatch({ effects: setSearchQuery.of(query) })
+
+  if (!text) {
+    findTotal.value = 0
+    findAt.value = 0
+    return
+  }
+
+  const head = v.state.selection.main.head
+  let total = 0
+  let at = 0
+  const cursor = query.getCursor(v.state)
+  for (;;) {
+    const hit = cursor.next()
+    if (hit.done) break
+    total += 1
+    if (hit.value.from <= head && head <= hit.value.to) at = total
+  }
+  findTotal.value = total
+  findAt.value = at
+}
+
+function stepFind(dir: 1 | -1) {
+  const v = view
+  if (!v || !findText.value) return
+  if (dir === 1) findNext(v)
+  else findPrevious(v)
+  refreshFind()
+}
+
+/* ── 笔记嵌入 ── */
+const embedOpen = ref(false)
+
+/** 把选中的笔记写成 `![[名字]]` 插到光标处 */
+function embedNote(rel: string) {
+  const v = view
+  if (!v) return
+  const name = rel.replace(/\.md$/i, '')
+  const snippet = `![[${name}]]`
+  const range = v.state.selection.main
+  v.dispatch({
+    changes: { from: range.from, to: range.to, insert: snippet },
+    selection: { anchor: range.from + snippet.length },
+    userEvent: 'input.toolbar',
+  })
+  v.focus()
+}
+
+/**
+ * 预览区里代码块的复制 / 折叠。
+ *
+ * 走事件委托而不是给每个按钮挂 onclick：预览 HTML 每次渲染都会整块换掉，
+ * 逐个元素绑定既绑不住（新节点没有监听）也容易漏，交给容器一个处理器就够了。
+ */
+function onPreviewClick(e: MouseEvent) {
+  const btn = (e.target as HTMLElement | null)?.closest<HTMLElement>(
+    '[data-copy], [data-fold]',
+  )
+  const box = btn?.closest<HTMLElement>('.pv-code')
+  if (!btn || !box) return
+
+  if (btn.hasAttribute('data-copy')) {
+    const code = box.querySelector('code')
+    if (!code) return
+    const copy = btn
+    navigator.clipboard?.writeText(code.textContent ?? '').then(
+      () => {
+        copy.textContent = '已复制'
+        copy.classList.add('done')
+        window.setTimeout(() => {
+          copy.textContent = '复制'
+          copy.classList.remove('done')
+        }, 1400)
+      },
+      () => {
+        copy.textContent = '复制失败'
+        copy.classList.add('done')
+        window.setTimeout(() => {
+          copy.textContent = '复制'
+          copy.classList.remove('done')
+        }, 1400)
+      },
+    )
+    return
+  }
+
+  // 折叠：收起时压到固定高度，展开时先量出真实高度再放开，
+  // 这样 max-height 有个确定的终值可以做过渡（none 是过渡不动的）。
+  const body = box.querySelector<HTMLElement>('.pv-code-body')
+  if (!body) return
+  const lines = btn.dataset.lines ?? ''
+  const folded = box.classList.toggle('is-folded')
+  btn.textContent = folded ? `${lines} 行` : '收起'
+  if (folded) {
+    body.style.maxHeight = `${CODE_COLLAPSE_HEIGHT}px`
+  } else {
+    body.style.maxHeight = `${body.scrollHeight}px`
+    window.setTimeout(() => {
+      if (!box.classList.contains('is-folded')) body.style.maxHeight = ''
+    }, 240)
+  }
+}
+
 /**
  * 把预览 HTML 里的相对路径图片/视频换成可加载的 URL。
  *
@@ -213,12 +381,19 @@ async function highlightFences(source: string): Promise<string> {
   const rendered = await Promise.all(
     blocks.map(async (m) => {
       const lang = langFromClass(m[1])
+      // mermaid 不是代码：一旦按行包成 <span class="pv-line">，
+      // 后面取图表源码时拿到的就是带标签的 HTML，画出来一片空白。
+      // 原样放过去，交给 transformMermaid 处理。
+      if (lang.toLowerCase() === 'mermaid') return m[0]
       const code = m[2]
         .replace(/&lt;/g, '<')
         .replace(/&gt;/g, '>')
         .replace(/&quot;/g, '"')
         .replace(/&#39;/g, "'")
         .replace(/&amp;/g, '&')
+        // marked 会在代码块末尾留一个换行。留着的话行容器会多出一个空行，
+        // 底部凭空多一道空白，行数也对不上源码。
+        .replace(/\n$/, '')
       const inner = await highlightCode(code, lang)
       const cls = lang ? ` class="language-${lang}"` : ''
       return `<pre><code${cls}>${inner}</code></pre>`
@@ -261,7 +436,8 @@ function runSlashFormat(id: SlashCommandId, v: EditorView) {
     // 链接与引用
     case 'link': toolbarLink(v); break
     case 'wikiLink': toolbarWrap(v, '[[', ']]'); break
-    case 'noteEmbed': toolbarWrap(v, '![[', ']]'); break
+    // 嵌入要挑具体哪一篇，光打一对 ![[]] 还得手动填名字，直接弹选择器
+    case 'noteEmbed': embedOpen.value = true; break
     case 'blockReference': toolbarWrap(v, '[[#^', ']]'); break
     case 'footnote': toolbarFootnote(v); break
     case 'image': toolbarImage(v); break
@@ -286,9 +462,18 @@ function runSlashFormat(id: SlashCommandId, v: EditorView) {
   }
 }
 
-async function runSlashAi(_id: SlashCommandId, _v: EditorView) {
-  // AI 能力属于后续里程碑，先在 UI 上给出明确反馈
-  window.dispatchEvent(new CustomEvent('nota:toast', { detail: 'AI 命令尚未接入，敬请期待' }))
+/** 斜杠菜单里的 AI 组：映射到工具栏那四种动作 */
+const SLASH_AI: Record<string, AiAction> = {
+  aiSummarize: 'summarize',
+  aiContinue: 'continue',
+  aiTranslate: 'translate',
+  aiOutline: 'summarize',
+}
+
+async function runSlashAi(id: SlashCommandId, v: EditorView) {
+  const action = SLASH_AI[id]
+  if (!action) return
+  await runAi(v, action)
 }
 
 /** 工具栏提示：模板里拿不到 window，统一从这里转发 */
@@ -308,6 +493,7 @@ function createEditor() {
         state.draft = doc
         scheduleSave()
       },
+      onFind: openFind,
     }),
     ...notaThemeExtensions,
     ...createSlashCommandsExtension({
@@ -347,7 +533,27 @@ onMounted(() => {
     pushDoc(state.draft)
   })
   window.addEventListener('keydown', onViewKey)
+  window.addEventListener('nota:insert', onInsertRequest)
 })
+
+/**
+ * 外部（附件库）要求往光标处插一段文本。
+ *
+ * 走事件而不是 prop：附件库挂在 App 层，跟编辑区隔了两层，
+ * 为它专门开一条 props 通道会把两边的生命周期绑在一起。
+ */
+function onInsertRequest(e: Event) {
+  const text = (e as CustomEvent<string>).detail
+  const v = view
+  if (!v || !text) return
+  const range = v.state.selection.main
+  v.dispatch({
+    changes: { from: range.from, to: range.to, insert: text },
+    selection: { anchor: range.from + text.length },
+    userEvent: 'input.insert',
+  })
+  v.focus()
+}
 
 onBeforeUnmount(() => {
   if (timer) clearTimeout(timer)
@@ -356,6 +562,7 @@ onBeforeUnmount(() => {
   view = null
   ;(window as unknown as { __notaView?: EditorView | null }).__notaView = null
   window.removeEventListener('keydown', onViewKey)
+  window.removeEventListener('nota:insert', onInsertRequest)
 })
 
 // 切笔记：activePath 变化时把 draft 灌进 CM。
@@ -491,22 +698,61 @@ defineExpose({ getView: () => view })
       v-if="showEditor"
       :get-view="() => view"
       @toast="onToolbarToast"
+      @embed="embedOpen = true"
     />
 
     <div class="stage" :data-layout="mode">
-      <div
-        v-show="showEditor"
-        ref="host"
-        class="host"
-      />
+      <div v-show="showEditor" class="ed-wrap">
+        <div ref="host" class="host" />
+
+        <!-- 查找条。CodeMirror 原生面板带替换框和正则/整词一堆开关，
+             这里只要「一个输入框 + 上/下 + 关闭」，所以自己画一条浮在上面。 -->
+        <div v-if="findOpen" class="findbar">
+          <Search class="fb-ico" :size="12" :stroke-width="2" />
+          <input
+            ref="findInput"
+            v-model="findText"
+            class="fb-input"
+            type="text"
+            placeholder="在当前笔记中查找…"
+            spellcheck="false"
+            @input="refreshFind"
+            @keydown.enter.exact.prevent="stepFind(1)"
+            @keydown.enter.shift.prevent="stepFind(-1)"
+            @keydown.esc="closeFind"
+          />
+          <span class="fb-count">{{ findCountText }}</span>
+          <button class="fb-btn" title="上一个 (Shift+Enter)" @click="stepFind(-1)">
+            <ChevronUp :size="13" :stroke-width="2.1" />
+          </button>
+          <button class="fb-btn" title="下一个 (Enter)" @click="stepFind(1)">
+            <ChevronDown :size="13" :stroke-width="2.1" />
+          </button>
+          <button class="fb-btn" title="关闭 (Esc)" @click="closeFind">
+            <X :size="12" :stroke-width="2.2" />
+          </button>
+        </div>
+      </div>
       <div v-if="showPreview" class="pvw">
-        <div ref="previewRef" class="preview" v-html="html" />
+        <div
+          ref="previewRef"
+          class="preview"
+          v-html="html"
+          @click="onPreviewClick"
+        />
         <EditorOutline
           v-if="state.outline"
           :headings="headings"
           :scroller="previewRef"
         />
       </div>
+
+      <NotePickerDialog
+        :open="embedOpen"
+        title="嵌入笔记"
+        @pick="embedNote"
+        @close="embedOpen = false"
+      />
 
       <SlashMenu
         v-if="slash && mode === 'write'"
@@ -717,16 +963,80 @@ defineExpose({ getView: () => view })
   flex-direction: row;
 }
 
+/* 编辑侧：包一层是为了让查找条能浮在编辑器右上角 */
+.ed-wrap {
+  position: relative;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
 /* 纯编辑：单栏占满 */
-.stage[data-layout='write'] .host {
+.stage[data-layout='write'] .ed-wrap {
   width: 100%;
 }
 
 /* 分栏：编辑在左、预览在右，中间一条分隔线 */
-.stage[data-layout='split'] .host {
+.stage[data-layout='split'] .ed-wrap {
   flex: 1 1 50%;
   min-width: 0;
   border-right: 1px solid var(--n-line);
+}
+
+/* ── 查找条 ── */
+.findbar {
+  position: absolute;
+  top: 8px;
+  right: 14px;
+  z-index: 6;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  height: 30px;
+  padding: 0 5px 0 9px;
+  border: 1px solid var(--n-line-strong);
+  border-radius: var(--n-r-md);
+  background: var(--n-raised);
+  box-shadow: var(--n-shadow-md);
+}
+.findbar .fb-ico {
+  color: var(--n-fg-faint);
+  flex: none;
+}
+.fb-input {
+  width: 168px;
+  height: 100%;
+  border: 0;
+  background: none;
+  font-family: var(--n-font-ui);
+  font-size: 12.5px;
+  color: var(--n-fg);
+  outline: none;
+}
+.fb-input::placeholder {
+  color: var(--n-fg-faint);
+}
+.fb-count {
+  min-width: 44px;
+  text-align: center;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--n-fg-dim);
+  flex: none;
+}
+.fb-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: var(--n-r-sm);
+  color: var(--n-fg-dim);
+  flex: none;
+}
+.fb-btn:hover {
+  background: var(--n-accent-soft);
+  color: var(--n-accent);
 }
 
 /* 预览侧：正文 + 右侧大纲并排。
@@ -828,17 +1138,123 @@ defineExpose({ getView: () => view })
   color: var(--n-code-fg);
   background: var(--n-code-bg);
 }
+/* 行内代码保持轻量；块级代码由 .pv-code 外层接管，pre 本身不再画边框 */
 .preview :deep(pre) {
-  padding: 12px 16px;
-  border-radius: var(--n-r-md);
-  background: var(--n-code-bg);
-  border: 1px solid var(--n-line);
+  margin: 0;
+  padding: 11px 14px;
+  border-radius: 0;
+  background: none;
+  border: 0;
   overflow-x: auto;
+  tab-size: 2;
+  line-height: 1.6;
 }
 .preview :deep(pre code) {
   padding: 0;
   background: none;
   color: inherit;
+  font-size: 13px;
+}
+
+/* 笔记嵌入：还没做真正的正文内联，先给一个能认出来的卡片 */
+.preview :deep(.pv-embed) {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  max-width: 100%;
+  padding: 2px 9px 2px 7px;
+  border: 1px solid var(--n-line-strong);
+  border-radius: var(--n-r-sm);
+  background: var(--n-surface);
+  font-size: 0.92em;
+  vertical-align: baseline;
+}
+.preview :deep(.pv-embed-ico) {
+  font-size: 11px;
+  line-height: 1;
+}
+.preview :deep(.pv-embed-name) {
+  color: var(--n-accent);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ── 代码块外壳：语言 + 行数/折叠 + 复制 ── */
+.preview :deep(.pv-code) {
+  margin: 1em 0;
+  border: 1px solid var(--n-line);
+  border-radius: var(--n-r-md);
+  background: var(--n-code-bg);
+  overflow: hidden;
+}
+.preview :deep(.pv-code-head) {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 7px 0 12px;
+  border-bottom: 1px solid var(--n-line);
+  background: color-mix(in oklab, var(--n-code-bg) 60%, var(--n-bg));
+}
+.preview :deep(.pv-code-lang) {
+  font-family: var(--n-font-mono);
+  font-size: 10.5px;
+  letter-spacing: 0.05em;
+  color: var(--n-fg-faint);
+}
+/* 折叠 / 复制靠右排；没折叠按钮时靠 margin-left:auto 顶到右边 */
+.preview :deep(.pv-code-fold),
+.preview :deep(.pv-code-copy) {
+  padding: 0 7px;
+  height: 20px;
+  border-radius: var(--n-r-sm);
+  font-size: 11px;
+  color: var(--n-fg-dim);
+  opacity: 0;
+  transition:
+    opacity var(--n-dur) var(--n-ease),
+    background-color var(--n-dur) var(--n-ease),
+    color var(--n-dur) var(--n-ease);
+}
+.preview :deep(.pv-code-fold) {
+  margin-left: auto;
+}
+.preview :deep(.pv-code:hover .pv-code-fold),
+.preview :deep(.pv-code:hover .pv-code-copy),
+.preview :deep(.pv-code-fold:focus-visible),
+.preview :deep(.pv-code-copy:focus-visible) {
+  opacity: 1;
+}
+.preview :deep(.pv-code-fold:hover),
+.preview :deep(.pv-code-copy:hover) {
+  background: var(--n-surface);
+  color: var(--n-fg);
+}
+/* 复制成功后短暂留着，不然用户根本看不到反馈 */
+.preview :deep(.pv-code-copy.done) {
+  opacity: 1;
+  color: var(--n-ok);
+}
+.preview :deep(.pv-code-body) {
+  position: relative;
+  overflow: hidden;
+  transition: max-height 220ms var(--n-ease);
+}
+.preview :deep(.pv-code.is-folded .pv-code-body::after) {
+  content: "";
+  position: absolute;
+  inset: auto 0 0 0;
+  height: 56px;
+  background: linear-gradient(to bottom, transparent, var(--n-code-bg));
+  pointer-events: none;
+}
+/* 行容器：行号和高亮行都要靠它定位 */
+.preview :deep(.pv-line) {
+  display: inline-block;
+  width: 100%;
+  min-height: 1.6em;
+  vertical-align: top;
 }
 .preview :deep(blockquote) {
   margin: 1em 0;

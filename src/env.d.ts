@@ -27,6 +27,34 @@ interface NoteApi {
     file: string,
   ): Promise<{ name: string; path: string; size: number; mtime: number }[]>
   historyRead(snapshot: string): Promise<string | null>
+  trashList(
+    root: string,
+  ): Promise<{ key: string; rel: string; name: string; deletedAt: number; size: number }[]>
+  trashRestore(root: string, key: string): Promise<string>
+  trashPurge(root: string, key: string): Promise<boolean>
+  trashEmpty(root: string): Promise<boolean>
+  attachList(
+    root: string,
+  ): Promise<{ rel: string; name: string; size: number; mtime: number; isVideo: boolean }[]>
+  attachDelete(root: string, rel: string): Promise<boolean>
+  aiChat(
+    cfg: { baseUrl: string; model: string; apiKey: string; system: string; temperature: number },
+    messages: { role: string; content: string }[],
+  ): Promise<{ ok: boolean; text?: string; error?: string }>
+  aiTest(cfg: {
+    baseUrl: string
+    model: string
+    apiKey: string
+    system: string
+    temperature: number
+  }): Promise<{ ok: boolean; models?: string[]; error?: string }>
+  appInfo(): Promise<{
+    electron: string
+    chrome: string
+    node: string
+    platform: string
+    arch: string
+  }>
   minimize(): Promise<void>
   toggleMaximize(): Promise<boolean>
   closeWindow(): Promise<void>

@@ -22,10 +22,12 @@
   --n-fg-dim: #8b8880;
   --n-fg-faint: #b3afa6;
 
-  /* 强调色：走墨绿，不走蓝，避免任何“通用后台蓝”的观感 */
+  /* 强调色。这里只是兜底的青瓷绿，真正的取值由 <html data-accent> 决定
+     （6 套色板见文件末尾），没设 data-accent 时就用这行。 */
   --n-accent: #3f6f5a;
-  --n-accent-soft: #e4ede7;
-  /* 强调色之上的文字色（按钮/选中态用） */
+  /* 派生色一律从 --n-accent 算：换强调色时不必再同步维护一整套配套色 */
+  --n-accent-soft: color-mix(in oklab, var(--n-accent) 13%, var(--n-bg));
+  /* 强调色之上的文字色（按钮/选中态用）。浅色主题下强调色都压得够深，白字通用 */
   --n-on-accent: #ffffff;
   --n-danger: #c0503f;
   --n-danger-soft: #f7e7e3;
@@ -40,9 +42,9 @@
   /* 编辑器专用 */
   /* 选中色要能压得住正文又不吃掉文字：透明度过低会"看不清选中了哪"，
      过高则文字与底色糊在一起。这里用强调色 0.3 + 一层描边感的深底。 */
-  --n-selection: rgba(63, 111, 90, 0.3);
+  --n-selection: color-mix(in oklab, var(--n-accent) 30%, transparent);
   --n-selection-fg: #1c2b22;
-  --n-active-line: rgba(63, 111, 90, 0.05);
+  --n-active-line: color-mix(in oklab, var(--n-accent) 5%, transparent);
   --n-code-bg: #f1efe9;
   --n-code-fg: #7a4a2b;
   /* 荧光笔高亮：够亮能一眼看到，但不能盖住黑字的笔画 */
@@ -102,7 +104,7 @@
   --n-fg-dim: #a3a19b;
   --n-fg-faint: #6e6c67;
   --n-accent: #6fae8f;
-  --n-accent-soft: #26332c;
+  --n-accent-soft: color-mix(in oklab, var(--n-accent) 16%, var(--n-bg));
   /* 深色下强调色偏亮，文字改用深色才够对比 */
   --n-on-accent: #10160f;
   --n-danger: #e07a68;
@@ -114,9 +116,9 @@
   --n-ok: #7fc196;
   --n-ok-soft: #22332a;
 
-  --n-selection: rgba(111, 174, 143, 0.34);
+  --n-selection: color-mix(in oklab, var(--n-accent) 34%, transparent);
   --n-selection-fg: #eef5f0;
-  --n-active-line: rgba(111, 174, 143, 0.06);
+  --n-active-line: color-mix(in oklab, var(--n-accent) 6%, transparent);
   --n-code-bg: #191a1e;
   --n-code-fg: #e0b48c;
   /* 深色下用低亮度琥珀，压得住又不刺眼 */
@@ -137,6 +139,37 @@
   --n-shadow-xl: 0 28px 68px rgba(0, 0, 0, 0.68);
   --n-mask: rgba(0, 0, 0, 0.52);
 }
+
+/* ─────────────────────────────────────────────
+   强调色板：6 套，挂在 <html data-accent> 上
+   只写主色，soft / selection / active-line 都由 color-mix 自动派生，
+   所以加一套新色只要两行，不会出现「改了主色、配套色忘了改」的色偏。
+   深浅两套分别取值：同一色相在深色底上要提亮，否则压不住背景。
+   ───────────────────────────────────────────── */
+
+/* 青瓷：默认，墨绿系，最接近纸笔的观感 */
+:root[data-accent='celadon'][data-theme='dark'] { --n-accent: oklch(74% 0.12 150); }
+:root[data-accent='celadon'][data-theme='light'] { --n-accent: oklch(49% 0.13 150); }
+
+/* 朱砂：偏暖的砖红 */
+:root[data-accent='cinnabar'][data-theme='dark'] { --n-accent: oklch(66.5% 0.15 32); }
+:root[data-accent='cinnabar'][data-theme='light'] { --n-accent: oklch(54% 0.15 30); }
+
+/* 靛蓝：唯一一套冷蓝，留着给想要「正经蓝」的场景 */
+:root[data-accent='indigo'][data-theme='dark'] { --n-accent: oklch(72% 0.13 252); }
+:root[data-accent='indigo'][data-theme='light'] { --n-accent: oklch(52% 0.14 252); }
+
+/* 琥珀：暖黄，浅色底上偏橙、深色底上偏奶黄 */
+:root[data-accent='amber'][data-theme='dark'] { --n-accent: oklch(80% 0.14 95); }
+:root[data-accent='amber'][data-theme='light'] { --n-accent: oklch(56% 0.105 95); }
+
+/* 湖蓝：低饱和的青，比靛蓝更安静 */
+:root[data-accent='lagoon'][data-theme='dark'] { --n-accent: oklch(76% 0.105 205); }
+:root[data-accent='lagoon'][data-theme='light'] { --n-accent: oklch(49% 0.075 205); }
+
+/* 紫藤：偏紫，深色底上最出挑的一套 */
+:root[data-accent='wisteria'][data-theme='dark'] { --n-accent: oklch(72% 0.13 300); }
+:root[data-accent='wisteria'][data-theme='light'] { --n-accent: oklch(52% 0.14 300); }
 
 * {
   box-sizing: border-box;

@@ -1,23 +1,25 @@
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue'
 import {
   BrainCircuit,
   Cloud,
   Columns2,
   Database,
   Eye,
+  FileText,
   Info,
   Moon,
   Palette,
   Pencil,
   RefreshCw,
+  Sparkles,
   Sun,
   Type,
   UserRound,
   X,
 } from 'lucide-vue-next'
-import { store } from '@/store'
-import type { ViewMode } from '@/store'
+import { ACCENTS, ACCENT_SWATCH, AI_PRESETS, store } from '@/store'
+import type { AccentName, ViewMode } from '@/store'
 
 /**
  * 设置面板：左侧分区导航 + 右侧内容，横向铺开。
@@ -40,12 +42,14 @@ type SectionId =
   | 'sync'
   | 'mcp'
   | 'account'
+  | 'ai'
   | 'data'
   | 'about'
 
 const SECTIONS: { id: SectionId; label: string; icon: unknown }[] = [
   { id: 'appearance', label: '外观', icon: Palette },
   { id: 'editor', label: '编辑器', icon: Type },
+  { id: 'ai', label: 'AI', icon: Sparkles },
   { id: 'backup', label: '备份', icon: Cloud },
   { id: 'sync', label: '同步', icon: RefreshCw },
   { id: 'mcp', label: 'MCP', icon: BrainCircuit },
@@ -62,6 +66,88 @@ const VIEWS: { id: ViewMode; label: string; icon: unknown }[] = [
   { id: 'split', label: '分栏', icon: Columns2 },
   { id: 'read', label: '预览', icon: Eye },
 ]
+
+/* ── 关于页的运行环境 ──
+   版本号只在主进程拿得到，等对话框真的打开时再取一次，取不到就留空。 */
+const env = ref({ electron: '', chrome: '', node: '', platform: '', arch: '' })
+const PLATFORM_TEXT: Record<string, string> = {
+  win32: 'Windows',
+  darwin: 'macOS',
+  linux: 'Linux',
+}
+const envText = computed(() => {
+  const p = PLATFORM_TEXT[env.value.platform] ?? env.value.platform
+  return env.value.arch ? `${p} · ${env.value.arch}` : p || '—'
+})
+
+watch(
+  () => props.open,
+  async (open) => {
+    if (!open || env.value.electron) return
+    try {
+      env.value = await window.api.appInfo()
+    } catch {
+      /* 拿不到就显示占位，不影响设置页其它部分 */
+    }
+  },
+  { immediate: true },
+)
+
+/* ── AI ── */
+const testing = ref(false)
+const testResult = ref<{ ok: boolean; text: string } | null>(null)
+const testModels = ref<string[]>([])
+const showModels = ref(false)
+
+/** 改任意一项都立刻落盘，跟主题/视图的处理保持一致 */
+watch(
+  () => JSON.stringify(state.ai),
+  () => store.setAiConfig({ ...state.ai }),
+)
+
+function applyPreset(e: Event) {
+  const i = Number((e.target as HTMLSelectElement).value)
+  const p = AI_PRESETS[i]
+  if (!p) return
+  store.setAiConfig({ baseUrl: p.baseUrl, model: p.model })
+  testResult.value = null
+  testModels.value = []
+}
+
+async function testConnection() {
+  testing.value = true
+  testResult.value = null
+  try {
+    const r = await window.api.aiTest({ ...state.ai })
+    testModels.value = r.models ?? []
+    testResult.value = r.ok
+      ? { ok: true, text: `连接成功${r.models?.length ? `，可用 ${r.models.length} 个模型` : ''}` }
+      : { ok: false, text: r.error ?? '连接失败' }
+    if (r.ok && r.models?.length) showModels.value = true
+  } catch (e) {
+    testResult.value = { ok: false, text: String(e) }
+  } finally {
+    testing.value = false
+  }
+}
+
+/**
+ * 工具栏 AI 菜单里的「模型设置…」会抛这个事件。
+ * 这里只负责把分区切过去——「把对话框打开」是侧边栏那边的事，
+ * 两边各管一段，比让一处同时操纵别人的状态干净。
+ */
+function onJump(e: Event) {
+  const id = (e as CustomEvent<string>).detail
+  if (id === 'ai') section.value = 'ai'
+}
+
+onMounted(() => window.addEventListener('nota:settings', onJump))
+onBeforeUnmount(() => window.removeEventListener('nota:settings', onJump))
+
+/** 色板圆点的预览色：跟着当前主题取对应那一套 */
+function swatchOf(id: AccentName) {
+  return state.theme === 'dark' ? ACCENT_SWATCH[id].dark : ACCENT_SWATCH[id].light
+}
 
 /** 工作区路径太长，这里只把最后一段放大显示，完整路径挂在 title 上 */
 const rootTail = computed(() => {
@@ -131,6 +217,32 @@ async function changeWorkspace() {
                     @click="store.setTheme('dark')"
                   >
                     <Moon :size="13" :stroke-width="1.9" /><span>深色</span>
+                  </button>
+                </div>
+              </div>
+
+              <div class="st-row">
+                <div class="st-label">
+                  <span class="st-name">强调色</span>
+                  <span class="st-desc">
+                    作用于链接、选中、按钮等所有强调元素；浅色底和深色底各有一套取值
+                  </span>
+                </div>
+                <div class="st-swatches" role="radiogroup" aria-label="强调色">
+                  <button
+                    v-for="a in ACCENTS"
+                    :key="a.id"
+                    class="st-swatch"
+                    role="radio"
+                    :aria-checked="state.accent === a.id"
+                    :class="{ on: state.accent === a.id }"
+                    :title="a.label"
+                    @click="store.setAccent(a.id)"
+                  >
+                    <span
+                      class="st-swatch-dot"
+                      :style="{ background: swatchOf(a.id) }"
+                    />
                   </button>
                 </div>
               </div>
@@ -207,6 +319,121 @@ async function changeWorkspace() {
               </div>
             </template>
 
+            <!-- AI -->
+            <template v-else-if="section === 'ai'">
+              <div class="st-row">
+                <div class="st-label">
+                  <span class="st-name">服务商预设</span>
+                  <span class="st-desc">都是 OpenAI 兼容接口；本机跑模型选 Ollama 或 LM Studio</span>
+                </div>
+                <select class="st-select" @change="applyPreset">
+                  <option value="">自定义…</option>
+                  <option v-for="(p, i) in AI_PRESETS" :key="p.label" :value="String(i)">
+                    {{ p.label }}
+                  </option>
+                </select>
+              </div>
+
+              <div class="st-field">
+                <span class="st-field-label">接口地址</span>
+                <input
+                  v-model="state.ai.baseUrl"
+                  class="st-input"
+                  type="text"
+                  placeholder="http://localhost:11434/v1"
+                  spellcheck="false"
+                />
+                <span class="st-hint">末尾不要带 /chat/completions，程序会自动拼</span>
+              </div>
+
+              <div class="st-field">
+                <span class="st-field-label">模型</span>
+                <div class="st-field-row">
+                  <input
+                    v-model="state.ai.model"
+                    class="st-input"
+                    type="text"
+                    placeholder="llama3.2"
+                    spellcheck="false"
+                  />
+                  <button
+                    v-if="testModels.length"
+                    class="st-mini-btn"
+                    @click="showModels = !showModels"
+                  >
+                    {{ showModels ? '收起' : `可选 ${testModels.length} 个` }}
+                  </button>
+                </div>
+                <div v-if="showModels && testModels.length" class="st-chips">
+                  <button
+                    v-for="m in testModels"
+                    :key="m"
+                    class="st-chip"
+                    :class="{ on: state.ai.model === m }"
+                    @click="state.ai.model = m"
+                  >
+                    {{ m }}
+                  </button>
+                </div>
+              </div>
+
+              <div class="st-field">
+                <span class="st-field-label">API 密钥</span>
+                <input
+                  v-model="state.ai.apiKey"
+                  class="st-input"
+                  type="password"
+                  placeholder="本地模型可留空"
+                  spellcheck="false"
+                />
+                <span class="st-hint">存在本机 localStorage，不会随笔记上传</span>
+              </div>
+
+              <div class="st-field">
+                <span class="st-field-label">系统提示词</span>
+                <textarea
+                  v-model="state.ai.system"
+                  class="st-textarea"
+                  rows="3"
+                  spellcheck="false"
+                />
+                <span class="st-hint">每次请求都会带上，用来约束语气和语言</span>
+              </div>
+
+              <div class="st-row">
+                <div class="st-label">
+                  <span class="st-name">温度</span>
+                  <span class="st-desc">
+                    {{ state.ai.temperature.toFixed(1) }} — 越高越发散，写作建议 0.6~0.8
+                  </span>
+                </div>
+                <input
+                  v-model.number="state.ai.temperature"
+                  class="st-range"
+                  type="range"
+                  min="0"
+                  max="1"
+                  step="0.1"
+                />
+              </div>
+
+              <div class="st-row st-row-top">
+                <div class="st-label">
+                  <span class="st-name">测试连接</span>
+                  <span
+                    class="st-desc"
+                    :class="{ 'is-ok': testResult?.ok, 'is-bad': testResult && !testResult.ok }"
+                  >
+                    {{ testResult ? testResult.text : '会去拉一次 /models 列表' }}
+                  </span>
+                </div>
+                <button class="st-btn" :disabled="testing" @click="testConnection">
+                  <Loader2 v-if="testing" class="spin" :size="13" :stroke-width="2" />
+                  <span>{{ testing ? '测试中…' : '测试' }}</span>
+                </button>
+              </div>
+            </template>
+
             <!-- 备份 -->
             <template v-else-if="section === 'backup'">
               <p class="st-text">
@@ -260,14 +487,37 @@ async function changeWorkspace() {
 
             <!-- 关于 -->
             <template v-else>
-              <div class="st-about-card">
-                <div class="st-about-name">Nota</div>
-                <div class="st-about-ver">版本 {{ APP_VERSION }}</div>
+              <div class="st-hero">
+                <span class="st-hero-logo"><FileText :size="20" :stroke-width="1.8" /></span>
+                <span class="st-hero-meta">
+                  <span class="st-hero-name">Nota</span>
+                  <span class="st-hero-ver">版本 {{ APP_VERSION }}</span>
+                </span>
+                <span class="st-hero-badge">本地优先</span>
               </div>
+
               <p class="st-text st-muted">
                 一个轻量的本地 Markdown 笔记应用。笔记就是普通的 <code>.md</code> 文件，
                 直接放在你选的目录里，随时可以用别的工具打开。
               </p>
+
+              <div class="st-h4">运行环境</div>
+              <div class="st-rows">
+                <div class="st-mini">
+                  <span>Electron</span><span class="st-mono">{{ env.electron || '—' }}</span>
+                </div>
+                <div class="st-mini">
+                  <span>Chromium</span><span class="st-mono">{{ env.chrome || '—' }}</span>
+                </div>
+                <div class="st-mini">
+                  <span>Node</span><span class="st-mono">{{ env.node || '—' }}</span>
+                </div>
+                <div class="st-mini">
+                  <span>平台</span><span class="st-mono">{{ envText }}</span>
+                </div>
+              </div>
+
+              <div class="st-h4">快捷键</div>
               <div class="st-keys">
                 <div class="st-key"><span>保存</span><kbd>Ctrl + S</kbd></div>
                 <div class="st-key"><span>新建笔记</span><kbd>Ctrl + N</kbd></div>
@@ -541,6 +791,33 @@ async function changeWorkspace() {
 }
 
 /* 开关 */
+/* 强调色板：一圈圆点，当前项用一圈描边标出来 */
+.st-swatches {
+  display: flex;
+  gap: 6px;
+}
+.st-swatch {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  border: 1px solid transparent;
+  transition: border-color var(--n-dur) var(--n-ease);
+}
+.st-swatch-dot {
+  width: 15px;
+  height: 15px;
+  border-radius: 50%;
+}
+.st-swatch:hover {
+  border-color: var(--n-line-strong);
+}
+.st-swatch.on {
+  border-color: var(--n-fg);
+}
+
 .st-switch {
   flex: none;
   width: 38px;
@@ -569,27 +846,223 @@ async function changeWorkspace() {
   transform: translateX(16px);
 }
 
-/* 关于 */
-.st-about-card {
-  display: flex;
-  align-items: baseline;
-  gap: 10px;
-  padding: 10px 0 14px;
-  border-bottom: 1px solid var(--n-line);
-  margin-bottom: 14px;
+/* ── AI：表单类字段 ── */
+.st-field {
+  padding: 10px 0;
+  border-top: 1px solid var(--n-line);
 }
-
-.st-about-name {
-  font-size: 20px;
-  font-weight: 700;
-  letter-spacing: -0.02em;
+.st-field-label {
+  display: block;
+  margin-bottom: 6px;
+  font-size: 12.5px;
+  font-weight: 500;
   color: var(--n-fg);
 }
+.st-field-row {
+  display: flex;
+  gap: 7px;
+}
+.st-input,
+.st-textarea,
+.st-select {
+  width: 100%;
+  padding: 7px 10px;
+  border: 1px solid var(--n-line-strong);
+  border-radius: var(--n-r-md);
+  background: var(--n-bg);
+  font-family: var(--n-font-ui);
+  font-size: 12.5px;
+  color: var(--n-fg);
+  outline: none;
+}
+.st-textarea {
+  resize: vertical;
+  min-height: 60px;
+  line-height: 1.6;
+}
+.st-select {
+  width: auto;
+  min-width: 148px;
+  padding: 5px 8px;
+}
+.st-input:focus,
+.st-textarea:focus,
+.st-select:focus {
+  border-color: var(--n-accent);
+}
+.st-hint {
+  display: block;
+  margin-top: 5px;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--n-fg-faint);
+}
+.st-mini-btn {
+  flex: none;
+  padding: 0 10px;
+  border: 1px solid var(--n-line-strong);
+  border-radius: var(--n-r-md);
+  font-size: 11.5px;
+  color: var(--n-fg-dim);
+  white-space: nowrap;
+}
+.st-mini-btn:hover {
+  border-color: var(--n-accent);
+  color: var(--n-accent);
+}
 
-.st-about-ver {
+/* 测试成功后列出的可用模型 */
+.st-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-top: 8px;
+}
+.st-chip {
+  max-width: 100%;
+  padding: 3px 9px;
+  border: 1px solid var(--n-line-strong);
+  border-radius: 999px;
+  font-family: var(--n-font-mono);
+  font-size: 11px;
+  color: var(--n-fg-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.st-chip:hover {
+  border-color: var(--n-accent);
+  color: var(--n-accent);
+}
+.st-chip.on {
+  background: var(--n-accent-soft);
+  border-color: var(--n-accent);
+  color: var(--n-accent);
+}
+
+.st-range {
+  width: 148px;
+  accent-color: var(--n-accent);
+}
+
+.st-row-top {
+  align-items: flex-start;
+  padding-top: 12px;
+  border-top: 1px solid var(--n-line);
+}
+.st-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 6px 13px;
+  border: 1px solid var(--n-line-strong);
+  border-radius: var(--n-r-md);
+  font-size: 12px;
+  color: var(--n-fg);
+  flex: none;
+}
+.st-btn:hover:not(:disabled) {
+  border-color: var(--n-accent);
+  color: var(--n-accent);
+}
+.st-btn:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.st-desc.is-ok {
+  color: var(--n-ok);
+}
+.st-desc.is-bad {
+  color: var(--n-danger);
+}
+.spin {
+  animation: st-spin 900ms linear infinite;
+}
+@keyframes st-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* 关于 */
+.st-hero {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  padding: 13px 15px;
+  border: 1px solid var(--n-line);
+  border-radius: var(--n-r-lg);
+  background: var(--n-bg);
+  margin-bottom: 14px;
+}
+.st-hero-logo {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 38px;
+  height: 38px;
+  border-radius: var(--n-r-md);
+  background: var(--n-accent);
+  color: var(--n-on-accent);
+  flex: none;
+}
+.st-hero-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  flex: 1;
+}
+.st-hero-name {
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  color: var(--n-fg);
+}
+.st-hero-ver {
   font-size: 11.5px;
   font-family: var(--n-font-mono);
   color: var(--n-fg-faint);
+}
+.st-hero-badge {
+  padding: 3px 9px;
+  border-radius: 999px;
+  background: var(--n-accent-soft);
+  color: var(--n-accent);
+  font-size: 11px;
+  flex: none;
+}
+
+/* 小节标题：比分区导航矮一档，用来分段但不抢视线 */
+.st-h4 {
+  margin: 18px 0 8px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  color: var(--n-fg-faint);
+}
+
+.st-rows {
+  border: 1px solid var(--n-line);
+  border-radius: var(--n-r-md);
+  overflow: hidden;
+}
+.st-mini {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 13px;
+  font-size: 12.5px;
+  color: var(--n-fg-dim);
+}
+.st-mini + .st-mini {
+  border-top: 1px solid var(--n-line);
+}
+.st-mono {
+  font-family: var(--n-font-mono);
+  font-size: 11.5px;
+  color: var(--n-fg);
 }
 
 .st-keys {

@@ -97,11 +97,11 @@ function onKey(e: KeyboardEvent) {
       </button>
 
       <!-- 删除前先确认一次，避免误点把笔记删掉。
-           实际动作是 shell.trashItem → 进系统回收站，所以文案如实写「回收站」。 -->
+           实际动作是移到工作区内的 .nota/trash，所以文案写明能恢复、去哪恢复。 -->
       <ConfirmDialog
         :open="confirmOpen"
         title="删除这篇笔记？"
-        :message="`「${displayName}」将被移到系统回收站。`"
+        :message="`「${displayName}」将被移到回收站，可以在「附件库与回收站」里恢复。`"
         confirm-text="删除"
         danger
         @confirm="doDelete"

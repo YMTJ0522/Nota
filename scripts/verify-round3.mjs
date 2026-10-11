@@ -202,7 +202,10 @@ ok(
   split,
 )
 
-/* ── 4. 预览富块全渲染（在分栏下测，预览同样要全渲染）── */
+/* ── 4. 预览富块全渲染（在分栏下测，预览同样要全渲染）──
+   mermaid 是懒加载的（600KB+ 的 chunk），下完还要画图，
+   不额外等一会儿的话这条会偶发地读到「容器在、图还没画」的中间态。 */
+await sleep(2200)
 const pv = await evaluate(`(() => {
   const p = document.querySelector('.preview')
   if (!p) return { err: 'no preview' }
@@ -336,7 +339,9 @@ const headBtns = await evaluate(`(() => {
 })()`)
 ok('10.顶栏无侧栏切换按钮', headBtns.sidebarSwitch === false, headBtns)
 
-/* ── 11. Ctrl+F 查找替换面板 ── */
+/* ── 11. Ctrl+F 查找条 ──
+   原生面板（含替换框、正则/整词开关）已被自绘查找条取代：
+   只要一个输入框 + 上/下 + 关闭，所以这里反过来断言原生面板不该出现。 */
 await clickMode('分栏')
 await evaluate("window.__notaView && window.__notaView.focus()")
 await sleep(200)
@@ -344,29 +349,29 @@ await send('Input.dispatchKeyEvent', { type: 'rawKeyDown', windowsVirtualKeyCode
 await send('Input.dispatchKeyEvent', { type: 'keyUp', windowsVirtualKeyCode: 70, code: 'KeyF', key: 'f', modifiers: 2 })
 await sleep(600)
 const search = await evaluate(`(() => {
-  const panel = document.querySelector('.cm-panel.cm-search')
-  if (!panel) return { exists: false }
-  const input = panel.querySelector('input.cm-textfield')
-  const btns = [...panel.querySelectorAll('button.cm-button')]
+  const bar = document.querySelector('.findbar')
+  const native = document.querySelector('.cm-panel.cm-search')
+  if (!bar) return { exists: false, native: !!native }
+  const input = bar.querySelector('.fb-input')
+  const btns = [...bar.querySelectorAll('button')]
   const ib = input?.getBoundingClientRect()
-  const bb = btns[0]?.getBoundingClientRect()
   return {
     exists: true,
+    native: !!native,
     inputW: Math.round(ib?.width ?? 0),
-    btnH: Math.round(bb?.height ?? 0),
-    buttons: btns.map(b => b.textContent.trim()),
-    labels: [...panel.querySelectorAll('label')].length,
-    display: getComputedStyle(panel).display,
-    wrap: getComputedStyle(panel).flexWrap,
+    buttons: btns.length,
+    // 三个按钮：上一个 / 下一个 / 关闭
+    titles: btns.map(b => b.getAttribute('title')),
+    display: getComputedStyle(bar).display,
   }
 })()`)
 ok(
-  '11.查找替换面板',
-  search.exists && search.inputW > 120 && search.btnH >= 22 && search.buttons.length >= 5 &&
-    search.labels === 3 && search.display === 'flex',
+  '11.自绘查找条',
+  search.exists && search.native === false && search.inputW > 120 && search.buttons === 3 &&
+    search.display === 'flex',
   search,
 )
-await evaluate("document.querySelector('.cm-panel.cm-search button[name=close]')?.click()")
+await evaluate("document.querySelector('.findbar .fb-btn:last-child')?.click()")
 
 /* ── 7. 侧边栏结构 ── */
 const side = await evaluate(`(() => {
@@ -439,14 +444,15 @@ const settings = await evaluate(`(async () => {
   const about = [...document.querySelectorAll('.st-nav-item')].find(b => b.textContent.includes('关于'))
   about?.click()
   await new Promise(r => setTimeout(r, 250))
-  out.ver = document.querySelector('.st-about-ver')?.textContent?.trim() ?? ''
+  // 关于页改成产品卡后版本号挪进了 .st-hero-ver
+  out.ver = document.querySelector('.st-hero-ver')?.textContent?.trim() ?? ''
   document.querySelector('.st-x')?.click()
   return out
 })()`)
 ok(
   '9.设置横向布局',
   settings.exists && settings.flex === 'flex' && settings.navW > 150 &&
-    settings.navLeft < settings.mainLeft && settings.items.length === 8 &&
+    settings.navLeft < settings.mainLeft && settings.items.length === 9 &&
     settings.title === '外观' && /^版本 \d/.test(settings.ver),
   settings,
 )

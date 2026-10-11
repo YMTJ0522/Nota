@@ -4,9 +4,15 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <link rel="icon" type="image/png" href="./icon.png" />
+    <!--
+      nota-media: 是主进程注册的自定义协议，用来读工作区里的图片/视频。
+      img-src 管图片，media-src 管 <video>——后者漏了的话，视频会退回
+      default-src 'self' 被直接拦掉，表现就是"预览里视频一块黑"。
+      connect-src 放开 http/https 是为了后面接本地大模型（Ollama 之类）。
+    -->
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: nota-media:; font-src 'self' data:"
+      content="default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: nota-media:; media-src 'self' data: blob: nota-media:; font-src 'self' data:; connect-src 'self' http: https: ws: wss: data: blob: nota-media:"
     />
     <title>Nota</title>
   </head>

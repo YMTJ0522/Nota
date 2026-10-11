@@ -1,4 +1,4 @@
-import { EditorState, type Extension } from "@codemirror/state";
+import { EditorState, Prec, type Extension } from "@codemirror/state";
 import {
   EditorView,
   crosshairCursor,
@@ -45,8 +45,10 @@ export function baseExtensions(options: {
   placeholder?: string;
   editable?: boolean;
   onDocChanged?: (doc: string) => void;
+  /** Ctrl+F 交给外层自己画的搜索条；不给就退回 CodeMirror 原生面板 */
+  onFind?: () => void;
 }): Extension[] {
-  const { placeholder = "", editable = true, onDocChanged } = options;
+  const { placeholder = "", editable = true, onDocChanged, onFind } = options;
 
   const extensions: Extension[] = [
     lineNumbers(),
@@ -75,6 +77,16 @@ export function baseExtensions(options: {
     markdownLivePreview,
     fencedCodeBlockHighlighter(),
     codeLangCompleteExtensions(),
+    // 自定义搜索条优先于原生面板：Prec.highest 保证 Ctrl+F 不被 searchKeymap 抢走
+    ...(onFind
+      ? [
+          Prec.highest(
+            keymap.of([
+              { key: "Mod-f", run: () => (onFind(), true), preventDefault: true },
+            ]),
+          ),
+        ]
+      : []),
     keymap.of([
       ...closeBracketsKeymap,
       ...defaultKeymap,
