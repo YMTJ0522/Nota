@@ -704,6 +704,28 @@ function registerMediaProtocol() {
   })
 }
 
+/**
+ * percent-encoded 路径的解码候选。
+ *
+ * Markdown 的图片地址会被 marked 走一遍 encodeURI，于是笔记里写的
+ * `attachments/【哲风壁纸】… .jpg` 到了 HTML 里变成 `%E3%80%90…%20.jpg`。
+ * 而 <video src> 是我们自己写的原始 HTML，marked 不碰，仍是原文。
+ * 结果就是同一个目录下的图和视频，一个能显示一个裂开——因为前者
+ * 拿去 resolve 的是一个带 %XX 的字面路径，磁盘上根本不存在这个文件。
+ *
+ * 所以：含 %XX 时把解码后的形式排在前面，原文留作兜底
+ * （文件名里真的写了 %20 这种字面量时不至于找错）。
+ */
+function pathCandidates(rel: string): string[] {
+  if (!/%[0-9a-fA-F]{2}/.test(rel)) return [rel]
+  try {
+    const decoded = decodeURIComponent(rel)
+    return decoded === rel ? [rel] : [decoded, rel]
+  } catch {
+    return [rel]
+  }
+}
+
 /** 渲染层把相对路径交给主进程换算成 nota-media:// 绝对 URL */
 ipcMain.handle('media:resolve', (_e, base: string, rel: string) => {
   if (!rel) return null
@@ -715,9 +737,10 @@ ipcMain.handle('media:resolve', (_e, base: string, rel: string) => {
     return mediaUrl(p)
   }
   if (!base) return null
-  // 相对于工作区根目录解析，并归一化掉 ../ 之类
-  const abs = path.resolve(base, rel)
-  return mediaUrl(abs)
+  // 相对于工作区根目录解析，并归一化掉 ../ 之类；
+  // 解码前后都试一下，磁盘上真实存在的那个优先
+  const abs = pathCandidates(rel).map((r) => path.resolve(base, r))
+  return mediaUrl(abs.find((p) => existsSync(p)) ?? abs[0])
 })
 
 /** 绝对路径 → nota-media URL（统一正斜杠 + 编码，避免中文/空格/盘符出错） */

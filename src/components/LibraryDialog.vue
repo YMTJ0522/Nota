@@ -20,7 +20,7 @@ import {
 } from 'lucide-vue-next'
 import { store } from '@/store'
 
-const props = defineProps<{ open: boolean }>()
+const props = defineProps<{ open: boolean; tab?: 'attach' | 'trash' }>()
 const emit = defineEmits<{ (e: 'close'): void }>()
 
 type Tab = 'attach' | 'trash'
@@ -79,13 +79,16 @@ async function loadTrash() {
   }
 }
 
+/* 从哪个入口进来的就停在哪个页签：侧栏「回收站」点了不该先看到附件 */
 watch(
-  () => props.open,
-  (open) => {
+  () => [props.open, props.tab] as const,
+  ([open, want]) => {
     if (!open) return
+    if (want) tab.value = want
     if (tab.value === 'attach') void loadAttach()
     else void loadTrash()
   },
+  { immediate: true },
 )
 watch(tab, (t) => {
   if (!props.open) return

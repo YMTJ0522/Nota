@@ -21,14 +21,59 @@ export interface TreeNode {
 export type ViewMode = 'write' | 'split' | 'read'
 /** 侧栏导航筛选 */
 export type NavFilter = 'all' | 'recent' | 'starred' | 'unfiled'
+/** 主区当前内容：正在写的笔记，还是 AI 编写对话页 */
+export type MainView = 'note' | 'ai'
 /** 强调色板。id 直接写进 <html data-accent>，与 tokens.css 里的选择器一一对应 */
 export type AccentName =
   | 'celadon' | 'cinnabar' | 'indigo' | 'amber' | 'lagoon' | 'wisteria'
+
+/* ── 外观偏好 ──
+   全部落到 <html> 的 data 属性或 CSS 变量上，改一次全局生效，
+   组件里不需要再关心这些值。 */
+/** 纸张：暖白底；纯色：中性白/黑，去掉纸感 */
+export type BgStyle = 'paper' | 'plain'
+/** 界面密度：影响侧栏与列表这类行高 */
+export type Density = 'comfortable' | 'compact'
+/** 正文栏宽档位 */
+export type MeasureName = 'narrow' | 'standard' | 'wide' | 'full'
+
+export const BG_STYLES: { id: BgStyle; label: string }[] = [
+  { id: 'paper', label: '纸张' },
+  { id: 'plain', label: '纯色' },
+]
+
+export const DENSITY: { id: Density; label: string }[] = [
+  { id: 'comfortable', label: '舒适' },
+  { id: 'compact', label: '紧凑' },
+]
+
+export const MEASURES: { id: MeasureName; label: string; px: number }[] = [
+  { id: 'narrow', label: '窄', px: 600 },
+  { id: 'standard', label: '标准', px: 720 },
+  { id: 'wide', label: '宽', px: 880 },
+  { id: 'full', label: '满', px: 100000 },
+]
+
+export const FONT_SIZE_RANGE = { min: 13, max: 19, step: 1 }
+export const LINE_HEIGHT_RANGE = { min: 1.5, max: 2.2, step: 0.05 }
+
+/** 外观偏好的出厂值，「恢复默认」用的就是它 */
+export const PREF_DEFAULTS = {
+  bg: 'paper' as BgStyle,
+  density: 'comfortable' as Density,
+  fontSize: 15,
+  lineHeight: 1.75,
+  measure: 'standard' as MeasureName,
+  lineWrap: true,
+  lineNumbers: true,
+}
 
 /* ── AI 配置 ──
    走 OpenAI 兼容的 /chat/completions：Ollama、LM Studio、vLLM、各类网关
    都是这个接口，所以一套设置就能覆盖「本地跑模型」和「接云端」。 */
 export interface AiConfig {
+  /** 关掉之后侧栏不再出现「AI 编写」入口 */
+  enabled: boolean
   /** 形如 http://localhost:11434/v1，末尾不要带 /chat/completions */
   baseUrl: string
   model: string
@@ -40,6 +85,7 @@ export interface AiConfig {
 }
 
 export const AI_DEFAULTS: AiConfig = {
+  enabled: true,
   baseUrl: 'http://localhost:11434/v1',
   model: 'llama3.2',
   apiKey: '',
@@ -99,6 +145,38 @@ interface State {
   accent: AccentName
   /** AI 接入配置：地址、模型、密钥、系统提示词 */
   ai: AiConfig
+
+  /* ── 外观偏好（见 PREF_DEFAULTS） ── */
+  /** 底色风格：纸张 / 纯色 */
+  bg: BgStyle
+  /** 界面密度 */
+  density: Density
+  /** 正文字号 px */
+  fontSize: number
+  /** 正文行高 */
+  lineHeight: number
+  /** 正文栏宽档位 */
+  measure: MeasureName
+  /** 编辑区自动换行 */
+  lineWrap: boolean
+  /** 编辑区显示行号 */
+  lineNumbers: boolean
+
+  /** 主区显示什么：笔记 / AI 编写 */
+  mainView: MainView
+  /** AI 对话记录。存在内存里，切页面不丢，但重启不留 */
+  chat: ChatMessage[]
+  /** 对话是否在进行中 */
+  aiBusy: boolean
+}
+
+/** AI 对话消息。role 只有 user / assistant 两种——system 单独放在配置里 */
+export interface ChatMessage {
+  id: number
+  role: 'user' | 'assistant'
+  content: string
+  /** 出错时的提示文案，与 content 分开存，样式不同 */
+  error?: string
 }
 
 /** 色板的预览色。给设置页画圆点用——真正生效的颜色仍在 CSS 里，
@@ -134,6 +212,16 @@ const state = reactive<State>({
   outline: true,
   accent: 'celadon',
   ai: { ...AI_DEFAULTS },
+  bg: PREF_DEFAULTS.bg,
+  density: PREF_DEFAULTS.density,
+  fontSize: PREF_DEFAULTS.fontSize,
+  lineHeight: PREF_DEFAULTS.lineHeight,
+  measure: PREF_DEFAULTS.measure,
+  lineWrap: PREF_DEFAULTS.lineWrap,
+  lineNumbers: PREF_DEFAULTS.lineNumbers,
+  mainView: 'note',
+  chat: [],
+  aiBusy: false,
 })
 
 /** 「最近编辑」的时间窗：7 天内有改动的算最近 */
@@ -422,6 +510,7 @@ function initPrefs() {
   if (v === 'write' || v === 'split' || v === 'read') state.viewMode = v
   initAccent()
   initAi()
+  initPrefs2()
 }
 
 /**
@@ -473,6 +562,154 @@ function initTheme() {
   setTheme(t)
 }
 
+/* ── 外观偏好 ──
+   一次 setPrefs 就写完 <html> 上的属性与 CSS 变量并落盘。
+   单独开一个 localStorage 键（nota-prefs）而不是七个键：
+   它们是一组，一起读一起写，缺一个就会得到半套主题。 */
+type PrefKey = 'bg' | 'density' | 'fontSize' | 'lineHeight' | 'measure' | 'lineWrap' | 'lineNumbers'
+
+function applyPrefs() {
+  const el = document.documentElement
+  el.setAttribute('data-bg', state.bg)
+  el.setAttribute('data-density', state.density)
+  el.style.setProperty('--n-fs-body', `${state.fontSize}px`)
+  el.style.setProperty('--n-lh', String(state.lineHeight))
+  el.style.setProperty(
+    '--n-measure',
+    (MEASURES.find((m) => m.id === state.measure) ?? MEASURES[1]).px === 100000
+      ? 'none'
+      : `${(MEASURES.find((m) => m.id === state.measure) ?? MEASURES[1]).px}px`,
+  )
+}
+
+function setPrefs(patch: Partial<Pick<State, PrefKey>>) {
+  Object.assign(state, patch)
+  applyPrefs()
+  try {
+    localStorage.setItem(
+      'nota-prefs',
+      JSON.stringify({
+        bg: state.bg,
+        density: state.density,
+        fontSize: state.fontSize,
+        lineHeight: state.lineHeight,
+        measure: state.measure,
+        lineWrap: state.lineWrap,
+        lineNumbers: state.lineNumbers,
+      }),
+    )
+  } catch {
+    /* 存不下就只在本次会话生效 */
+  }
+}
+
+function initPrefs2() {
+  try {
+    const raw = localStorage.getItem('nota-prefs')
+    if (raw) Object.assign(state, JSON.parse(raw) as object)
+  } catch {
+    /* 坏数据就当没有 */
+  }
+  applyPrefs()
+}
+
+/** 恢复默认：只重置外观偏好，不动工作区、主题、强调色这些「个人化」选择 */
+function resetPrefs() {
+  Object.assign(state, PREF_DEFAULTS)
+  applyPrefs()
+  try {
+    localStorage.removeItem('nota-prefs')
+  } catch {
+    /* 忽略 */
+  }
+}
+
+/* ── AI 编写：对话页 ── */
+
+let chatSeq = 0
+
+function setMainView(v: MainView) {
+  state.mainView = v
+}
+
+function clearChat() {
+  state.chat = []
+}
+
+/** 往对话里追加一条消息，返回它的 id */
+function pushChat(role: 'user' | 'assistant', content: string, error?: string) {
+  chatSeq += 1
+  state.chat.push({ id: chatSeq, role, content, error })
+  return chatSeq
+}
+
+/**
+ * 取当前笔记作为上下文。
+ *
+ * 整篇笔记可能有几万字，塞进本地小模型的上下文只会挤掉真正的问题，
+ * 所以截一段头部（标题、导语通常都在前面），并如实告诉用户截了多少。
+ */
+function noteContext(limit = 1500) {
+  const body = state.draft.trim()
+  if (!body) return ''
+  const head = body.slice(0, limit)
+  const name = activeName.value || '当前笔记'
+  return `【${name}】\n${head}${body.length > limit ? '\n…（已截断）' : ''}`
+}
+
+/**
+ * 发一轮对话。
+ *
+ * 请求走主进程的 net.fetch（见 electron/main.ts），本地模型不会被
+ * 渲染进程的 CORS 拦；这里只负责拼消息、管状态、把结果写回对话。
+ */
+async function sendChat(text: string, opts: { withNote?: boolean } = {}) {
+  const q = text.trim()
+  if (!q || state.aiBusy) return
+  if (!state.ai.enabled) {
+    pushChat('assistant', '', 'AI 编写已在设置里关闭。')
+    return
+  }
+
+  pushChat('user', q)
+  state.aiBusy = true
+
+  const system = opts.withNote && state.draft.trim()
+    ? `${state.ai.system}\n\n以下是用户正在写的笔记，回答时参考它：\n${noteContext()}`
+    : state.ai.system
+
+  const messages = [
+    { role: 'system', content: system },
+    ...state.chat
+      .filter((m) => !m.error)
+      .slice(-12) // 只带最近几轮，长对话不该把上下文无限撑大
+      .map((m) => ({ role: m.role, content: m.content })),
+  ]
+
+  try {
+    const r = await window.api.aiChat({ ...state.ai }, messages)
+    if (r.ok) pushChat('assistant', r.text ?? '（模型没有返回内容）')
+    else pushChat('assistant', '', r.error ?? '请求失败')
+  } catch (e) {
+    pushChat('assistant', '', String(e))
+  } finally {
+    state.aiBusy = false
+  }
+}
+
+/** 重新生成最后一条回答 */
+async function retryChat() {
+  // 找到最后一条用户消息，把它之后的内容丢掉重发
+  let last = -1
+  for (let i = state.chat.length - 1; i >= 0; i -= 1) {
+    if (state.chat[i].role === 'user') { last = i; break }
+  }
+  if (last < 0) return
+  const q = state.chat[last].content
+  state.chat = state.chat.slice(0, last)
+  await sendChat(q)
+}
+
 /** 首次展开所有顶层目录 */
 function autoExpand() {
   for (const n of state.tree) {
@@ -515,4 +752,13 @@ export const store = {
   toggleOutline,
   setAutoSave,
   initPrefs,
+  /* 外观偏好 */
+  setPrefs,
+  resetPrefs,
+  /* AI 编写 */
+  setMainView,
+  sendChat,
+  retryChat,
+  clearChat,
+  pushChat,
 }

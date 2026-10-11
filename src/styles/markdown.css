@@ -1,0 +1,513 @@
+/* ══ Markdown 正文样式 ══
+   预览区和 AI 气泡共用，因此放全局而不是组件内的 scoped。
+   挂 .md-body 的容器即可获得这一整套排版。 */
+
+.md-body h1,
+.md-body h2,
+.md-body h3,
+.md-body h4,
+.md-body h5,
+.md-body h6 {
+  line-height: 1.34;
+  margin: 1.5em 0 0.5em;
+  font-weight: 700;
+  letter-spacing: -0.015em;
+}
+.md-body h1 {
+  font-size: 1.62em;
+  margin-top: 0;
+}
+.md-body h2 {
+  font-size: 1.34em;
+}
+.md-body h3 {
+  font-size: 1.16em;
+}
+.md-body h4 {
+  font-size: 1.04em;
+}
+.md-body h5 {
+  font-size: 0.96em;
+  color: var(--n-fg-dim);
+}
+.md-body h6 {
+  font-size: 0.92em;
+  color: var(--n-fg-faint);
+}
+.md-body h3 {
+  font-size: 1.15em;
+}
+.md-body p {
+  margin: 0.8em 0;
+}
+.md-body a {
+  color: var(--n-accent);
+  text-underline-offset: 3px;
+}
+.md-body code {
+  font-family: var(--n-font-mono);
+  font-size: 0.9em;
+  padding: 0.15em 0.4em;
+  border-radius: 4px;
+  color: var(--n-code-fg);
+  background: var(--n-code-bg);
+}
+/* 块级代码由 .pv-code 外壳接管，pre 只负责横向滚动与排版 */
+.md-body pre.pv-code-pre {
+  margin: 0;
+  padding: 10px 14px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  overflow-x: auto;
+  tab-size: 2;
+}
+.md-body pre.pv-code-pre > code {
+  display: block;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font-family: var(--n-font-mono);
+  font-size: 0.88em;
+  font-weight: 450;
+  line-height: 1.72;
+  text-shadow: none;
+}
+
+/* 笔记嵌入：还没做真正的正文内联，先给一个能认出来的卡片 */
+.md-body .pv-embed {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  max-width: 100%;
+  padding: 2px 9px 2px 7px;
+  border: 1px solid var(--n-line-strong);
+  border-radius: var(--n-r-sm);
+  background: var(--n-surface);
+  font-size: 0.92em;
+  vertical-align: baseline;
+}
+.md-body .pv-embed-ico {
+  font-size: 11px;
+  line-height: 1;
+}
+.md-body .pv-embed-name {
+  color: var(--n-accent);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ── 代码块外壳 ──
+   形态与参考项目一致：一条 28px 的头部（标题 · 语言 · 行数 · 复制）
+   压在代码区上方，整块是一张 10px 圆角的卡片。
+   头部按钮平时隐形、hover 才出现，读代码时视线不被按钮分走。 */
+.md-body .pv-code {
+  position: relative;
+  display: block;
+  margin: 0.9em 0;
+  padding: 0;
+  border: 1px solid var(--n-code-line);
+  border-radius: 10px;
+  background: var(--n-code-surface);
+  color: color-mix(in oklab, var(--n-fg) 92%, var(--n-fg-dim));
+  overflow: hidden;
+}
+.md-body .pv-code-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  height: 28px;
+  padding: 0 7px 0 12px;
+  border-bottom: 1px solid var(--n-code-line);
+  background: var(--n-code-head);
+}
+.md-body .pv-code-title {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--n-fg-dim);
+  font-family: var(--n-font-mono);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.md-body .pv-code-lang {
+  margin-left: auto;
+  font-family: var(--n-font-mono);
+  font-size: 10.5px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--n-fg-dim);
+}
+/* 有标题时语言标签挨着按钮，不要贴到标题文字上 */
+.md-body .pv-code-title + .pv-code-lang {
+  margin-right: 8px;
+}
+.md-body .pv-code-fold,
+.md-body .pv-code-copy {
+  display: inline-flex;
+  align-items: center;
+  flex: none;
+  height: 20px;
+  padding: 0 7px;
+  border: 0;
+  border-radius: 5px;
+  background: none;
+  font-family: var(--n-font-ui);
+  font-size: 11px;
+  color: var(--n-fg-dim);
+  opacity: 0;
+  transition:
+    opacity var(--n-dur) var(--n-ease),
+    background-color var(--n-dur) var(--n-ease),
+    color var(--n-dur) var(--n-ease);
+}
+.md-body .pv-code:hover .pv-code-fold,
+.md-body .pv-code:hover .pv-code-copy,
+.md-body .pv-code-fold:focus-visible,
+.md-body .pv-code-copy:focus-visible {
+  opacity: 1;
+}
+.md-body .pv-code-fold:hover,
+.md-body .pv-code-copy:hover {
+  background: color-mix(in oklab, var(--n-fg-dim) 14%, transparent);
+  color: var(--n-fg);
+}
+/* 复制成功后短暂留着反馈 */
+.md-body .pv-code-copy.done {
+  opacity: 1;
+  color: var(--n-ok);
+}
+.md-body .pv-code-body {
+  position: relative;
+  overflow: hidden;
+  transition: max-height 220ms var(--n-ease);
+}
+
+/* 图表类：渲染出来的是图不是代码，别套那层灰底和描边 */
+.md-body .pv-code.is-diagram {
+  margin: 1.1em 0;
+  padding: 10px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+.md-body .pv-code.is-diagram pre.pv-code-pre {
+  overflow-x: visible;
+  text-align: center;
+}
+.md-body .pv-code.is-diagram pre.pv-code-pre svg {
+  max-width: 100%;
+  height: auto;
+}
+.md-body .pv-code.is-folded .pv-code-body::after {
+  content: "";
+  position: absolute;
+  inset: auto 0 0 0;
+  height: 56px;
+  background: linear-gradient(to bottom, transparent, var(--n-code-surface));
+  pointer-events: none;
+}
+/* 行容器：行号、高亮行都挂在它上面。
+   宽度 100% 保证高亮底纹铺满整行，代码本身不换行、由 pre 横向滚动。 */
+.md-body .pv-line {
+  display: inline-block;
+  width: 100%;
+  min-height: 1lh;
+  vertical-align: top;
+}
+/* 行号：只有围栏里写了 line-numbers 才出现 */
+.md-body .pv-code.has-line-numbers pre.pv-code-pre {
+  padding-left: 0;
+}
+.md-body .pv-code.has-line-numbers .pv-line::before {
+  display: inline-block;
+  width: 3.4em;
+  margin-right: 1em;
+  padding-right: 0.75em;
+  color: color-mix(in oklab, var(--n-fg-dim) 72%, transparent);
+  content: attr(data-line);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  user-select: none;
+}
+/* 高亮行：hl_lines 指定的那几行 */
+.md-body .pv-code .pv-line.is-hl {
+  background: color-mix(in oklab, var(--n-accent) 12%, transparent);
+  box-shadow: inset 2px 0 var(--n-accent);
+}
+.md-body blockquote {
+  margin: 1em 0;
+  padding: 0.45em 0 0.45em 14px;
+  border-left: 3px solid var(--n-accent);
+  border-radius: 0 4px 4px 0;
+  background: var(--n-accent-soft);
+  color: var(--n-fg-dim);
+  font-style: italic;
+}
+.md-body ul,
+.md-body ol {
+  padding-left: 1.4em;
+  margin: 0.8em 0;
+}
+.md-body li {
+  margin: 0.3em 0;
+}
+.md-body hr {
+  border: none;
+  border-top: 1px solid var(--n-line);
+  margin: 2em 0;
+}
+.md-body table {
+  border-collapse: collapse;
+  width: 100%;
+  margin: 1em 0;
+  font-size: 0.94em;
+}
+.md-body th,
+.md-body td {
+  border: 1px solid var(--n-line);
+  padding: 7px 11px;
+  text-align: left;
+}
+.md-body th {
+  background: var(--n-surface);
+  font-weight: 600;
+}
+.md-body img {
+  max-width: 100%;
+  border-radius: var(--n-r-md);
+}
+/* 视频要和图片一样铺满一栏：默认的 300×150 尺寸在一屏笔记里显得又小又歪 */
+.md-body video {
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  margin: 1em 0;
+  border-radius: var(--n-r-md);
+  border: 1px solid var(--n-line);
+  background: #000;
+}
+
+/* ── 富块：Callout / 折叠 / 分栏 / Mermaid ──
+   这些结构由 preview-rich.ts 在 marked 产出之后补出来。 */
+.md-body .pv-callout {
+  margin: 1em 0;
+  border: 1px solid var(--n-block-line);
+  border-left: 3px solid var(--n-accent);
+  border-radius: var(--n-r-md);
+  background: var(--n-block-bg);
+  overflow: hidden;
+}
+.md-body .pv-callout-head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 7px 12px;
+  background: var(--n-block-head);
+  font-size: 0.86em;
+  font-weight: 600;
+}
+.md-body .pv-callout-icon {
+  color: var(--n-accent);
+}
+.md-body .pv-callout-body {
+  padding: 4px 12px;
+}
+.md-body .pv-callout-body > :last-child {
+  margin-bottom: 0.5em;
+}
+.md-body .pv-badge {
+  margin-left: auto;
+  padding: 1px 7px;
+  border-radius: 9px;
+  border: 1px solid var(--n-block-line);
+  background: var(--n-raised);
+  font-size: 0.72em;
+  font-weight: 600;
+  color: var(--n-fg-dim);
+}
+.md-body .pv-callout[data-type='note'],
+.md-body .pv-callout[data-type='info'] {
+  border-left-color: var(--n-info);
+  background: var(--n-info-soft);
+}
+.md-body .pv-callout[data-type='note'] .pv-callout-icon,
+.md-body .pv-callout[data-type='info'] .pv-callout-icon {
+  color: var(--n-info);
+}
+.md-body .pv-callout[data-type='tip'],
+.md-body .pv-callout[data-type='success'],
+.md-body .pv-callout[data-type='example'] {
+  border-left-color: var(--n-ok);
+  background: var(--n-ok-soft);
+}
+.md-body .pv-callout[data-type='tip'] .pv-callout-icon,
+.md-body .pv-callout[data-type='success'] .pv-callout-icon,
+.md-body .pv-callout[data-type='example'] .pv-callout-icon {
+  color: var(--n-ok);
+}
+.md-body .pv-callout[data-type='warning'],
+.md-body .pv-callout[data-type='caution'],
+.md-body .pv-callout[data-type='important'],
+.md-body .pv-callout[data-type='question'] {
+  border-left-color: var(--n-warn);
+  background: var(--n-warn-soft);
+}
+.md-body .pv-callout[data-type='warning'] .pv-callout-icon,
+.md-body .pv-callout[data-type='caution'] .pv-callout-icon,
+.md-body .pv-callout[data-type='important'] .pv-callout-icon,
+.md-body .pv-callout[data-type='question'] .pv-callout-icon {
+  color: var(--n-warn);
+}
+.md-body .pv-callout[data-type='danger'] {
+  border-left-color: var(--n-danger);
+  background: var(--n-danger-soft);
+}
+.md-body .pv-callout[data-type='danger'] .pv-callout-icon {
+  color: var(--n-danger);
+}
+
+.md-body .pv-details {
+  margin: 1em 0;
+  border: 1px solid var(--n-block-line);
+  border-radius: var(--n-r-md);
+  background: var(--n-block-bg);
+  overflow: hidden;
+}
+.md-body .pv-details > summary {
+  padding: 8px 12px;
+  background: var(--n-block-head);
+  font-weight: 600;
+  font-size: 0.92em;
+  cursor: pointer;
+  user-select: none;
+}
+.md-body .pv-details[open] > summary {
+  border-bottom: 1px solid var(--n-block-line);
+}
+.md-body .pv-details > *:not(summary) {
+  padding: 0 12px;
+}
+.md-body .pv-details-body {
+  padding: 2px 12px;
+}
+.md-body .pv-details-body > :first-child {
+  margin-top: 0.6em;
+}
+.md-body .pv-details-body > :last-child {
+  margin-bottom: 0.6em;
+}
+.md-body .pv-details > summary::marker {
+  color: var(--n-fg-faint);
+}
+
+.md-body .pv-tabs {
+  margin: 1em 0;
+  border: 1px solid var(--n-block-line);
+  border-radius: var(--n-r-md);
+  background: var(--n-block-bg);
+  overflow: hidden;
+}
+.md-body .pv-tabbar {
+  display: flex;
+  gap: 2px;
+  padding: 6px 10px 0;
+  border-bottom: 1px solid var(--n-block-line);
+}
+.md-body .pv-tab {
+  padding: 5px 12px;
+  border-radius: var(--n-r-sm) var(--n-r-sm) 0 0;
+  font-size: 0.88em;
+  color: var(--n-fg-dim);
+  cursor: default;
+}
+.md-body .pv-tab.on {
+  background: var(--n-block-bg);
+  color: var(--n-accent);
+  font-weight: 600;
+  box-shadow: inset 0 -2px var(--n-accent);
+}
+.md-body .pv-tab-pane {
+  display: none;
+  padding: 2px 12px;
+}
+.md-body .pv-tab-pane.on {
+  display: block;
+}
+
+.md-body .pv-mermaid {
+  margin: 1em 0;
+  padding: 12px;
+  border: 1px solid var(--n-block-line);
+  border-radius: var(--n-r-md);
+  background: var(--n-block-bg);
+  text-align: center;
+  overflow-x: auto;
+}
+.md-body .pv-mermaid-graph svg {
+  max-width: 100%;
+  height: auto;
+}
+.md-body .pv-mermaid-src {
+  font-family: var(--n-font-mono);
+  font-size: 0.84em;
+  color: var(--n-fg-dim);
+  white-space: pre;
+  text-align: left;
+}
+.md-body .pv-mermaid-graph.is-error {
+  color: var(--n-danger);
+  font-family: var(--n-font-mono);
+  font-size: 0.84em;
+}
+/* ── 高亮与公式 ── */
+.md-body .pv-mark {
+  padding: 0.08em 0.15em;
+  border-radius: 3px;
+  color: var(--n-fg);
+  background: var(--n-mark);
+}
+
+/* 未渲染完成时先按等宽源码展示，避免一片空白让人以为丢了内容 */
+.md-body .pv-math-block {
+  margin: 1.1em 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  font-family: var(--n-font-mono);
+  font-size: 0.92em;
+  color: var(--n-fg-dim);
+}
+
+.md-body .pv-math:not(.is-rendered) {
+  font-family: var(--n-font-mono);
+  font-size: 0.92em;
+  color: var(--n-fg-dim);
+}
+
+.md-body .pv-math.is-error,
+.md-body .pv-math-block.is-error {
+  color: var(--n-danger);
+}
+
+/* KaTeX 自带浅色，深色主题下要把公式本身和 $-符号一起翻过来 */
+.md-body .katex {
+  font-size: 1.02em;
+  color: var(--n-fg);
+}
+
+.md-body .katex-display {
+  margin: 0;
+  padding: 0.3em 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+
+.md-body .pv-table-wrap {
+  overflow-x: auto;
+  margin: 1em 0;
+}

@@ -1,33 +1,38 @@
 <script setup lang="ts">
+/**
+ * 设置面板：左侧五分区 + 右侧行式内容。
+ *
+ * 每一行的形状都一样——左边「这是什么」，右边「改成什么」。
+ * 不用卡片、不用堆叠表单，是为了让真正要动手的控件排在同一条垂直线上：
+ * 眼睛从上往下扫一遍就能找到目标，不用先读标题再猜输入框在下面还是右边。
+ */
 import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue'
 import {
-  BrainCircuit,
-  Cloud,
   Columns2,
-  Database,
   Eye,
+  EyeOff,
   FileText,
   Info,
+  KeyRound,
+  Link2,
+  Loader2,
   Moon,
   Palette,
   Pencil,
-  RefreshCw,
+  RotateCcw,
+  Server,
+  Settings2,
   Sparkles,
   Sun,
   Type,
-  UserRound,
   X,
 } from 'lucide-vue-next'
-import { ACCENTS, ACCENT_SWATCH, AI_PRESETS, store } from '@/store'
-import type { AccentName, ViewMode } from '@/store'
+import { ACCENTS, ACCENT_SWATCH, AI_DEFAULTS, AI_PRESETS, BG_STYLES, DENSITY, MEASURES, store } from '@/store'
+import type { AccentName, BgStyle, Density, MeasureName, ViewMode } from '@/store'
 
-/**
- * 设置面板：左侧分区导航 + 右侧内容，横向铺开。
- *
- * 只放真正生效的项。同步 / MCP / 账户这几页如实写明「尚未接入」——
- * 摆一堆点了没反应的开关，比没有设置更伤信任。
- */
-const props = defineProps<{ open: boolean }>()
+type SectionId = 'general' | 'appearance' | 'editor' | 'ai' | 'about'
+
+const props = defineProps<{ open: boolean; section?: SectionId }>()
 const emit = defineEmits<{ (e: 'close'): void }>()
 
 const { state } = store
@@ -35,31 +40,26 @@ const { state } = store
 /** 版本号由 vite define 注入（值取自 package.json），避免两处写死对不上 */
 const APP_VERSION: string = __APP_VERSION__
 
-type SectionId =
-  | 'appearance'
-  | 'editor'
-  | 'backup'
-  | 'sync'
-  | 'mcp'
-  | 'account'
-  | 'ai'
-  | 'data'
-  | 'about'
-
 const SECTIONS: { id: SectionId; label: string; icon: unknown }[] = [
+  { id: 'general', label: '通用', icon: Settings2 },
   { id: 'appearance', label: '外观', icon: Palette },
-  { id: 'editor', label: '编辑器', icon: Type },
-  { id: 'ai', label: 'AI', icon: Sparkles },
-  { id: 'backup', label: '备份', icon: Cloud },
-  { id: 'sync', label: '同步', icon: RefreshCw },
-  { id: 'mcp', label: 'MCP', icon: BrainCircuit },
-  { id: 'account', label: '账户', icon: UserRound },
-  { id: 'data', label: '数据', icon: Database },
+  { id: 'editor', label: '编辑', icon: Type },
+  { id: 'ai', label: 'AI 编写', icon: Sparkles },
   { id: 'about', label: '关于', icon: Info },
 ]
 
-const section = ref<SectionId>('appearance')
+const section = ref<SectionId>('general')
 const current = computed(() => SECTIONS.find((s) => s.id === section.value)!)
+
+/** 外部（工具栏 AI 菜单、聊天页的设置按钮）指定分区时跟过去 */
+watch(
+  () => [props.open, props.section] as const,
+  ([open, want]) => {
+    if (!open || !want) return
+    if (SECTIONS.some((s) => s.id === want)) section.value = want
+  },
+  { immediate: true },
+)
 
 const VIEWS: { id: ViewMode; label: string; icon: unknown }[] = [
   { id: 'write', label: '编辑', icon: Pencil },
@@ -98,6 +98,7 @@ const testing = ref(false)
 const testResult = ref<{ ok: boolean; text: string } | null>(null)
 const testModels = ref<string[]>([])
 const showModels = ref(false)
+const showKey = ref(false)
 
 /** 改任意一项都立刻落盘，跟主题/视图的处理保持一致 */
 watch(
@@ -131,11 +132,7 @@ async function testConnection() {
   }
 }
 
-/**
- * 工具栏 AI 菜单里的「模型设置…」会抛这个事件。
- * 这里只负责把分区切过去——「把对话框打开」是侧边栏那边的事，
- * 两边各管一段，比让一处同时操纵别人的状态干净。
- */
+/** 工具栏 AI 菜单的「模型设置…」走同一个入口 */
 function onJump(e: Event) {
   const id = (e as CustomEvent<string>).detail
   if (id === 'ai') section.value = 'ai'
@@ -156,6 +153,31 @@ const rootTail = computed(() => {
   const parts = r.split(/[\\/]/).filter(Boolean)
   return parts[parts.length - 1] ?? r
 })
+
+/**
+ * 「恢复默认」只回滚当前这一页的项。
+ * 一次把所有设置都推平太粗暴——多数时候用户只是想把某一页调回去。
+ */
+const RESET_LABEL: Record<SectionId, string> = {
+  general: '恢复通用设置',
+  appearance: '恢复外观设置',
+  editor: '恢复编辑设置',
+  ai: '恢复 AI 设置',
+  about: '',
+}
+
+function resetSection() {
+  if (section.value === 'appearance' || section.value === 'editor') {
+    store.resetPrefs()
+  } else if (section.value === 'ai') {
+    store.setAiConfig({ ...AI_DEFAULTS })
+    testResult.value = null
+    testModels.value = []
+  } else if (section.value === 'general') {
+    store.setViewMode('split')
+    store.setAutoSave(true)
+  }
+}
 
 async function changeWorkspace() {
   emit('close')
@@ -192,8 +214,81 @@ async function changeWorkspace() {
           </header>
 
           <div class="st-body">
-            <!-- 外观 -->
-            <template v-if="section === 'appearance'">
+            <!-- ══ 通用 ══ -->
+            <template v-if="section === 'general'">
+              <div class="st-row">
+                <div class="st-label">
+                  <span class="st-name">工作区</span>
+                  <span class="st-desc" :title="state.root ?? ''">
+                    {{ rootTail || '尚未选择目录' }}
+                  </span>
+                </div>
+                <button class="st-btn" @click="changeWorkspace">更换目录</button>
+              </div>
+
+              <div class="st-row">
+                <div class="st-label">
+                  <span class="st-name">笔记数量</span>
+                  <span class="st-desc">当前工作区里所有 .md 文件</span>
+                </div>
+                <span class="st-value">{{ store.allFiles.value.length }}</span>
+              </div>
+
+              <div class="st-row">
+                <div class="st-label">
+                  <span class="st-name">默认视图</span>
+                  <span class="st-desc">打开笔记时的初始模式，也可用 Ctrl+1 / 2 / 3 随时切换</span>
+                </div>
+                <div class="st-seg" role="radiogroup" aria-label="默认视图">
+                  <button
+                    v-for="v in VIEWS"
+                    :key="v.id"
+                    class="st-seg-btn"
+                    role="radio"
+                    :aria-checked="state.viewMode === v.id"
+                    :class="{ on: state.viewMode === v.id }"
+                    @click="store.setViewMode(v.id)"
+                  >
+                    <component :is="v.icon" :size="13" :stroke-width="1.9" /><span>{{ v.label }}</span>
+                  </button>
+                </div>
+              </div>
+
+              <div class="st-row">
+                <div class="st-label">
+                  <span class="st-name">自动保存</span>
+                  <span class="st-desc">停止输入 600ms 后自动写入磁盘</span>
+                </div>
+                <button
+                  class="st-switch"
+                  role="switch"
+                  :aria-checked="state.autoSave"
+                  :class="{ on: state.autoSave }"
+                  @click="store.setAutoSave(!state.autoSave)"
+                >
+                  <span class="st-knob" />
+                </button>
+              </div>
+
+              <div class="st-row">
+                <div class="st-label">
+                  <span class="st-name">显示侧边栏</span>
+                  <span class="st-desc">左侧的资料库导航，也可用 Ctrl+\ 折叠</span>
+                </div>
+                <button
+                  class="st-switch"
+                  role="switch"
+                  :aria-checked="state.sidebar"
+                  :class="{ on: state.sidebar }"
+                  @click="store.toggleSidebar()"
+                >
+                  <span class="st-knob" />
+                </button>
+              </div>
+            </template>
+
+            <!-- ══ 外观 ══ -->
+            <template v-else-if="section === 'appearance'">
               <div class="st-row">
                 <div class="st-label">
                   <span class="st-name">主题</span>
@@ -246,41 +341,113 @@ async function changeWorkspace() {
                   </button>
                 </div>
               </div>
-            </template>
 
-            <!-- 编辑器 -->
-            <template v-else-if="section === 'editor'">
               <div class="st-row">
                 <div class="st-label">
-                  <span class="st-name">默认视图</span>
-                  <span class="st-desc">打开笔记时的初始模式，也可用 Ctrl+1 / 2 / 3 随时切换</span>
+                  <span class="st-name">画布底纹</span>
+                  <span class="st-desc">纸张更接近实体本子，纯色更干净</span>
                 </div>
-                <div class="st-seg" role="radiogroup" aria-label="默认视图">
+                <div class="st-seg" role="radiogroup" aria-label="画布底纹">
                   <button
-                    v-for="v in VIEWS"
-                    :key="v.id"
+                    v-for="b in BG_STYLES"
+                    :key="b.id"
                     class="st-seg-btn"
                     role="radio"
-                    :aria-checked="state.viewMode === v.id"
-                    :class="{ on: state.viewMode === v.id }"
-                    @click="store.setViewMode(v.id)"
+                    :aria-checked="state.bg === b.id"
+                    :class="{ on: state.bg === b.id }"
+                    @click="store.setPrefs({ bg: b.id as BgStyle })"
                   >
-                    <component :is="v.icon" :size="13" :stroke-width="1.9" /><span>{{ v.label }}</span>
+                    <span>{{ b.label }}</span>
                   </button>
                 </div>
               </div>
 
               <div class="st-row">
                 <div class="st-label">
-                  <span class="st-name">自动保存</span>
-                  <span class="st-desc">停止输入后自动写入磁盘</span>
+                  <span class="st-name">界面密度</span>
+                  <span class="st-desc">影响侧边栏与列表的行距，紧凑模式一屏能多放几行</span>
+                </div>
+                <div class="st-seg" role="radiogroup" aria-label="界面密度">
+                  <button
+                    v-for="d in DENSITY"
+                    :key="d.id"
+                    class="st-seg-btn"
+                    role="radio"
+                    :aria-checked="state.density === d.id"
+                    :class="{ on: state.density === d.id }"
+                    @click="store.setPrefs({ density: d.id as Density })"
+                  >
+                    <span>{{ d.label }}</span>
+                  </button>
+                </div>
+              </div>
+            </template>
+
+            <!-- ══ 编辑 ══ -->
+            <template v-else-if="section === 'editor'">
+              <div class="st-row">
+                <div class="st-label">
+                  <span class="st-name">正文栏宽</span>
+                  <span class="st-desc">限制一行的最大宽度，读长句时眼睛不用横扫太远</span>
+                </div>
+                <div class="st-seg" role="radiogroup" aria-label="正文栏宽">
+                  <button
+                    v-for="m in MEASURES"
+                    :key="m.id"
+                    class="st-seg-btn"
+                    role="radio"
+                    :aria-checked="state.measure === m.id"
+                    :class="{ on: state.measure === m.id }"
+                    @click="store.setPrefs({ measure: m.id as MeasureName })"
+                  >
+                    <span>{{ m.label }}</span>
+                  </button>
+                </div>
+              </div>
+
+              <div class="st-row">
+                <div class="st-label">
+                  <span class="st-name">正文字号</span>
+                  <span class="st-desc">{{ state.fontSize }} px</span>
+                </div>
+                <input
+                  class="st-range"
+                  type="range"
+                  min="13"
+                  max="19"
+                  step="1"
+                  :value="state.fontSize"
+                  @input="store.setPrefs({ fontSize: Number(($event.target as HTMLInputElement).value) })"
+                />
+              </div>
+
+              <div class="st-row">
+                <div class="st-label">
+                  <span class="st-name">行高</span>
+                  <span class="st-desc">{{ state.lineHeight.toFixed(2) }} — 写长文时 1.8 更舒服</span>
+                </div>
+                <input
+                  class="st-range"
+                  type="range"
+                  min="1.5"
+                  max="2.2"
+                  step="0.05"
+                  :value="state.lineHeight"
+                  @input="store.setPrefs({ lineHeight: Number(($event.target as HTMLInputElement).value) })"
+                />
+              </div>
+
+              <div class="st-row">
+                <div class="st-label">
+                  <span class="st-name">自动换行</span>
+                  <span class="st-desc">长行折回来显示；关掉后横向滚动，适合看表格和长代码块</span>
                 </div>
                 <button
                   class="st-switch"
                   role="switch"
-                  :aria-checked="state.autoSave"
-                  :class="{ on: state.autoSave }"
-                  @click="store.setAutoSave(!state.autoSave)"
+                  :aria-checked="state.lineWrap"
+                  :class="{ on: state.lineWrap }"
+                  @click="store.setPrefs({ lineWrap: !state.lineWrap })"
                 >
                   <span class="st-knob" />
                 </button>
@@ -288,15 +455,15 @@ async function changeWorkspace() {
 
               <div class="st-row">
                 <div class="st-label">
-                  <span class="st-name">显示侧边栏</span>
-                  <span class="st-desc">左侧的资料库目录树</span>
+                  <span class="st-name">显示行号</span>
+                  <span class="st-desc">编辑器左侧的装订线</span>
                 </div>
                 <button
                   class="st-switch"
                   role="switch"
-                  :aria-checked="state.sidebar"
-                  :class="{ on: state.sidebar }"
-                  @click="store.toggleSidebar()"
+                  :aria-checked="state.lineNumbers"
+                  :class="{ on: state.lineNumbers }"
+                  @click="store.setPrefs({ lineNumbers: !state.lineNumbers })"
                 >
                   <span class="st-knob" />
                 </button>
@@ -319,8 +486,26 @@ async function changeWorkspace() {
               </div>
             </template>
 
-            <!-- AI -->
+            <!-- ══ AI 编写 ══
+                 全部按「一行一项」排：左边说清楚这是什么，右边放控件，
+                 输入框统一宽度，让它们在同一条竖线上对齐。 -->
             <template v-else-if="section === 'ai'">
+              <div class="st-row">
+                <div class="st-label">
+                  <span class="st-name">启用 AI 编写</span>
+                  <span class="st-desc">关掉之后侧边栏不再出现「AI 编写」入口</span>
+                </div>
+                <button
+                  class="st-switch"
+                  role="switch"
+                  :aria-checked="state.ai.enabled"
+                  :class="{ on: state.ai.enabled }"
+                  @click="store.setAiConfig({ enabled: !state.ai.enabled })"
+                >
+                  <span class="st-knob" />
+                </button>
+              </div>
+
               <div class="st-row">
                 <div class="st-label">
                   <span class="st-name">服务商预设</span>
@@ -334,21 +519,55 @@ async function changeWorkspace() {
                 </select>
               </div>
 
-              <div class="st-field">
-                <span class="st-field-label">接口地址</span>
-                <input
-                  v-model="state.ai.baseUrl"
-                  class="st-input"
-                  type="text"
-                  placeholder="http://localhost:11434/v1"
-                  spellcheck="false"
-                />
-                <span class="st-hint">末尾不要带 /chat/completions，程序会自动拼</span>
+              <div class="st-row">
+                <div class="st-label">
+                  <span class="st-name">接口地址</span>
+                  <span class="st-desc">末尾不要带 /chat/completions，程序会自动拼</span>
+                </div>
+                <div class="st-field">
+                  <Link2 class="st-field-ico" :size="13" :stroke-width="1.9" />
+                  <input
+                    v-model="state.ai.baseUrl"
+                    class="st-input"
+                    type="text"
+                    placeholder="http://localhost:11434/v1"
+                    spellcheck="false"
+                  />
+                </div>
               </div>
 
-              <div class="st-field">
-                <span class="st-field-label">模型</span>
-                <div class="st-field-row">
+              <div class="st-row">
+                <div class="st-label">
+                  <span class="st-name">API Key</span>
+                  <span class="st-desc">存在本机 localStorage，不会随笔记上传；本地模型可留空</span>
+                </div>
+                <div class="st-field">
+                  <KeyRound class="st-field-ico" :size="13" :stroke-width="1.9" />
+                  <input
+                    v-model="state.ai.apiKey"
+                    class="st-input"
+                    :type="showKey ? 'text' : 'password'"
+                    placeholder="留空则不发送鉴权头"
+                    spellcheck="false"
+                  />
+                  <button
+                    class="st-eye"
+                    :title="showKey ? '隐藏' : '显示'"
+                    @click="showKey = !showKey"
+                  >
+                    <EyeOff v-if="showKey" :size="13" :stroke-width="1.9" />
+                    <Eye v-else :size="13" :stroke-width="1.9" />
+                  </button>
+                </div>
+              </div>
+
+              <div class="st-row">
+                <div class="st-label">
+                  <span class="st-name">模型名称</span>
+                  <span class="st-desc">填服务商文档里写的那个名字，区分大小写</span>
+                </div>
+                <div class="st-field">
+                  <Server class="st-field-ico" :size="13" :stroke-width="1.9" />
                   <input
                     v-model="state.ai.model"
                     class="st-input"
@@ -364,7 +583,14 @@ async function changeWorkspace() {
                     {{ showModels ? '收起' : `可选 ${testModels.length} 个` }}
                   </button>
                 </div>
-                <div v-if="showModels && testModels.length" class="st-chips">
+              </div>
+
+              <div v-if="showModels && testModels.length" class="st-row st-row-sub">
+                <div class="st-label">
+                  <span class="st-name">可用模型</span>
+                  <span class="st-desc">点一下即填入上方输入框</span>
+                </div>
+                <div class="st-chips">
                   <button
                     v-for="m in testModels"
                     :key="m"
@@ -375,29 +601,6 @@ async function changeWorkspace() {
                     {{ m }}
                   </button>
                 </div>
-              </div>
-
-              <div class="st-field">
-                <span class="st-field-label">API 密钥</span>
-                <input
-                  v-model="state.ai.apiKey"
-                  class="st-input"
-                  type="password"
-                  placeholder="本地模型可留空"
-                  spellcheck="false"
-                />
-                <span class="st-hint">存在本机 localStorage，不会随笔记上传</span>
-              </div>
-
-              <div class="st-field">
-                <span class="st-field-label">系统提示词</span>
-                <textarea
-                  v-model="state.ai.system"
-                  class="st-textarea"
-                  rows="3"
-                  spellcheck="false"
-                />
-                <span class="st-hint">每次请求都会带上，用来约束语气和语言</span>
               </div>
 
               <div class="st-row">
@@ -417,7 +620,20 @@ async function changeWorkspace() {
                 />
               </div>
 
-              <div class="st-row st-row-top">
+              <div class="st-row">
+                <div class="st-label">
+                  <span class="st-name">系统提示词</span>
+                  <span class="st-desc">每次请求都会带上，用来约束语气和语言</span>
+                </div>
+                <textarea
+                  v-model="state.ai.system"
+                  class="st-textarea"
+                  rows="3"
+                  spellcheck="false"
+                />
+              </div>
+
+              <div class="st-row st-row-last">
                 <div class="st-label">
                   <span class="st-name">测试连接</span>
                   <span
@@ -429,63 +645,12 @@ async function changeWorkspace() {
                 </div>
                 <button class="st-btn" :disabled="testing" @click="testConnection">
                   <Loader2 v-if="testing" class="spin" :size="13" :stroke-width="2" />
-                  <span>{{ testing ? '测试中…' : '测试' }}</span>
+                  <span>{{ testing ? '测试中…' : '测试连接' }}</span>
                 </button>
               </div>
             </template>
 
-            <!-- 备份 -->
-            <template v-else-if="section === 'backup'">
-              <p class="st-text">
-                每次手动保存（Ctrl+S、切换笔记、关闭窗口）都会在
-                <code>工作区/.history</code> 下留一份快照，自动保存不会重复记录。
-              </p>
-              <p class="st-text st-muted">
-                快照按时间倒序排列，可在顶栏的「版本历史」里查看与恢复。
-              </p>
-            </template>
-
-            <!-- 同步 -->
-            <template v-else-if="section === 'sync'">
-              <p class="st-text st-muted">尚未接入。当前版本只做本地文件，没有任何账号或云端依赖。</p>
-            </template>
-
-            <!-- MCP -->
-            <template v-else-if="section === 'mcp'">
-              <p class="st-text st-muted">
-                尚未接入。计划中的形态是让外部 AI 工具直接读写你的工作区，
-                目前还没有可用的服务端。
-              </p>
-            </template>
-
-            <!-- 账户 -->
-            <template v-else-if="section === 'account'">
-              <p class="st-text st-muted">
-                本地模式。笔记就是你磁盘上的普通 <code>.md</code> 文件，不需要登录。
-              </p>
-            </template>
-
-            <!-- 数据 -->
-            <template v-else-if="section === 'data'">
-              <div class="st-row">
-                <div class="st-label">
-                  <span class="st-name">工作区</span>
-                  <span class="st-desc" :title="state.root ?? ''">
-                    {{ rootTail || '尚未选择目录' }}
-                  </span>
-                </div>
-                <button class="st-btn" @click="changeWorkspace">更换目录</button>
-              </div>
-              <div class="st-row">
-                <div class="st-label">
-                  <span class="st-name">笔记数量</span>
-                  <span class="st-desc">当前工作区里所有 .md 文件</span>
-                </div>
-                <span class="st-value">{{ store.allFiles.value.length }}</span>
-              </div>
-            </template>
-
-            <!-- 关于 -->
+            <!-- ══ 关于 ══ -->
             <template v-else>
               <div class="st-hero">
                 <span class="st-hero-logo"><FileText :size="20" :stroke-width="1.8" /></span>
@@ -498,7 +663,8 @@ async function changeWorkspace() {
 
               <p class="st-text st-muted">
                 一个轻量的本地 Markdown 笔记应用。笔记就是普通的 <code>.md</code> 文件，
-                直接放在你选的目录里，随时可以用别的工具打开。
+                直接放在你选的目录里，随时可以用别的工具打开。没有账号，没有服务端，
+                所有数据都留在你自己的磁盘上。
               </p>
 
               <div class="st-h4">运行环境</div>
@@ -529,6 +695,15 @@ async function changeWorkspace() {
               </div>
             </template>
           </div>
+
+          <!-- 底栏：只回滚当前这页，不做全局清除 -->
+          <footer v-if="RESET_LABEL[section]" class="st-foot">
+            <span class="st-foot-hint">所有改动即时生效，无需重启</span>
+            <button class="st-reset" @click="resetSection">
+              <RotateCcw :size="12" :stroke-width="1.9" />
+              <span>{{ RESET_LABEL[section] }}</span>
+            </button>
+          </footer>
         </div>
       </div>
     </div>
@@ -549,12 +724,12 @@ async function changeWorkspace() {
   animation: st-fade 120ms var(--n-ease);
 }
 
-/* 横向：左导航固定 176px，右内容自适应 */
+/* 横向：左导航固定 168px，右内容自适应 */
 .st {
   display: flex;
-  width: 760px;
+  width: 780px;
   max-width: 100%;
-  height: 540px;
+  height: 560px;
   max-height: 100%;
   background: var(--n-raised);
   border: 1px solid var(--n-line);
@@ -566,7 +741,7 @@ async function changeWorkspace() {
 
 .st-nav {
   flex: none;
-  width: 176px;
+  width: 168px;
   display: flex;
   flex-direction: column;
   gap: 1px;
@@ -673,19 +848,27 @@ async function changeWorkspace() {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  padding: 14px 20px 22px;
+  padding: 6px 20px 18px;
 }
 
+/* ── 行：左侧说明，右侧控件 ──
+   统一 300px 的控件区宽度，让整页的输入框右边沿对齐成一条线。 */
 .st-row {
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 300px;
   align-items: center;
-  justify-content: space-between;
   gap: 16px;
-  padding: 10px 0;
+  padding: 11px 0;
   border-bottom: 1px solid var(--n-line);
 }
 
-.st-row:last-child {
+.st-row:last-child,
+.st-row-last {
+  border-bottom: none;
+}
+
+.st-row-sub {
+  padding-top: 4px;
   border-bottom: none;
 }
 
@@ -708,7 +891,7 @@ async function changeWorkspace() {
 }
 
 .st-value {
-  flex: none;
+  justify-self: end;
   font-size: 13px;
   font-variant-numeric: tabular-nums;
   color: var(--n-fg-dim);
@@ -735,24 +918,33 @@ async function changeWorkspace() {
 }
 
 .st-btn {
-  flex: none;
-  height: 28px;
+  justify-self: end;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 30px;
   padding: 0 12px;
+  border: 1px solid var(--n-line-strong);
+  border-radius: var(--n-r-md);
   font-size: 12.5px;
-  border-radius: var(--n-r-sm);
-  border: 1px solid var(--n-line);
-  background: var(--n-bg);
   color: var(--n-fg);
+  background: var(--n-bg);
   transition: border-color var(--n-dur) var(--n-ease), color var(--n-dur) var(--n-ease);
 }
 
-.st-btn:hover {
+.st-btn:hover:not(:disabled) {
   border-color: var(--n-accent);
   color: var(--n-accent);
 }
 
+.st-btn:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
 /* 分段控件：和顶栏视图切换同款 */
 .st-seg {
+  justify-self: end;
   display: inline-flex;
   align-items: center;
   gap: 2px;
@@ -760,15 +952,14 @@ async function changeWorkspace() {
   border-radius: var(--n-r-md);
   background: var(--n-bg);
   border: 1px solid var(--n-line);
-  flex: none;
 }
 
 .st-seg-btn {
-  height: 24px;
+  height: 26px;
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  padding: 0 10px;
+  padding: 0 11px;
   border-radius: var(--n-r-sm);
   font-size: 12.5px;
   color: var(--n-fg-dim);
@@ -790,9 +981,9 @@ async function changeWorkspace() {
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.12);
 }
 
-/* 开关 */
 /* 强调色板：一圈圆点，当前项用一圈描边标出来 */
 .st-swatches {
+  justify-self: end;
   display: flex;
   gap: 6px;
 }
@@ -818,7 +1009,9 @@ async function changeWorkspace() {
   border-color: var(--n-fg);
 }
 
+/* 开关 */
 .st-switch {
+  justify-self: end;
   flex: none;
   width: 38px;
   height: 22px;
@@ -846,26 +1039,27 @@ async function changeWorkspace() {
   transform: translateX(16px);
 }
 
-/* ── AI：表单类字段 ── */
+/* ── 输入类控件：图标 + 输入框 + 尾随按钮 ── */
 .st-field {
-  padding: 10px 0;
-  border-top: 1px solid var(--n-line);
-}
-.st-field-label {
-  display: block;
-  margin-bottom: 6px;
-  font-size: 12.5px;
-  font-weight: 500;
-  color: var(--n-fg);
-}
-.st-field-row {
+  justify-self: end;
+  width: 100%;
   display: flex;
+  align-items: center;
   gap: 7px;
 }
+
+.st-field-ico {
+  flex: none;
+  fill: none;
+  stroke: currentColor;
+  color: var(--n-fg-faint);
+}
+
 .st-input,
 .st-textarea,
 .st-select {
-  width: 100%;
+  min-width: 0;
+  flex: 1;
   padding: 7px 10px;
   border: 1px solid var(--n-line-strong);
   border-radius: var(--n-r-md);
@@ -874,32 +1068,55 @@ async function changeWorkspace() {
   font-size: 12.5px;
   color: var(--n-fg);
   outline: none;
+  transition: border-color var(--n-dur) var(--n-ease);
 }
+
 .st-textarea {
+  justify-self: end;
+  width: 100%;
   resize: vertical;
-  min-height: 60px;
+  min-height: 62px;
   line-height: 1.6;
 }
+
 .st-select {
-  width: auto;
-  min-width: 148px;
-  padding: 5px 8px;
+  justify-self: end;
+  flex: none;
+  width: 100%;
+  padding: 6px 8px;
 }
+
 .st-input:focus,
 .st-textarea:focus,
 .st-select:focus {
   border-color: var(--n-accent);
 }
-.st-hint {
-  display: block;
-  margin-top: 5px;
-  font-size: 11px;
-  line-height: 1.5;
+
+.st-eye {
+  flex: none;
+  width: 26px;
+  height: 26px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--n-r-sm);
   color: var(--n-fg-faint);
 }
+
+.st-eye svg {
+  fill: none;
+  stroke: currentColor;
+}
+
+.st-eye:hover {
+  background: var(--n-raised);
+  color: var(--n-fg);
+}
+
 .st-mini-btn {
   flex: none;
   padding: 0 10px;
+  height: 30px;
   border: 1px solid var(--n-line-strong);
   border-radius: var(--n-r-md);
   font-size: 11.5px;
@@ -913,10 +1130,10 @@ async function changeWorkspace() {
 
 /* 测试成功后列出的可用模型 */
 .st-chips {
+  justify-self: end;
   display: flex;
   flex-wrap: wrap;
   gap: 5px;
-  margin-top: 8px;
 }
 .st-chip {
   max-width: 100%;
@@ -941,33 +1158,9 @@ async function changeWorkspace() {
 }
 
 .st-range {
-  width: 148px;
+  justify-self: end;
+  width: 180px;
   accent-color: var(--n-accent);
-}
-
-.st-row-top {
-  align-items: flex-start;
-  padding-top: 12px;
-  border-top: 1px solid var(--n-line);
-}
-.st-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  padding: 6px 13px;
-  border: 1px solid var(--n-line-strong);
-  border-radius: var(--n-r-md);
-  font-size: 12px;
-  color: var(--n-fg);
-  flex: none;
-}
-.st-btn:hover:not(:disabled) {
-  border-color: var(--n-accent);
-  color: var(--n-accent);
-}
-.st-btn:disabled {
-  opacity: 0.55;
-  cursor: default;
 }
 
 .st-desc.is-ok {
@@ -985,16 +1178,56 @@ async function changeWorkspace() {
   }
 }
 
+/* ── 底栏 ── */
+.st-foot {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 9px 20px;
+  border-top: 1px solid var(--n-line);
+  background: color-mix(in oklab, var(--n-sunken) 60%, var(--n-raised));
+}
+
+.st-foot-hint {
+  font-size: 11px;
+  color: var(--n-fg-faint);
+}
+
+.st-reset {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 11px;
+  border: 1px solid var(--n-line-strong);
+  border-radius: var(--n-r-md);
+  font-size: 12px;
+  color: var(--n-fg-dim);
+  transition: border-color var(--n-dur) var(--n-ease), color var(--n-dur) var(--n-ease);
+}
+
+.st-reset svg {
+  fill: none;
+  stroke: currentColor;
+}
+
+.st-reset:hover {
+  border-color: var(--n-accent);
+  color: var(--n-accent);
+}
+
 /* 关于 */
 .st-hero {
   display: flex;
   align-items: center;
   gap: 11px;
   padding: 13px 15px;
+  margin: 12px 0 14px;
   border: 1px solid var(--n-line);
   border-radius: var(--n-r-lg);
   background: var(--n-bg);
-  margin-bottom: 14px;
 }
 .st-hero-logo {
   display: inline-flex;

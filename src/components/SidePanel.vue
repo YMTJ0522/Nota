@@ -2,17 +2,19 @@
 import { ref, watch, nextTick, computed, onMounted, onBeforeUnmount } from 'vue'
 import {
   Clock,
-  Database,
   FilePlus2,
   FileText,
   FolderPlus,
   Hash,
   Inbox,
+  Paperclip,
   PanelLeftClose,
   PanelLeftOpen,
   Search,
   Settings,
+  Sparkles,
   Star,
+  Trash2,
   X,
 } from 'lucide-vue-next'
 import { store } from '@/store'
@@ -23,10 +25,12 @@ import SettingsDialog from '@/components/SettingsDialog.vue'
 const { state } = store
 
 const settingsOpen = ref(false)
+/** 设置面板要停在哪个分区（工具栏 AI 菜单的「模型设置…」会指定） */
+const settingsSection = ref<'general' | 'appearance' | 'editor' | 'ai' | 'about'>('general')
 const folderInput = ref<HTMLInputElement | null>(null)
 const searchInput = ref<HTMLInputElement | null>(null)
 
-/** 导航项：图标 + 中文名 + 计数来源，顺序与 inkstone 一致 */
+/** 笔记视图的四项：图标 + 名称 + 计数来源 */
 const NAV: { id: NavFilter; label: string; icon: typeof FileText; countKey: keyof typeof store.navCounts.value }[] = [
   { id: 'all', label: '所有笔记', icon: FileText, countKey: 'all' },
   { id: 'recent', label: '最近编辑', icon: Clock, countKey: 'recent' },
@@ -38,11 +42,43 @@ const navCounts = computed(() => store.navCounts.value)
 const tags = computed(() => store.allTags.value)
 const visible = computed(() => store.visibleTree.value)
 
+/* ── 附件库 / 回收站的条数 ──
+   挂在导航项右边的小数字。都是「工作区层面的东西」，所以打开工作区时
+   取一次、库里有增删时再取一次，不做轮询。 */
+const libCounts = ref({ attach: 0, trash: 0 })
+
+async function refreshLibCounts() {
+  const root = state.root
+  if (!root) {
+    libCounts.value = { attach: 0, trash: 0 }
+    return
+  }
+  try {
+    const [a, t] = await Promise.all([window.api.attachList(root), window.api.trashList(root)])
+    libCounts.value = { attach: a.length, trash: t.length }
+  } catch {
+    /* 拿不到就不显示数字，不影响导航本身 */
+  }
+}
+
+/** 折叠态窄轨上的图标顺序：搜索 → 四项导航 → 新建 → 库 → AI */
+const railTools = computed(() => {
+  const list: { id: string; label: string; icon: unknown }[] = [
+    { id: 'attach', label: '附件库', icon: Paperclip },
+    { id: 'trash', label: '回收站', icon: Trash2 },
+  ]
+  if (state.ai.enabled) list.push({ id: 'ai', label: 'AI 编写', icon: Sparkles })
+  return list
+})
+
 // 目录树刷新后自动展开顶层目录
 watch(
   () => state.tree,
   () => store.autoExpand(),
 )
+
+// 换工作区后重取库的条数
+watch(() => state.root, () => void refreshLibCounts(), { immediate: true })
 
 // 「新建文件夹」输入框出现时自动聚焦
 watch(
@@ -70,25 +106,53 @@ function clearSearch() {
 }
 
 /**
- * 附件库与回收站的开关。抛全局事件而不是 emit：
- * 对话框挂在 App 层（它要跨侧栏和编辑区工作），一层层传 props 会把两边焊死。
+ * 附件库 / 回收站 / AI 编写的入口。
+ *
+ * 库那两项抛全局事件而不是 emit：对话框挂在 App 层（要跨侧栏和编辑区工作），
+ * 一层层传 props 会把两边焊死。AI 编写是主区的一个视图，直接改 store。
  */
-function openLibrary() {
-  window.dispatchEvent(new CustomEvent('nota:library'))
+function openLibrary(tab: 'attach' | 'trash') {
+  window.dispatchEvent(new CustomEvent('nota:library', { detail: tab }))
 }
 
-/** 工具栏 AI 菜单的「模型设置…」：打开对话框，具体分区由对话框自己切 */
-function onSettingsRequest() {
+function openAi() {
+  store.setMainView('ai')
+}
+
+/** 工具栏 AI 菜单的「模型设置…」：打开对话框并停在 AI 分区 */
+function onSettingsRequest(e: Event) {
+  const id = (e as CustomEvent<string>).detail
+  if (id === 'ai' || id === 'about' || id === 'editor' || id === 'general') {
+    settingsSection.value = id
+  }
   settingsOpen.value = true
 }
 
-onMounted(() => window.addEventListener('nota:settings', onSettingsRequest))
-onBeforeUnmount(() => window.removeEventListener('nota:settings', onSettingsRequest))
+/** 库对话框关闭后刷新条数（删了附件 / 清空了回收站） */
+function onLibraryChanged() {
+  void refreshLibCounts()
+}
+
+onMounted(() => {
+  window.addEventListener('nota:settings', onSettingsRequest)
+  window.addEventListener('nota:library-changed', onLibraryChanged)
+})
+onBeforeUnmount(() => {
+  window.removeEventListener('nota:settings', onSettingsRequest)
+  window.removeEventListener('nota:library-changed', onLibraryChanged)
+})
 
 /** 导航项点击：再点一次当前项就回到「所有笔记」 */
 function pickNav(id: NavFilter) {
+  store.setMainView('note')
   store.setNavFilter(state.navFilter === id && id !== 'all' ? 'all' : id)
 }
+
+/** 底部只显示工作区最后一段目录名，完整路径挂在 title 上 */
+const rootTail = computed(() => {
+  const r = state.root ?? ''
+  return r.split(/[\\/]/).filter(Boolean).pop() ?? r
+})
 </script>
 
 <template>
@@ -127,7 +191,7 @@ function pickNav(id: NavFilter) {
           ref="searchInput"
           class="search-input"
           type="text"
-          placeholder="搜索笔记…"
+          placeholder="在笔记中筛选…"
           spellcheck="false"
           :value="state.searchQuery"
           @input="store.setSearchQuery(($event.target as HTMLInputElement).value)"
@@ -144,12 +208,36 @@ function pickNav(id: NavFilter) {
             v-for="n in NAV"
             :key="n.id"
             class="nav-item"
-            :class="{ on: state.navFilter === n.id }"
+            :class="{ on: state.mainView === 'note' && state.navFilter === n.id }"
             @click="pickNav(n.id)"
           >
-            <span class="nav-ico"><component :is="n.icon" :size="14" :stroke-width="1.9" /></span>
+            <span class="nav-ico"><component :is="n.icon" :size="15" :stroke-width="1.9" /></span>
             <span class="nav-label">{{ n.label }}</span>
             <span v-if="navCounts[n.countKey] > 0" class="nav-count">{{ navCounts[n.countKey] }}</span>
+          </button>
+        </nav>
+
+        <!-- 库与 AI：和「笔记视图」不是一类东西，用一条分隔线切开 -->
+        <nav class="nav nav-group">
+          <button class="nav-item" @click="openLibrary('attach')">
+            <span class="nav-ico"><Paperclip :size="15" :stroke-width="1.9" /></span>
+            <span class="nav-label">附件库</span>
+            <span v-if="libCounts.attach > 0" class="nav-count">{{ libCounts.attach }}</span>
+          </button>
+          <button class="nav-item" @click="openLibrary('trash')">
+            <span class="nav-ico"><Trash2 :size="15" :stroke-width="1.9" /></span>
+            <span class="nav-label">回收站</span>
+            <span v-if="libCounts.trash > 0" class="nav-count">{{ libCounts.trash }}</span>
+          </button>
+          <button
+            v-if="state.ai.enabled"
+            class="nav-item"
+            :class="{ on: state.mainView === 'ai' }"
+            @click="openAi"
+          >
+            <span class="nav-ico"><Sparkles :size="15" :stroke-width="1.9" /></span>
+            <span class="nav-label">AI 编写</span>
+            <span v-if="state.chat.length" class="nav-count">{{ state.chat.length }}</span>
           </button>
         </nav>
 
@@ -207,10 +295,10 @@ function pickNav(id: NavFilter) {
       </div>
 
       <div class="foot">
-        <span class="root" :title="state.root ?? ''">{{ state.root }}</span>
-        <button class="foot-btn" data-tip="附件库与回收站" @click="openLibrary">
-          <Database :size="16" :stroke-width="1.9" />
-        </button>
+        <span class="foot-meta">
+          <span class="foot-name" :title="state.root ?? ''">{{ rootTail }}</span>
+          <span class="foot-sub">{{ navCounts.all }} 篇笔记</span>
+        </span>
         <button class="foot-btn" data-tip="设置" @click="settingsOpen = true">
           <Settings :size="16" :stroke-width="1.9" />
         </button>
@@ -232,7 +320,7 @@ function pickNav(id: NavFilter) {
           v-for="n in NAV"
           :key="n.id"
           class="rail-btn"
-          :class="{ on: state.navFilter === n.id }"
+          :class="{ on: state.mainView === 'note' && state.navFilter === n.id }"
           :data-tip="n.label"
           @click="pickNav(n.id)"
         >
@@ -248,8 +336,15 @@ function pickNav(id: NavFilter) {
       </div>
       <span class="rail-spacer" />
       <div class="rail-group rail-bottom">
-        <button class="rail-btn" data-tip="附件库与回收站" @click="openLibrary">
-          <Database :size="16" :stroke-width="1.9" />
+        <button
+          v-for="t in railTools"
+          :key="t.id"
+          class="rail-btn"
+          :class="{ on: t.id === 'ai' && state.mainView === 'ai' }"
+          :data-tip="t.label"
+          @click="t.id === 'ai' ? openAi() : openLibrary(t.id === 'attach' ? 'attach' : 'trash')"
+        >
+          <component :is="t.icon" :size="16" :stroke-width="1.9" />
         </button>
         <button class="rail-btn" data-tip="设置" @click="settingsOpen = true">
           <Settings :size="16" :stroke-width="1.9" />
@@ -257,7 +352,7 @@ function pickNav(id: NavFilter) {
       </div>
     </template>
 
-    <SettingsDialog :open="settingsOpen" @close="settingsOpen = false" />
+    <SettingsDialog :open="settingsOpen" :section="settingsSection" @close="settingsOpen = false" />
   </aside>
 </template>
 
@@ -300,7 +395,7 @@ function pickNav(id: NavFilter) {
 .head-title {
   flex: 1;
   min-width: 0;
-  font-size: 14px;
+  font-size: 13.5px;
   font-weight: 600;
   letter-spacing: -0.01em;
   color: var(--n-fg);
@@ -345,12 +440,19 @@ function pickNav(id: NavFilter) {
   align-items: center;
   gap: 6px;
   height: 30px;
-  margin: 0 8px 8px;
+  margin: 0 8px 10px;
   padding: 0 8px;
-  border-radius: var(--n-r-sm);
-  border: 1px solid var(--n-line);
-  background: var(--n-surface);
-  transition: border-color var(--n-dur) var(--n-ease);
+  border-radius: 10px;
+  border: 1px solid color-mix(in oklab, var(--n-line) 54%, transparent);
+  background: color-mix(in oklab, var(--n-raised) 42%, var(--n-sunken));
+  transition: border-color var(--n-dur) var(--n-ease),
+    background-color var(--n-dur) var(--n-ease);
+}
+
+.search:hover,
+.search:focus-within {
+  border-color: color-mix(in oklab, var(--n-line) 88%, transparent);
+  background: color-mix(in oklab, var(--n-raised) 72%, var(--n-sunken));
 }
 
 .search:focus-within {
@@ -367,7 +469,8 @@ function pickNav(id: NavFilter) {
 .search-input {
   flex: 1;
   min-width: 0;
-  font-size: 12.5px;
+  font-size: 12px;
+  letter-spacing: -0.01em;
   color: var(--n-fg);
   background: none;
   border: none;
@@ -375,7 +478,7 @@ function pickNav(id: NavFilter) {
 }
 
 .search-input::placeholder {
-  color: var(--n-fg-faint);
+  color: color-mix(in oklab, var(--n-fg-faint) 82%, transparent);
 }
 
 .search-x {
@@ -413,16 +516,27 @@ function pickNav(id: NavFilter) {
   gap: 1px;
 }
 
+/* 库与 AI 自成一组：和笔记视图之间有一条淡淡的分隔线 */
+.nav-group {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid color-mix(in oklab, var(--n-line) 60%, transparent);
+}
+
 .nav-item {
   display: flex;
   align-items: center;
   gap: 9px;
-  height: 30px;
+  height: var(--n-row);
   padding: 0 8px;
   border-radius: var(--n-r-md);
-  color: var(--n-fg-dim);
+  color: color-mix(in oklab, var(--n-fg) 72%, var(--n-fg-dim));
+  font-size: var(--n-nav-fs);
+  font-weight: 500;
+  letter-spacing: -0.01em;
   text-align: left;
-  transition: background var(--n-dur) var(--n-ease), color var(--n-dur) var(--n-ease);
+  transition: background var(--n-dur) var(--n-ease), color var(--n-dur) var(--n-ease),
+    box-shadow var(--n-dur) var(--n-ease);
 }
 
 .nav-ico {
@@ -440,8 +554,7 @@ function pickNav(id: NavFilter) {
 .nav-label {
   flex: 1;
   min-width: 0;
-  font-size: 12.5px;
-  font-weight: 500;
+  line-height: 1.5;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -449,19 +562,23 @@ function pickNav(id: NavFilter) {
 
 .nav-count {
   flex: none;
-  font-size: 11px;
+  font-size: 10px;
   font-variant-numeric: tabular-nums;
-  color: var(--n-fg-faint);
+  color: color-mix(in oklab, var(--n-fg-faint) 80%, transparent);
 }
 
 .nav-item:hover {
-  background: var(--n-raised);
+  background: color-mix(in oklab, var(--n-raised) 54%, transparent);
   color: var(--n-fg);
 }
 
+/* 选中态：一层强调色底 + 一圈极淡的内描边，
+   比纯色块轻，但足够把「我在哪」说清楚。 */
 .nav-item.on {
-  background: var(--n-accent-soft);
+  background: color-mix(in oklab, var(--n-accent-soft) 76%, transparent);
   color: var(--n-fg);
+  font-weight: 600;
+  box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--n-accent) 9%, transparent);
 }
 
 .nav-item.on .nav-ico {
@@ -470,23 +587,22 @@ function pickNav(id: NavFilter) {
 
 /* ── 分区 ── */
 .sec {
-  margin-top: 14px;
+  margin-top: 16px;
 }
 
 .sec-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  height: 22px;
+  height: 20px;
   padding: 0 4px 0 8px;
 }
 
 .sec-title {
-  font-size: 10.5px;
+  font-size: 10px;
   font-weight: 600;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--n-fg-faint);
+  letter-spacing: 0.04em;
+  color: color-mix(in oklab, var(--n-fg-faint) 86%, transparent);
 }
 
 .sec-add {
@@ -495,7 +611,7 @@ function pickNav(id: NavFilter) {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  border-radius: 4px;
+  border-radius: 5px;
   color: var(--n-fg-faint);
   opacity: 0;
   transition: opacity var(--n-dur) var(--n-ease), background var(--n-dur) var(--n-ease),
@@ -592,25 +708,37 @@ function pickNav(id: NavFilter) {
   opacity: 0.62;
 }
 
-/* ── 底部 ── */
+/* ── 底部：工作区 + 设置 ── */
 .foot {
   flex: none;
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 6px 8px 6px 12px;
-  border-top: 1px solid var(--n-line);
+  padding: 7px 8px 7px 12px;
+  border-top: 1px solid color-mix(in oklab, var(--n-line) 72%, transparent);
+  background: color-mix(in oklab, var(--n-sunken) 92%, var(--n-raised));
 }
 
-.root {
+.foot-meta {
   flex: 1;
   min-width: 0;
-  font-size: 11px;
-  font-family: var(--n-font-mono);
-  color: var(--n-fg-faint);
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.foot-name {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--n-fg);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.foot-sub {
+  font-size: 10px;
+  color: var(--n-fg-faint);
 }
 
 .foot-btn {

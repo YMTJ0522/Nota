@@ -348,15 +348,15 @@ await viewAlive('after-8')
 const settings = await evaluate(`(async () => {
   // 设置入口在侧边栏左下角（.foot .foot-btn）。那里现在还有一个「附件库」
   // 按钮，所以必须按 data-tip 精确定位，不能取第一个。
-  const s = document.querySelector('.foot .foot-btn[data-tip="设置"]')
+  const s = document.querySelector('.panel .foot .foot-btn[data-tip="设置"]')
   if (s) s.click()
   await new Promise(r => setTimeout(r, 400))
   const dlg = document.querySelector('.st')
   const nav = document.querySelector('.st-nav')
   const themeBtns = dlg ? dlg.querySelectorAll('.st-seg-btn').length : 0
   const sect = [...document.querySelectorAll('.st-nav-item .st-nav-label')].map(e => e.textContent.trim())
-  // 切到「编辑器」页，那里才是开关所在
-  const editorTab = [...document.querySelectorAll('.st-nav-item')].find(b => b.textContent.includes('编辑器'))
+  // 1.4.0 起分区叫「编辑」（不再是「编辑器」），开关都在这一页
+  const editorTab = [...document.querySelectorAll('.st-nav-item')].find(b => b.querySelector('.st-nav-label')?.textContent?.trim() === '编辑')
   editorTab?.click()
   await new Promise(r => setTimeout(r, 300))
   const switches = dlg ? dlg.querySelectorAll('.st-switch').length : 0
@@ -368,7 +368,7 @@ const settings = await evaluate(`(async () => {
 ok(
   '9.设置面板',
   settings.present && settings.horizontal && settings.switches >= 3 &&
-    settings.themeBtns === 2 && settings.sect.length === 9 && settings.closed,
+    settings.themeBtns >= 2 && settings.sect.length === 5 && settings.closed,
   settings,
 )
 await viewAlive('after-9')

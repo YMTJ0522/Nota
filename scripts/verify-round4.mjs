@@ -170,9 +170,11 @@ await clickMode('分栏')
 const code = await evaluate(`(() => {
   const p = document.querySelector('.preview')
   if (!p) return { err: 'no preview' }
-  const blocks = [...p.querySelectorAll('.pv-code')]
+  // mermaid 是渲染成图的，不进代码块外壳，统计时排除掉
+  const blocks = [...p.querySelectorAll('.pv-code:not(.is-diagram)')]
   return {
     count: blocks.length,
+    diagrams: p.querySelectorAll('.pv-mermaid').length,
     langs: blocks.map(b => b.querySelector('.pv-code-lang')?.textContent?.trim() ?? ''),
     heads: blocks.filter(b => b.querySelector('.pv-code-head')).length,
     copies: blocks.filter(b => b.querySelector('[data-copy]')).length,
@@ -184,8 +186,9 @@ const code = await evaluate(`(() => {
   }
 })()`)
 ok(
-  '1.代码块有外壳',
-  code.count >= 2 && code.heads === code.count && code.copies === code.count && code.langs.every((l) => l.length > 0),
+  '1.代码块有外壳（图表除外）',
+  code.count >= 2 && code.heads === code.count && code.copies === code.count &&
+    code.langs.every((l) => l.length > 0) && code.diagrams === 1,
   code,
 )
 
@@ -237,9 +240,13 @@ ok(
 
 /* ── 5. 强调色 ── */
 const accent = await evaluate(`(async () => {
-  const s = document.querySelector('.foot .foot-btn[data-tip="设置"]')
+  const s = document.querySelector('.panel .foot .foot-btn[data-tip="设置"]')
   if (s) s.click()
   await new Promise(r => setTimeout(r, 400))
+  // 色板在「外观」分区，设置默认停在「通用」
+  const ap = [...document.querySelectorAll('.st-nav-item')].find(b => b.textContent.includes('外观'))
+  ap?.click()
+  await new Promise(r => setTimeout(r, 300))
   const dots = [...document.querySelectorAll('.st-swatches .st-swatch')]
   if (!dots.length) return { err: 'no swatches', dots: dots.length }
   const seen = []
@@ -366,7 +373,8 @@ ok(
 
 /* ── 10. 附件库 / 回收站 ── */
 const lib = await evaluate(`(async () => {
-  const btn = document.querySelector('.foot .foot-btn[data-tip="附件库与回收站"]')
+  // 1.4.0 起附件库入口在侧栏导航里，不再是底部那个按钮
+  const btn = [...document.querySelectorAll('.panel .nav-item')].find(b => (b.querySelector('.nav-label')?.textContent ?? '').includes('附件库'))
   if (!btn) return { err: 'no entry' }
   btn.click()
   await new Promise(r => setTimeout(r, 600))
@@ -393,12 +401,13 @@ ok(
 /* ── 11~12. 入口存在 ── */
 const entries = await evaluate(`(() => ({
   aiBtn: !!document.querySelector('.tb-btn.tb-ai'),
-  libBtn: !!document.querySelector('.foot .foot-btn[data-tip="附件库与回收站"]'),
-  navCount: document.querySelectorAll('.st-nav-item').length,
+  navLib: !![...document.querySelectorAll('.panel .nav-item')].find(b => (b.querySelector('.nav-label')?.textContent ?? '').includes('附件库')),
+  navTrash: !![...document.querySelectorAll('.panel .nav-item')].find(b => (b.querySelector('.nav-label')?.textContent ?? '').includes('回收站')),
+  navAi: !![...document.querySelectorAll('.panel .nav-item')].find(b => (b.querySelector('.nav-label')?.textContent ?? '').includes('AI 编写')),
 }))()`)
 ok(
-  '11.AI 与库入口都在',
-  entries.aiBtn && entries.libBtn,
+  '11.AI 与库入口都在侧栏',
+  entries.aiBtn && entries.navLib && entries.navTrash && entries.navAi,
   entries,
 )
 

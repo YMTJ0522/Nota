@@ -13,6 +13,7 @@
  */
 
 import { langFromClass } from './highlight-code'
+import { langLabel, parseFenceInfo } from './fence-info'
 
 const CALLOUT_RE =
   /<blockquote>\s*<p>\[!([A-Za-z]+)\]([+-]?)\s*([\s\S]*?)<\/p>([\s\S]*?)<\/blockquote>/g
@@ -58,7 +59,9 @@ function transformCallouts(src: string): string {
  */
 function transformMermaid(src: string): string {
   return src.replace(
-    /<pre><code[^>]*class="[^"]*language-mermaid[^"]*"[^>]*>([\s\S]*?)<\/code><\/pre>/g,
+    // 注意 `<pre` 后面要容属性：自定义 renderer 会往上面挂 class 和 data-info，
+    // 写成 `<pre>` 就一条都匹配不上，图表会退化成一个空的代码框。
+    /<pre[^>]*><code[^>]*class="[^"]*language-mermaid[^"]*"[^>]*>([\s\S]*?)<\/code><\/pre>/g,
     (_w, code: string) => {
       const text = code
         .replace(/&lt;/g, '<')
@@ -482,37 +485,69 @@ function transformEmbeds(src: string): string {
   )
 }
 
-/* ── 代码块：标题栏 + 语言 + 复制 + 折叠 ──
-   marked 只吐 <pre><code>，直接裸着放出来既没有语言标识也没法复制。
-   这里给每个代码块套一层外壳，形态对齐参考项目：
-     .pv-code > .pv-code-head(语言 / 折叠 / 复制) + pre > code > .pv-line*           */
+/* ── 代码块：标题 / 语言 / 行号 / 复制 / 折叠 ──
+   结构对齐参考项目：
+     .pv-code > .pv-code-head(标题 · 语言 · 行数 · 复制) + .pv-code-body > pre.pv-code-pre > code > .pv-line*
+
+   行号、高亮行由 highlight-code.ts 在行容器上打好底子（data-line / .is-hl），
+   这里只负责外壳；围栏上的那些附加信息（title= / line-numbers / hl_lines）
+   由 highlightFences 透传在 pre 的 data-info 上，在这里解析。 */
 
 /** 超过这么多行就默认折叠，长代码块不该一上来吃掉整屏 */
 const CODE_COLLAPSE_LINES = 24
 /** 折叠后露出的高度，留一点「下面还有」的暗示 */
 export const CODE_COLLAPSE_HEIGHT = 260
 
+/**
+ * 这些语言的围栏会渲染成图而不是代码。
+ * 它们不该套代码外壳——「MERMAID」的语言标签和复制按钮对一张图没有意义，
+ * 反而会让图表被塞进一个灰框里。给一层薄容器就够了。
+ */
+const DIAGRAM_LANGS = new Set(['mermaid'])
+
+/** 从标签属性串里取一个属性值（属性值里的引号在产出时已转义成 &quot;） */
+function readAttr(attrs: string, name: string): string {
+  const m = new RegExp(`\\s${name}="([^"]*)"`).exec(attrs)
+  return m ? m[1].replace(/&quot;/g, '"').replace(/&amp;/g, '&') : ''
+}
+
 function transformCodeBlocks(src: string): string {
   return src.replace(
-    /<pre><code([^>]*)>([\s\S]*?)<\/code><\/pre>/g,
-    (whole, attrs: string, body: string) => {
-      const lang = langFromClass(attrs)
-      const lines = (body.match(/<span class="pv-line"/g) ?? []).length
+    /<pre([^>]*)><code([^>]*)>([\s\S]*?)<\/code><\/pre>/g,
+    (whole, preAttrs: string, codeAttrs: string, body: string) => {
+      const info = parseFenceInfo(readAttr(preAttrs, 'data-info'))
+      // 语言以 marked 解析出的 language-* 为准（它已经按 CommonMark 切过词）
+      const lang = langFromClass(codeAttrs) || info.lang
+
+      // 图表类：只给一层容器，不加标题行
+      if (DIAGRAM_LANGS.has(lang)) {
+        return `<div class="pv-code is-diagram" data-lang="${escapeAttr(lang)}">` +
+          `<div class="pv-code-body">${whole}</div></div>`
+      }
+
+      const lines = (body.match(/<span class="pv-line/g) ?? []).length
       const collapsible = lines > CODE_COLLAPSE_LINES
 
       const head = [
-        `<span class="pv-code-lang">${lang ? escapeHtml(lang.toUpperCase()) : "TEXT"}</span>`,
+        info.title ? `<span class="pv-code-title">${escapeHtml(info.title)}</span>` : '',
+        `<span class="pv-code-lang">${escapeHtml(langLabel(lang))}</span>`,
         collapsible
           ? `<button type="button" class="pv-code-fold" data-fold data-lines="${lines}">${lines} 行</button>`
-          : "",
+          : '',
         `<button type="button" class="pv-code-copy" data-copy>复制</button>`,
-      ].join("")
+      ].join('')
 
-      const style = collapsible
-        ? ` style="max-height:${CODE_COLLAPSE_HEIGHT}px"`
-        : ""
+      const cls = [
+        'pv-code',
+        info.lineNumbers ? 'has-line-numbers' : '',
+        collapsible ? 'is-folded' : '',
+      ]
+        .filter(Boolean)
+        .join(' ')
+
+      const style = collapsible ? ` style="max-height:${CODE_COLLAPSE_HEIGHT}px"` : ''
       return (
-        `<div class="pv-code${collapsible ? " is-folded" : ""}" data-lang="${escapeAttr(lang)}">` +
+        `<div class="${cls}" data-lang="${escapeAttr(lang)}">` +
         `<div class="pv-code-head">${head}</div>` +
         `<div class="pv-code-body"${style}>${whole}</div>` +
         `</div>`

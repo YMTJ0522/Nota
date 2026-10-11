@@ -49,11 +49,23 @@
   --n-code-fg: #7a4a2b;
   /* 荧光笔高亮：够亮能一眼看到，但不能盖住黑字的笔画 */
   --n-mark: #f6e6a8;
-  --n-code-keyword: #8a4b8f;
-  --n-code-string: #3f6f5a;
-  --n-code-number: #a05c22;
-  --n-code-func: #2f5e8c;
-  --n-code-type: #7a5a1e;
+  /* 代码 token 配色：与参考项目同一套色相——暖调关键字、墨绿字符串、
+     赭石数字、靛蓝函数、紫灰类型、橄榄属性。整块代码因此是「暖纸上的
+     四色印刷」，不是一个彩虹糖罐。 */
+  --n-code-keyword: #8a4e30;
+  --n-code-string: #2d7a56;
+  --n-code-number: #b56a16;
+  --n-code-func: #3d5f8f;
+  --n-code-type: #6a548f;
+  --n-code-prop: #5c6848;
+  /* 标点/变量/运算符统一压到接近正文的灰度，让配色只落在有语义的 token 上 */
+  --n-code-punct: color-mix(in oklab, var(--n-fg) 88%, var(--n-fg-dim));
+  --n-code-comment: var(--n-fg-dim);
+
+  /* 代码块外壳（预览区）：底色比正文略沉，靠描边和头部条分层 */
+  --n-code-surface: color-mix(in oklab, var(--n-surface) 88%, var(--n-bg));
+  --n-code-head: color-mix(in oklab, var(--n-surface) 60%, var(--n-bg));
+  --n-code-line: color-mix(in oklab, var(--n-line) 88%, var(--n-fg-dim));
 
   /* 富块（Callout / 折叠 / 分栏 / 表格）在编辑区里的底色 */
   --n-block-bg: #f6f4ef;
@@ -89,6 +101,42 @@
   /* 尺寸 */
   --n-titlebar: 40px;
   --n-sidebar: 232px;
+  /* 行高基准。界面密度切换的是它，组件只认变量——
+     这样「紧凑」不必去和每个组件的 scoped 规则抢优先级。 */
+  --n-row: 34px;
+  --n-row-sm: 30px;
+  --n-nav-fs: 12px;
+}
+
+/* ── 底色风格：纸张（默认，暖白）／纯色（中性白） ──
+   只换底色层与描边，文字与强调色不动，切换时观感是「换了张纸」而不是换主题。 */
+:root[data-bg='plain'] {
+  --n-bg: #ffffff;
+  --n-surface: #f6f7f8;
+  --n-raised: #ffffff;
+  --n-sunken: #f1f2f4;
+  --n-line: #e7e8ea;
+  --n-line-strong: #d6d8dc;
+}
+
+:root[data-bg='plain'][data-theme='dark'] {
+  --n-bg: #101114;
+  --n-surface: #17181c;
+  --n-raised: #1f2025;
+  --n-sunken: #0c0d10;
+  --n-line: #2c2e34;
+  --n-line-strong: #3d4047;
+}
+
+/* ── 界面密度：紧凑时把行高压下来，一屏多放几行 ── */
+:root[data-density='compact'] {
+  --n-row: 28px;
+  --n-row-sm: 26px;
+}
+
+/* 深色下的纸张：不是纯黑，留一点暖灰，和浅色的纸感呼应 */
+:root[data-theme='dark'][data-bg='paper'] {
+  --n-bg: #16161a;
 }
 
 [data-theme='dark'] {
@@ -123,11 +171,18 @@
   --n-code-fg: #e0b48c;
   /* 深色下用低亮度琥珀，压得住又不刺眼 */
   --n-mark: #4d4322;
-  --n-code-keyword: #c9a0dc;
-  --n-code-string: #8fcfa8;
-  --n-code-number: #e8b57f;
-  --n-code-func: #8bb8e0;
-  --n-code-type: #d9c07a;
+  /* 同一套色相在深底上整体提亮，保持 token 之间的相对关系不变 */
+  --n-code-keyword: #e0a57a;
+  --n-code-string: #86c4a4;
+  --n-code-number: #e0b36a;
+  --n-code-func: #8fb0dd;
+  --n-code-type: #b7a3dd;
+  --n-code-prop: #b3c49a;
+  --n-code-punct: color-mix(in oklab, var(--n-fg) 88%, var(--n-fg-dim));
+  --n-code-comment: var(--n-fg-dim);
+  --n-code-surface: color-mix(in oklab, var(--n-raised) 72%, var(--n-bg));
+  --n-code-head: color-mix(in oklab, var(--n-raised) 52%, var(--n-bg));
+  --n-code-line: color-mix(in oklab, var(--n-line) 88%, var(--n-fg-dim));
 
   --n-block-bg: #1e1f23;
   --n-block-line: #33343a;
@@ -236,11 +291,11 @@ textarea {
 .cm-hl-number { color: var(--n-code-number); }
 .cm-hl-func { color: var(--n-code-func); }
 .cm-hl-type { color: var(--n-code-type); }
-.cm-hl-prop { color: var(--n-fg); }
+.cm-hl-prop { color: var(--n-code-prop); }
 .cm-hl-operator { color: var(--n-code-keyword); }
-.cm-hl-punct { color: var(--n-fg-dim); }
-.cm-hl-var { color: var(--n-fg); }
-.cm-hl-comment { color: var(--n-fg-faint); font-style: italic; }
+.cm-hl-punct { color: var(--n-code-punct); }
+.cm-hl-var { color: var(--n-code-punct); }
+.cm-hl-comment { color: var(--n-code-comment); font-style: italic; }
 .cm-hl-invalid {
   color: var(--n-danger);
   text-decoration: underline wavy var(--n-danger);

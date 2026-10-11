@@ -36,6 +36,23 @@ import { fencedCodeBlockHighlighter } from "./code-languages";
 import { markdownLivePreview } from "./live-preview";
 
 /**
+ * 「视图偏好」类扩展：行号与自动换行。
+ *
+ * 单独拎出来是因为它们要能在运行时开关（设置页的两个开关），
+ * 靠 Compartment 重配置比销毁重建编辑器温和得多——不会丢滚动位置与撤销历史。
+ *
+ * 自动换行默认开：长行（图片、视频、带中文文件名的链接）在窄栏里
+ * 会顶出可视区，CodeMirror 为了跟住光标会把内容横向滚走，
+ * 于是正文滑到行号底下、两者叠在一起。换行是从根上避免这件事。
+ */
+export function editorViewPrefs(opts: { lineWrap: boolean; lineNumbers: boolean }): Extension[] {
+  const list: Extension[] = [];
+  if (opts.lineNumbers) list.push(lineNumbers(), highlightActiveLineGutter());
+  if (opts.lineWrap) list.push(EditorView.lineWrapping);
+  return list;
+}
+
+/**
  * Baseline CodeMirror extension set for the Markdown editor.
  *
  * Everything markdown-specific but design-agnostic lives here; visual
@@ -51,8 +68,6 @@ export function baseExtensions(options: {
   const { placeholder = "", editable = true, onDocChanged, onFind } = options;
 
   const extensions: Extension[] = [
-    lineNumbers(),
-    highlightActiveLineGutter(),
     highlightSpecialChars(),
     history(),
     foldGutter(),

@@ -391,9 +391,12 @@ const side = await evaluate(`(() => {
     collapsed: p.classList.contains('collapsed'),
   }
 })()`)
+// 1.4.0：导航扩成两组 —— 四个笔记视图 + 附件库/回收站/AI 编写
 ok(
   '7.侧边栏结构',
-  side.exists && side.nav.length === 4 && side.navIcons >= 4 && side.search &&
+  side.exists && side.nav.length === 7 && side.navIcons >= 7 && side.search &&
+    side.nav.includes('所有笔记') && side.nav.includes('附件库') &&
+    side.nav.includes('回收站') && side.nav.includes('AI 编写') &&
     side.secTitles.includes('文件夹') && side.secTitles.includes('标签') &&
     side.folderRows === 1 && side.fileRows === 2 && side.tags === 3 && side.footSettings && !side.collapsed,
   side,
@@ -449,11 +452,12 @@ const settings = await evaluate(`(async () => {
   document.querySelector('.st-x')?.click()
   return out
 })()`)
+// 1.4.0：九个分区收敛成五个（通用/外观/编辑/AI 编写/关于），默认停在通用
 ok(
   '9.设置横向布局',
   settings.exists && settings.flex === 'flex' && settings.navW > 150 &&
-    settings.navLeft < settings.mainLeft && settings.items.length === 9 &&
-    settings.title === '外观' && /^版本 \d/.test(settings.ver),
+    settings.navLeft < settings.mainLeft && settings.items.length === 5 &&
+    settings.items.includes('AI 编写') && settings.title === '通用' && /^版本 \d/.test(settings.ver),
   settings,
 )
 

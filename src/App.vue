@@ -1,19 +1,39 @@
 <script setup lang="ts">
-import { onMounted, onBeforeUnmount, ref } from 'vue'
+import { onMounted, onBeforeUnmount, ref, watch } from 'vue'
 import { store } from '@/store'
 import TitleBar from '@/components/TitleBar.vue'
 import SidePanel from '@/components/SidePanel.vue'
 import EditorPane from '@/components/EditorPane.vue'
+import AiChatPanel from '@/components/AiChatPanel.vue'
 import WelcomeView from '@/components/WelcomeView.vue'
 import LibraryDialog from '@/components/LibraryDialog.vue'
 
 const { state } = store
 
-/** 附件库 + 回收站：由侧边栏抛事件打开 */
+/** 附件库 + 回收站：由侧边栏抛事件打开，detail 决定停在哪个页签 */
 const libraryOpen = ref(false)
-function onLibrary() {
+const libraryTab = ref<'attach' | 'trash'>('attach')
+
+function onLibrary(e: Event) {
+  const tab = (e as CustomEvent<'attach' | 'trash'>).detail
+  libraryTab.value = tab === 'trash' ? 'trash' : 'attach'
   libraryOpen.value = true
 }
+
+function closeLibrary() {
+  libraryOpen.value = false
+  // 库里可能删了附件或清了回收站，侧栏的计数要跟着变
+  window.dispatchEvent(new CustomEvent('nota:library-changed'))
+}
+
+// AI 入口被关掉时不能停在聊天页——那样既出不去也进不来
+watch(
+  () => [state.ai.enabled, state.mainView] as const,
+  ([enabled, view]) => {
+    if (!enabled && view === 'ai') store.setMainView('note')
+  },
+  { immediate: true },
+)
 
 function onKey(e: KeyboardEvent) {
   const mod = e.ctrlKey || e.metaKey
@@ -55,6 +75,7 @@ onBeforeUnmount(() => {
       <SidePanel v-if="state.root" />
       <main class="main">
         <WelcomeView v-if="!state.root" />
+        <AiChatPanel v-else-if="state.mainView === 'ai'" />
         <EditorPane v-else-if="state.activePath" />
         <div v-else class="idle">
           <p>从左侧选一篇笔记，或者<button class="link" @click="store.newNote()">新建一篇</button></p>
@@ -62,7 +83,7 @@ onBeforeUnmount(() => {
       </main>
     </div>
 
-    <LibraryDialog :open="libraryOpen" @close="libraryOpen = false" />
+    <LibraryDialog :open="libraryOpen" :tab="libraryTab" @close="closeLibrary" />
   </div>
 </template>
 

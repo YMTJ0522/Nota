@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, onMounted, onBeforeUnmount, watch, nextTick, computed } from 'vue'
-import { EditorState } from '@codemirror/state'
+import { Compartment, EditorState } from '@codemirror/state'
 import { EditorView } from '@codemirror/view'
 import {
   /* 顶部区域与 inkstone 对齐：标题可编辑、右侧一段式视图切换。
@@ -18,7 +18,7 @@ import {
   X,
 } from 'lucide-vue-next'
 import { store } from '@/store'
-import { baseExtensions } from '@/editor/setup'
+import { baseExtensions, editorViewPrefs } from '@/editor/setup'
 import {
   SearchQuery,
   findNext,
@@ -38,7 +38,7 @@ import {
   CODE_COLLAPSE_HEIGHT,
 } from '@/editor/preview-rich'
 import type { HeadingItem } from '@/editor/preview-rich'
-import { highlightCode, langFromClass } from '@/editor/highlight-code'
+import { getMarked, highlightFences } from '@/editor/markdown'
 import Toolbar from '@/components/Toolbar.vue'
 import NotePickerDialog from '@/components/NotePickerDialog.vue'
 import SlashMenu from '@/components/SlashMenu.vue'
@@ -153,13 +153,9 @@ const saveLabel = computed(() => {
 })
 
 /** 预览（阅读模式） */
-let markedMod: typeof import('marked') | null = null
 async function render() {
-  if (!markedMod) {
-    markedMod = await import('marked')
-    markedMod.marked.setOptions({ gfm: true, breaks: true })
-  }
-  const raw = markedMod.marked.parse(stripFrontMatter(state.draft), { async: false }) as string
+  const { marked } = await getMarked()
+  const raw = marked.parse(stripFrontMatter(state.draft), { async: false }) as string
   // 先补高亮与媒体路径，再做富块增强——顺序有讲究：
   // 富块会重新包裹 HTML 结构，先高亮能保证代码块（含 mermaid）已被标记成 language-*。
   const lit = await highlightFences(raw)
@@ -368,44 +364,9 @@ async function resolveMediaInHtml(source: string): Promise<string> {
 }
 
 /**
- * 给 marked 产出的代码块补高亮。
- *
- * marked 只输出 `<pre><code class="language-js">原文</code></pre>`，
- * 没有 token 信息；这里把它换成带 class 的 span，颜色和编辑区同源。
- * 语言没写、或写了不认识的语言，就保持原样——不猜、不报错。
+ * 编辑区专用的媒体路径换算（代码高亮那部分已抽到 @/editor/markdown，
+ * 预览与 AI 对话页共用同一套渲染管线）。
  */
-async function highlightFences(source: string): Promise<string> {
-  const blocks = [...source.matchAll(/<pre><code([^>]*)>([\s\S]*?)<\/code><\/pre>/g)]
-  if (blocks.length === 0) return source
-
-  const rendered = await Promise.all(
-    blocks.map(async (m) => {
-      const lang = langFromClass(m[1])
-      // mermaid 不是代码：一旦按行包成 <span class="pv-line">，
-      // 后面取图表源码时拿到的就是带标签的 HTML，画出来一片空白。
-      // 原样放过去，交给 transformMermaid 处理。
-      if (lang.toLowerCase() === 'mermaid') return m[0]
-      const code = m[2]
-        .replace(/&lt;/g, '<')
-        .replace(/&gt;/g, '>')
-        .replace(/&quot;/g, '"')
-        .replace(/&#39;/g, "'")
-        .replace(/&amp;/g, '&')
-        // marked 会在代码块末尾留一个换行。留着的话行容器会多出一个空行，
-        // 底部凭空多一道空白，行数也对不上源码。
-        .replace(/\n$/, '')
-      const inner = await highlightCode(code, lang)
-      const cls = lang ? ` class="language-${lang}"` : ''
-      return `<pre><code${cls}>${inner}</code></pre>`
-    }),
-  )
-
-  let i = 0
-  return source.replace(
-    /<pre><code([^>]*)>[\s\S]*?<\/code><\/pre>/g,
-    () => rendered[i++],
-  )
-}
 
 /* ── 自动保存 ──
    默认开启（用户要求「每次编辑完就自动保存」）。关掉后只留手动 Ctrl+S。
@@ -482,6 +443,10 @@ function onToolbarToast(text: string) {
 }
 
 /* ── 创建 / 销毁编辑器 ── */
+
+/** 行号 / 自动换行要能运行时开关，走 Compartment 重配置而不是重建编辑器 */
+const prefsCompartment = new Compartment()
+
 function createEditor() {
   if (!host.value) return
 
@@ -495,6 +460,9 @@ function createEditor() {
       },
       onFind: openFind,
     }),
+    prefsCompartment.of(
+      editorViewPrefs({ lineWrap: state.lineWrap, lineNumbers: state.lineNumbers }),
+    ),
     ...notaThemeExtensions,
     ...createSlashCommandsExtension({
       onStateChange: (s) => { slash.value = s },
@@ -511,6 +479,16 @@ function createEditor() {
   // 供自动化验证脚本访问（无副作用，不参与业务逻辑）
   ;(window as unknown as { __notaView?: EditorView | null }).__notaView = view
 }
+
+// 设置里改了行号 / 换行：直接重配置视图偏好，滚动位置与撤销历史都不受影响
+watch(
+  () => [state.lineWrap, state.lineNumbers] as const,
+  ([lineWrap, lineNumbers]) => {
+    view?.dispatch({
+      effects: prefsCompartment.reconfigure(editorViewPrefs({ lineWrap, lineNumbers })),
+    })
+  },
+)
 
 /** 外部改动了 draft（切笔记等），把内容灌进 CM */
 function pushDoc(text: string) {
@@ -736,7 +714,7 @@ defineExpose({ getView: () => view })
       <div v-if="showPreview" class="pvw">
         <div
           ref="previewRef"
-          class="preview"
+          class="preview md-body"
           v-html="html"
           @click="onPreviewClick"
         />
@@ -1087,439 +1065,5 @@ defineExpose({ getView: () => view })
 
 .stage[data-layout='split'] :deep(.cm-content) {
   max-width: none;
-}
-.preview :deep(h1),
-.preview :deep(h2),
-.preview :deep(h3),
-.preview :deep(h4),
-.preview :deep(h5),
-.preview :deep(h6) {
-  line-height: 1.34;
-  margin: 1.5em 0 0.5em;
-  font-weight: 700;
-  letter-spacing: -0.015em;
-}
-.preview :deep(h1) {
-  font-size: 1.62em;
-  margin-top: 0;
-}
-.preview :deep(h2) {
-  font-size: 1.34em;
-}
-.preview :deep(h3) {
-  font-size: 1.16em;
-}
-.preview :deep(h4) {
-  font-size: 1.04em;
-}
-.preview :deep(h5) {
-  font-size: 0.96em;
-  color: var(--n-fg-dim);
-}
-.preview :deep(h6) {
-  font-size: 0.92em;
-  color: var(--n-fg-faint);
-}
-.preview :deep(h3) {
-  font-size: 1.15em;
-}
-.preview :deep(p) {
-  margin: 0.8em 0;
-}
-.preview :deep(a) {
-  color: var(--n-accent);
-  text-underline-offset: 3px;
-}
-.preview :deep(code) {
-  font-family: var(--n-font-mono);
-  font-size: 0.9em;
-  padding: 0.15em 0.4em;
-  border-radius: 4px;
-  color: var(--n-code-fg);
-  background: var(--n-code-bg);
-}
-/* 行内代码保持轻量；块级代码由 .pv-code 外层接管，pre 本身不再画边框 */
-.preview :deep(pre) {
-  margin: 0;
-  padding: 11px 14px;
-  border-radius: 0;
-  background: none;
-  border: 0;
-  overflow-x: auto;
-  tab-size: 2;
-  line-height: 1.6;
-}
-.preview :deep(pre code) {
-  padding: 0;
-  background: none;
-  color: inherit;
-  font-size: 13px;
-}
-
-/* 笔记嵌入：还没做真正的正文内联，先给一个能认出来的卡片 */
-.preview :deep(.pv-embed) {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  max-width: 100%;
-  padding: 2px 9px 2px 7px;
-  border: 1px solid var(--n-line-strong);
-  border-radius: var(--n-r-sm);
-  background: var(--n-surface);
-  font-size: 0.92em;
-  vertical-align: baseline;
-}
-.preview :deep(.pv-embed-ico) {
-  font-size: 11px;
-  line-height: 1;
-}
-.preview :deep(.pv-embed-name) {
-  color: var(--n-accent);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-/* ── 代码块外壳：语言 + 行数/折叠 + 复制 ── */
-.preview :deep(.pv-code) {
-  margin: 1em 0;
-  border: 1px solid var(--n-line);
-  border-radius: var(--n-r-md);
-  background: var(--n-code-bg);
-  overflow: hidden;
-}
-.preview :deep(.pv-code-head) {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  height: 28px;
-  padding: 0 7px 0 12px;
-  border-bottom: 1px solid var(--n-line);
-  background: color-mix(in oklab, var(--n-code-bg) 60%, var(--n-bg));
-}
-.preview :deep(.pv-code-lang) {
-  font-family: var(--n-font-mono);
-  font-size: 10.5px;
-  letter-spacing: 0.05em;
-  color: var(--n-fg-faint);
-}
-/* 折叠 / 复制靠右排；没折叠按钮时靠 margin-left:auto 顶到右边 */
-.preview :deep(.pv-code-fold),
-.preview :deep(.pv-code-copy) {
-  padding: 0 7px;
-  height: 20px;
-  border-radius: var(--n-r-sm);
-  font-size: 11px;
-  color: var(--n-fg-dim);
-  opacity: 0;
-  transition:
-    opacity var(--n-dur) var(--n-ease),
-    background-color var(--n-dur) var(--n-ease),
-    color var(--n-dur) var(--n-ease);
-}
-.preview :deep(.pv-code-fold) {
-  margin-left: auto;
-}
-.preview :deep(.pv-code:hover .pv-code-fold),
-.preview :deep(.pv-code:hover .pv-code-copy),
-.preview :deep(.pv-code-fold:focus-visible),
-.preview :deep(.pv-code-copy:focus-visible) {
-  opacity: 1;
-}
-.preview :deep(.pv-code-fold:hover),
-.preview :deep(.pv-code-copy:hover) {
-  background: var(--n-surface);
-  color: var(--n-fg);
-}
-/* 复制成功后短暂留着，不然用户根本看不到反馈 */
-.preview :deep(.pv-code-copy.done) {
-  opacity: 1;
-  color: var(--n-ok);
-}
-.preview :deep(.pv-code-body) {
-  position: relative;
-  overflow: hidden;
-  transition: max-height 220ms var(--n-ease);
-}
-.preview :deep(.pv-code.is-folded .pv-code-body::after) {
-  content: "";
-  position: absolute;
-  inset: auto 0 0 0;
-  height: 56px;
-  background: linear-gradient(to bottom, transparent, var(--n-code-bg));
-  pointer-events: none;
-}
-/* 行容器：行号和高亮行都要靠它定位 */
-.preview :deep(.pv-line) {
-  display: inline-block;
-  width: 100%;
-  min-height: 1.6em;
-  vertical-align: top;
-}
-.preview :deep(blockquote) {
-  margin: 1em 0;
-  padding: 0.45em 0 0.45em 14px;
-  border-left: 3px solid var(--n-accent);
-  border-radius: 0 4px 4px 0;
-  background: var(--n-accent-soft);
-  color: var(--n-fg-dim);
-  font-style: italic;
-}
-.preview :deep(ul),
-.preview :deep(ol) {
-  padding-left: 1.4em;
-  margin: 0.8em 0;
-}
-.preview :deep(li) {
-  margin: 0.3em 0;
-}
-.preview :deep(hr) {
-  border: none;
-  border-top: 1px solid var(--n-line);
-  margin: 2em 0;
-}
-.preview :deep(table) {
-  border-collapse: collapse;
-  width: 100%;
-  margin: 1em 0;
-  font-size: 0.94em;
-}
-.preview :deep(th),
-.preview :deep(td) {
-  border: 1px solid var(--n-line);
-  padding: 7px 11px;
-  text-align: left;
-}
-.preview :deep(th) {
-  background: var(--n-surface);
-  font-weight: 600;
-}
-.preview :deep(img) {
-  max-width: 100%;
-  border-radius: var(--n-r-md);
-}
-.preview :deep(video) {
-  max-width: 100%;
-  border-radius: var(--n-r-md);
-  border: 1px solid var(--n-line);
-}
-
-/* ── 富块：Callout / 折叠 / 分栏 / Mermaid ──
-   这些结构由 preview-rich.ts 在 marked 产出之后补出来。 */
-.preview :deep(.pv-callout) {
-  margin: 1em 0;
-  border: 1px solid var(--n-block-line);
-  border-left: 3px solid var(--n-accent);
-  border-radius: var(--n-r-md);
-  background: var(--n-block-bg);
-  overflow: hidden;
-}
-.preview :deep(.pv-callout-head) {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  padding: 7px 12px;
-  background: var(--n-block-head);
-  font-size: 0.86em;
-  font-weight: 600;
-}
-.preview :deep(.pv-callout-icon) {
-  color: var(--n-accent);
-}
-.preview :deep(.pv-callout-body) {
-  padding: 4px 12px;
-}
-.preview :deep(.pv-callout-body > :last-child) {
-  margin-bottom: 0.5em;
-}
-.preview :deep(.pv-badge) {
-  margin-left: auto;
-  padding: 1px 7px;
-  border-radius: 9px;
-  border: 1px solid var(--n-block-line);
-  background: var(--n-raised);
-  font-size: 0.72em;
-  font-weight: 600;
-  color: var(--n-fg-dim);
-}
-.preview :deep(.pv-callout[data-type='note']),
-.preview :deep(.pv-callout[data-type='info']) {
-  border-left-color: var(--n-info);
-  background: var(--n-info-soft);
-}
-.preview :deep(.pv-callout[data-type='note'] .pv-callout-icon),
-.preview :deep(.pv-callout[data-type='info'] .pv-callout-icon) {
-  color: var(--n-info);
-}
-.preview :deep(.pv-callout[data-type='tip']),
-.preview :deep(.pv-callout[data-type='success']),
-.preview :deep(.pv-callout[data-type='example']) {
-  border-left-color: var(--n-ok);
-  background: var(--n-ok-soft);
-}
-.preview :deep(.pv-callout[data-type='tip'] .pv-callout-icon),
-.preview :deep(.pv-callout[data-type='success'] .pv-callout-icon),
-.preview :deep(.pv-callout[data-type='example'] .pv-callout-icon) {
-  color: var(--n-ok);
-}
-.preview :deep(.pv-callout[data-type='warning']),
-.preview :deep(.pv-callout[data-type='caution']),
-.preview :deep(.pv-callout[data-type='important']),
-.preview :deep(.pv-callout[data-type='question']) {
-  border-left-color: var(--n-warn);
-  background: var(--n-warn-soft);
-}
-.preview :deep(.pv-callout[data-type='warning'] .pv-callout-icon),
-.preview :deep(.pv-callout[data-type='caution'] .pv-callout-icon),
-.preview :deep(.pv-callout[data-type='important'] .pv-callout-icon),
-.preview :deep(.pv-callout[data-type='question'] .pv-callout-icon) {
-  color: var(--n-warn);
-}
-.preview :deep(.pv-callout[data-type='danger']) {
-  border-left-color: var(--n-danger);
-  background: var(--n-danger-soft);
-}
-.preview :deep(.pv-callout[data-type='danger'] .pv-callout-icon) {
-  color: var(--n-danger);
-}
-
-.preview :deep(.pv-details) {
-  margin: 1em 0;
-  border: 1px solid var(--n-block-line);
-  border-radius: var(--n-r-md);
-  background: var(--n-block-bg);
-  overflow: hidden;
-}
-.preview :deep(.pv-details > summary) {
-  padding: 8px 12px;
-  background: var(--n-block-head);
-  font-weight: 600;
-  font-size: 0.92em;
-  cursor: pointer;
-  user-select: none;
-}
-.preview :deep(.pv-details[open] > summary) {
-  border-bottom: 1px solid var(--n-block-line);
-}
-.preview :deep(.pv-details > *:not(summary)) {
-  padding: 0 12px;
-}
-.preview :deep(.pv-details-body) {
-  padding: 2px 12px;
-}
-.preview :deep(.pv-details-body > :first-child) {
-  margin-top: 0.6em;
-}
-.preview :deep(.pv-details-body > :last-child) {
-  margin-bottom: 0.6em;
-}
-.preview :deep(.pv-details > summary)::marker {
-  color: var(--n-fg-faint);
-}
-
-.preview :deep(.pv-tabs) {
-  margin: 1em 0;
-  border: 1px solid var(--n-block-line);
-  border-radius: var(--n-r-md);
-  background: var(--n-block-bg);
-  overflow: hidden;
-}
-.preview :deep(.pv-tabbar) {
-  display: flex;
-  gap: 2px;
-  padding: 6px 10px 0;
-  border-bottom: 1px solid var(--n-block-line);
-}
-.preview :deep(.pv-tab) {
-  padding: 5px 12px;
-  border-radius: var(--n-r-sm) var(--n-r-sm) 0 0;
-  font-size: 0.88em;
-  color: var(--n-fg-dim);
-  cursor: default;
-}
-.preview :deep(.pv-tab.on) {
-  background: var(--n-block-bg);
-  color: var(--n-accent);
-  font-weight: 600;
-  box-shadow: inset 0 -2px var(--n-accent);
-}
-.preview :deep(.pv-tab-pane) {
-  display: none;
-  padding: 2px 12px;
-}
-.preview :deep(.pv-tab-pane.on) {
-  display: block;
-}
-
-.preview :deep(.pv-mermaid) {
-  margin: 1em 0;
-  padding: 12px;
-  border: 1px solid var(--n-block-line);
-  border-radius: var(--n-r-md);
-  background: var(--n-block-bg);
-  text-align: center;
-  overflow-x: auto;
-}
-.preview :deep(.pv-mermaid-graph svg) {
-  max-width: 100%;
-  height: auto;
-}
-.preview :deep(.pv-mermaid-src) {
-  font-family: var(--n-font-mono);
-  font-size: 0.84em;
-  color: var(--n-fg-dim);
-  white-space: pre;
-  text-align: left;
-}
-.preview :deep(.pv-mermaid-graph.is-error) {
-  color: var(--n-danger);
-  font-family: var(--n-font-mono);
-  font-size: 0.84em;
-}
-/* ── 高亮与公式 ── */
-.preview :deep(.pv-mark) {
-  padding: 0.08em 0.15em;
-  border-radius: 3px;
-  color: var(--n-fg);
-  background: var(--n-mark);
-}
-
-/* 未渲染完成时先按等宽源码展示，避免一片空白让人以为丢了内容 */
-.preview :deep(.pv-math-block) {
-  margin: 1.1em 0;
-  overflow-x: auto;
-  overflow-y: hidden;
-  font-family: var(--n-font-mono);
-  font-size: 0.92em;
-  color: var(--n-fg-dim);
-}
-
-.preview :deep(.pv-math:not(.is-rendered)) {
-  font-family: var(--n-font-mono);
-  font-size: 0.92em;
-  color: var(--n-fg-dim);
-}
-
-.preview :deep(.pv-math.is-error),
-.preview :deep(.pv-math-block.is-error) {
-  color: var(--n-danger);
-}
-
-/* KaTeX 自带浅色，深色主题下要把公式本身和 $-符号一起翻过来 */
-.preview :deep(.katex) {
-  font-size: 1.02em;
-  color: var(--n-fg);
-}
-
-.preview :deep(.katex-display) {
-  margin: 0;
-  padding: 0.3em 0;
-  overflow-x: auto;
-  overflow-y: hidden;
-}
-
-.preview :deep(.pv-table-wrap) {
-  overflow-x: auto;
-  margin: 1em 0;
 }
 </style>

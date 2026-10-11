@@ -59,8 +59,14 @@ interface Segment {
  *
  * 语言未知或解析失败时原样转义返回，绝不因为高亮失败而丢内容。
  */
-export async function highlightCode(code: string, lang: string): Promise<string> {
-  const key = `${lang}\u0000${code}`;
+export async function highlightCode(
+  code: string,
+  lang: string,
+  opts: { start?: number; highlights?: number[] } = {},
+): Promise<string> {
+  const start = Math.max(1, opts.start ?? 1);
+  const marks = new Set(opts.highlights ?? []);
+  const key = `${lang}\u0000${start}\u0000${[...marks].join(",")}\u0000${code}`;
   const hit = cache.get(key);
   if (hit !== undefined) return hit;
 
@@ -77,9 +83,9 @@ export async function highlightCode(code: string, lang: string): Promise<string>
         if (to > from) segments.push({ from, to, classes });
       });
       segments.sort((a, b) => a.from - b.from);
-      out = renderLines(code, segments);
+      out = renderLines(code, segments, start, marks);
     } else {
-      out = renderLines(code, []);
+      out = renderLines(code, [], start, marks);
     }
   } catch {
     out = fallback;
@@ -91,7 +97,13 @@ export async function highlightCode(code: string, lang: string): Promise<string>
 }
 
 /** 按行组装。没有 token 信息时也走同一条路，保证结构一致（都有 .pv-line）。 */
-function renderLines(code: string, segments: Segment[]): string {
+function renderLines(
+  code: string,
+  segments: Segment[],
+  /** 行号起始值，`start=10` 时第一行显示 10 */
+  firstLine: number,
+  marks: Set<number>,
+): string {
   const lines = code.split("\n");
   const parts: string[] = [];
   let cursor = 0; // 行首在原文中的位置
@@ -119,7 +131,11 @@ function renderLines(code: string, segments: Segment[]): string {
     }
     if (at < end) inner.push(escapeHtml(code.slice(at, end)));
 
-    parts.push(`<span class="pv-line" data-line="${i + 1}">${inner.join("")}</span>`);
+    // 高亮行是「文件里的行号」，从 firstLine 起算，所以要加上偏移
+    const lineNo = firstLine + i;
+    parts.push(
+      `<span class="pv-line${marks.has(lineNo) ? " is-hl" : ""}" data-line="${lineNo}">${inner.join("")}</span>`,
+    );
   }
 
   // 行与行之间补回真实换行：空行的 span 内容为空，靠 CSS 的 min-height 撑高度

@@ -50,9 +50,12 @@ export const notaTheme = EditorView.theme({
 
   /* ── 行号 ──
      scroller 的 paddingInline 已归零，所以左右留白落在这里：
-     左侧 12px 是「编辑区边缘到行号」，右侧 6px 是「行号到正文」。 */
+     左侧 12px 是「编辑区边缘到行号」，右侧 6px 是「行号到正文」。
+
+     底色必须是不透明的：gutter 是 sticky 的，正文一旦横向滚动就会从它
+     底下经过，透明底会让「文字压着行号」——早期就是这么翻车的。 */
   ".cm-gutters": {
-    backgroundColor: "transparent",
+    backgroundColor: "var(--n-bg)",
     color: "var(--n-fg-faint)",
     border: "none",
     fontSize: "12px",
@@ -305,18 +308,19 @@ export const notaTheme = EditorView.theme({
     textDecorationColor: "var(--n-fg-faint)",
     color: "var(--n-fg-dim)",
   },
+  /* ── 行内代码 ──
+     参考项目是一层很薄的底色 + 等宽字体，没有药丸边框：
+     行内代码出现频率极高，加边框会让整段文字看起来坑坑洼洼。 */
   ".cm-md-inline-code": {
     fontFamily: "var(--n-font-mono)",
     fontSize: "0.9em",
-    color: "var(--n-code-fg)",
-    backgroundColor: "var(--n-code-bg)",
+    color: "color-mix(in oklab, var(--n-fg) 88%, var(--n-fg-dim))",
+    backgroundColor: "color-mix(in oklab, var(--n-surface) 88%, transparent)",
     borderRadius: "4px",
-    /* 行内标记不能用 padding 撑留白（会被 CM 裁掉），改用同色 border 当内边距。
-       注意不能用 em：em 以自身缩小后的 fontSize 为基准，会算出很小的一圈。
-       纵向再压一点，避免药丸比行高还厚。 */
-    borderWidth: "1px 5px",
+    /* 行内标记横向留白只能用「同色 border」当内边距——padding 会被 CM 的行盒裁掉 */
+    borderWidth: "1px 4px",
     borderStyle: "solid",
-    borderColor: "var(--n-code-bg)",
+    borderColor: "color-mix(in oklab, var(--n-surface) 88%, transparent)",
     boxDecorationBreak: "clone",
   },
   ".cm-md-link": { color: "var(--n-accent)" },
@@ -359,11 +363,12 @@ export const notaTheme = EditorView.theme({
     textDecorationColor: "var(--n-fg-faint)",
   },
 
-  /* ── 代码块：整块贴边底色，首尾圆角，形成一张"卡片" ──
-     .cm-md-codeblock 由 code-languages.ts 给块内每一行打上；
-     .cm-md-codeblock-open / -close 由 live-preview.ts 给首尾行补圆角。 */
+  /* ── 代码块：整块一层薄底，不加边框 ──
+     参考项目就是这么处理的：代码块靠底色与等宽字体区分，不画框。
+     画框会和文档里大量的引用块、Callout、表格抢视觉重量。
+     .cm-md-codeblock 由 code-languages.ts 给块内每一行打上。 */
   ".cm-md-codeblock": {
-    backgroundColor: "var(--n-code-bg)",
+    backgroundColor: "color-mix(in oklab, var(--n-surface) 70%, transparent)",
     fontFamily: "var(--n-font-mono)",
     fontSize: "0.92em",
     lineHeight: "1.6",
@@ -371,38 +376,9 @@ export const notaTheme = EditorView.theme({
     marginInline: "-6px",
     paddingInline: "6px",
   },
-  /* 首行：上边框 + 上圆角。用 ::before 画边框，避免和中间行的规则互相覆盖 */
-  ".cm-md-codeblock-open": {
-    borderTopLeftRadius: "var(--n-r-md)",
-    borderTopRightRadius: "var(--n-r-md)",
-    boxShadow: "inset 0 1px var(--n-line)",
-    paddingTop: "7px",
-  },
-  /* 末行：下边框 + 下圆角 */
-  ".cm-md-codeblock-close": {
-    borderBottomLeftRadius: "var(--n-r-md)",
-    borderBottomRightRadius: "var(--n-r-md)",
-    boxShadow: "inset 0 -1px var(--n-line)",
-    paddingBottom: "7px",
-  },
-  /* 首末同一行（单行代码块）：四角都圆、上下都有边框 */
-  ".cm-md-codeblock-open.cm-md-codeblock-close": {
-    boxShadow: "inset 0 1px var(--n-line), inset 0 -1px var(--n-line)",
-    paddingTop: "7px",
-    paddingBottom: "7px",
-  },
-  /* 左右两侧的竖边框，由每行自己画一半再拼起来，这样多行不会断 */
-  ".cm-md-codeblock-open, .cm-md-codeblock-close, .cm-md-codeblock": {
-    position: "relative",
-  },
-  ".cm-md-codeblock::after": {
-    content: '""',
-    position: "absolute",
-    inset: "0",
-    borderLeft: "1px solid var(--n-line)",
-    borderRight: "1px solid var(--n-line)",
-    pointerEvents: "none",
-  },
+  /* 首末行补一点纵向留白，整块看起来才是个独立的段落 */
+  ".cm-md-codeblock-open": { paddingTop: "7px" },
+  ".cm-md-codeblock-close": { paddingBottom: "7px" },
 });
 
 /**
@@ -426,7 +402,7 @@ export const notaHighlight = HighlightStyle.define([
   { tag: t.list, color: "var(--n-fg)" },
   { tag: t.contentSeparator, color: "var(--n-line-strong)" },
   { tag: [t.meta, t.processingInstruction], color: "var(--n-fg-faint)" },
-  { tag: t.comment, color: "var(--n-fg-faint)", fontStyle: "italic" },
+  { tag: t.comment, color: "var(--n-code-comment)", fontStyle: "italic" },
 
   // 代码 token
   { tag: [t.keyword, t.operatorKeyword, t.modifier], color: "var(--n-code-keyword)" },
@@ -435,10 +411,10 @@ export const notaHighlight = HighlightStyle.define([
   { tag: [t.function(t.variableName), t.labelName], color: "var(--n-code-func)" },
   { tag: [t.typeName, t.className, t.namespace], color: "var(--n-code-type)" },
   { tag: t.definition(t.variableName), color: "var(--n-code-func)" },
-  { tag: t.propertyName, color: "var(--n-fg)" },
+  { tag: t.propertyName, color: "var(--n-code-prop)" },
   { tag: t.operator, color: "var(--n-code-keyword)" },
-  { tag: [t.punctuation, t.bracket], color: "var(--n-fg-dim)" },
-  { tag: t.variableName, color: "var(--n-fg)" },
+  { tag: [t.punctuation, t.bracket], color: "var(--n-code-punct)" },
+  { tag: t.variableName, color: "var(--n-code-punct)" },
   { tag: t.invalid, color: "var(--n-danger)", textDecoration: "underline wavy var(--n-danger)" },
 ]);
 
