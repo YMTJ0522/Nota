@@ -383,7 +383,7 @@ function escapeLinkLabel(text: string): string {
 }
 
 /** Wraps control characters / angle brackets into URL-safe escapes. */
-function escapeLinkDestination(url: string): string {
+export function escapeLinkDestination(url: string): string {
   return url.replace(/[\u0000-\u0020<>]/g, (value) => encodeURIComponent(value));
 }
 

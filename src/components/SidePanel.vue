@@ -17,8 +17,8 @@ import {
   Trash2,
   X,
 } from 'lucide-vue-next'
-import { store } from '@/store'
-import type { NavFilter } from '@/store'
+import { isSettingsSection, store } from '@/store'
+import type { NavFilter, SettingsSection } from '@/store'
 import TreeNodeItem from './TreeNodeItem.vue'
 import SettingsDialog from '@/components/SettingsDialog.vue'
 
@@ -26,7 +26,7 @@ const { state } = store
 
 const settingsOpen = ref(false)
 /** 设置面板要停在哪个分区（工具栏 AI 菜单的「模型设置…」会指定） */
-const settingsSection = ref<'general' | 'appearance' | 'editor' | 'ai' | 'about'>('general')
+const settingsSection = ref<SettingsSection>('general')
 const folderInput = ref<HTMLInputElement | null>(null)
 const searchInput = ref<HTMLInputElement | null>(null)
 
@@ -122,9 +122,7 @@ function openAi() {
 /** 工具栏 AI 菜单的「模型设置…」：打开对话框并停在 AI 分区 */
 function onSettingsRequest(e: Event) {
   const id = (e as CustomEvent<string>).detail
-  if (id === 'ai' || id === 'about' || id === 'editor' || id === 'general') {
-    settingsSection.value = id
-  }
+  if (isSettingsSection(id)) settingsSection.value = id
   settingsOpen.value = true
 }
 

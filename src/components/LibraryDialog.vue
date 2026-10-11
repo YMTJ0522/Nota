@@ -19,6 +19,7 @@ import {
   X,
 } from 'lucide-vue-next'
 import { store } from '@/store'
+import { escapeLinkDestination } from '@/editor/markdown-commands'
 
 const props = defineProps<{ open: boolean; tab?: 'attach' | 'trash' }>()
 const emit = defineEmits<{ (e: 'close'): void }>()
@@ -103,7 +104,7 @@ function toast(text: string) {
 function insert(a: Attach) {
   const text = a.isVideo
     ? `<video src="${a.rel}" controls></video>`
-    : `![${a.name.replace(/\.[^.]+$/, '')}](${a.rel})`
+    : `![${a.name.replace(/\.[^.]+$/, '')}](${escapeLinkDestination(a.rel)})`
   window.dispatchEvent(new CustomEvent('nota:insert', { detail: text }))
   toast('已插入到当前笔记')
 }

@@ -37,6 +37,20 @@ export type Density = 'comfortable' | 'compact'
 /** 正文栏宽档位 */
 export type MeasureName = 'narrow' | 'standard' | 'wide' | 'full'
 
+/**
+ * 设置面板的分区。
+ *
+ * 放在 store 里是为了只有一个来源：侧栏收到 `nota:settings` 事件时要判断
+ * 「这个 id 认不认」，设置面板自己也要按 id 找当前页——两处各写一份白名单，
+ * 加了新分区就一定会漏一处（外观页当初就是这么跳不过去的）。
+ */
+export const SETTINGS_SECTIONS = ['general', 'appearance', 'editor', 'ai', 'about'] as const
+export type SettingsSection = (typeof SETTINGS_SECTIONS)[number]
+
+export function isSettingsSection(id: unknown): id is SettingsSection {
+  return typeof id === 'string' && (SETTINGS_SECTIONS as readonly string[]).includes(id)
+}
+
 export const BG_STYLES: { id: BgStyle; label: string }[] = [
   { id: 'paper', label: '纸张' },
   { id: 'plain', label: '纯色' },

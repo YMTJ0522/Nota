@@ -28,9 +28,9 @@ import {
   X,
 } from 'lucide-vue-next'
 import { ACCENTS, ACCENT_SWATCH, AI_DEFAULTS, AI_PRESETS, BG_STYLES, DENSITY, MEASURES, store } from '@/store'
-import type { AccentName, BgStyle, Density, MeasureName, ViewMode } from '@/store'
+import type { AccentName, BgStyle, Density, MeasureName, SettingsSection, ViewMode } from '@/store'
 
-type SectionId = 'general' | 'appearance' | 'editor' | 'ai' | 'about'
+type SectionId = SettingsSection
 
 const props = defineProps<{ open: boolean; section?: SectionId }>()
 const emit = defineEmits<{ (e: 'close'): void }>()
@@ -991,13 +991,18 @@ async function changeWorkspace() {
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  flex: none;
   width: 24px;
   height: 24px;
+  /* 浏览器默认给 button 留了 1px 6px 的内边距，不清掉的话
+     24px 的圆只剩 10px 可以放内容，里面的色点会被挤成椭圆 */
+  padding: 0;
   border-radius: 50%;
   border: 1px solid transparent;
   transition: border-color var(--n-dur) var(--n-ease);
 }
 .st-swatch-dot {
+  flex: none;
   width: 15px;
   height: 15px;
   border-radius: 50%;

@@ -11,7 +11,7 @@
  *  7. 外观：纸张/纯色、密度真的写到了 <html> 上
  *  8. 编辑：字号、行高、栏宽、换行、行号开关都对得上
  *  9. 「恢复默认」能把当前页改回去
- * 10. 预览：中文文件名的图片能加载（naturalWidth > 0），video 有源有尺寸
+ * 10. 预览：带空格的图片路径（裸写 + 尖括号）都能加载，video 有源有尺寸
  * 11. 代码块：标题、语言、行号、起始行号、高亮行
  * 12. 行号 gutter 不透明（不然后面的文字会透上去）
  * 13. 全程零 JS 异常
@@ -28,13 +28,27 @@ const distDir = path.join(root, 'dist')
 
 /* ── 测试笔记 ──
    图片和视频刻意用中文名 + 空格，复现 marked 把路径 encodeURI 之后裂图的情况。 */
-const PIC = 'attachments/【哲风壁纸】励志标语-彩色字体.jpg'
+const PIC = 'attachments/【哲风壁纸】励志标语-彩色字体 2.jpg'
 const VID = 'attachments/【哲风壁纸】人物剪影-开阔-旷野 1.mp4'
+// 同一张图改用尖括号写法，两条路都得通
+const PIC2 = 'attachments/【哲风壁纸】人物剪影-开阔-旷野 1.jpg'
+// 用户笔记里的原样写法：alt 里套了一对方括号，路径带空格
+const PIC3 = 'attachments/【哲风壁纸】佩剑-侠客-剪影 3.jpg'
+// 文件名里带 `#`：encodeURI 不管它，会被浏览器当片段切掉
+const PIC4 = 'attachments/拍摄#1.jpg'
 
 const NOTE = [
   '# 媒体与代码块',
   '',
   `![励志标语](${PIC})`,
+  '',
+  `![尖括号写法](<${PIC2}>)`,
+  '',
+  `![[【哲风壁纸】佩剑-侠客-剪影-剪影]](${PIC3})`,
+  '',
+  `![井号文件名](${PIC4})`,
+  '',
+  '文内锚点 [去结尾](#结尾) 不该被当成文件路径。',
   '',
   `<video src="${VID}" controls></video>`,
   '',
@@ -167,6 +181,10 @@ const TREE = [
 await evaluate('(() => {' +
   ` window.__notes = { "/ws/媒体与代码块.md": ${JSON.stringify(NOTE)}, "/ws/随笔.md": "# 随笔\\n\\n随手记两句。\\n" };` +
   ` window.__pic = ${JSON.stringify(PIC)};` +
+  ` window.__pic2 = ${JSON.stringify(PIC2)};` +
+  ` window.__pic3 = ${JSON.stringify(PIC3)};` +
+  ` window.__pic4 = ${JSON.stringify(PIC4)};` +
+  " window.__asks = [];" +
   ` window.__picData = ${JSON.stringify(PIC_DATA)};` +
   ' window.api = {' +
   '  pickWorkspace: async () => "/ws",' +
@@ -179,7 +197,8 @@ await evaluate('(() => {' +
   '  pickImage: async () => ({ rel: window.__pic, alt: "图", copied: true, isVideo: false }),' +
   '  resolveMedia: async (b, r) => {' +
   '    const dec = /%[0-9a-fA-F]{2}/.test(r) ? decodeURIComponent(r) : r;' +
-  '    if (dec === window.__pic) return window.__picData;' +
+  '    window.__asks.push(dec);' +
+  '    if ([window.__pic, window.__pic2, window.__pic3, window.__pic4].includes(dec)) return window.__picData;' +
   '    return "nota-media://local/" + encodeURIComponent(dec);' +
   '  },' +
   '  attachList: async () => ([{ rel: window.__pic, name: "励志标语.jpg", size: 2048, mtime: Date.now(), isVideo: false }]),' +
@@ -351,6 +370,29 @@ ok(
   settings,
 )
 
+/* ── 5b. 每个分区的 id 都能从外部直达（侧栏那份白名单当初漏了 appearance） ── */
+const jump = await evaluate(`(async () => {
+  const want = [['general','通用'],['appearance','外观'],['editor','编辑'],['ai','AI 编写'],['about','关于']]
+  const seen = []
+  for (const [id, label] of want) {
+    document.querySelector('.st-x')?.click()
+    await new Promise(r => setTimeout(r, 250))
+    window.dispatchEvent(new CustomEvent('nota:settings', { detail: id }))
+    await new Promise(r => setTimeout(r, 450))
+    const t = document.querySelector('.st .st-title')?.textContent?.trim() ?? ''
+    if (t !== label) seen.push(id + ' 期望 ' + label + ' 实际 ' + t)
+    else seen.push(id + ' ok')
+  }
+  document.querySelector('.st-x')?.click()
+  await new Promise(r => setTimeout(r, 250))
+  return seen
+})()`)
+ok(
+  '5b.五个分区的 id 都能从外部直达',
+  (jump ?? []).length === 5 && jump.every((s) => s.endsWith('ok')),
+  jump,
+)
+
 /* ── 7. 外观：纸张/纯色 + 密度真的落到 <html> ── */
 const look = await evaluate(`(async () => {
   document.querySelector('.panel .foot .foot-btn[data-tip="设置"]')?.click()
@@ -367,12 +409,26 @@ const look = await evaluate(`(async () => {
   compact?.click()
   await new Promise(r => setTimeout(r, 350))
   const dens = document.documentElement.getAttribute('data-density')
-  return { before, plain, dens }
+  // 色点必须是正圆。浏览器默认给 button 留了 1px 6px 的内边距，
+  // 不清掉的话 24px 的圆圈只剩 10px 放内容，色点会被压成 10x15 的椭圆
+  const dots = [...document.querySelectorAll('.st-swatch-dot')].map(d => {
+    const r = d.getBoundingClientRect()
+    return Math.round(r.width) + 'x' + Math.round(r.height)
+  })
+  const ringR = document.querySelector('.st-swatch')?.getBoundingClientRect()
+  const ring = ringR ? Math.round(ringR.width) + 'x' + Math.round(ringR.height) : ''
+  return { before, plain, dens, dots, ring }
 })()`)
 ok(
   '7.外观项写进了 <html>',
   look.before === 'paper' && look.plain === 'plain' && look.dens === 'compact',
-  look,
+  { before: look.before, plain: look.plain, dens: look.dens },
+)
+ok(
+  '7b.强调色的圆点是正圆不是椭圆',
+  look.dots.length === 6 && look.dots.every(d => d.split('x')[0] === d.split('x')[1]) &&
+    look.ring === '24x24',
+  { dots: look.dots, ring: look.ring },
 )
 
 /* ── 8. 编辑：字号/行高/栏宽/换行/行号 ── */
@@ -421,16 +477,29 @@ await clickMode('分栏')
 const media = await evaluate(`(async () => {
   const p = document.querySelector('.preview.md-body')
   if (!p) return { err: 'no preview or missing md-body' }
-  const img = p.querySelector('img')
-  if (!img) return { err: 'no img' }
+  const imgs = [...p.querySelectorAll('img')]
+  if (!imgs.length) return { err: 'no img' }
   // 等图片解码：data URI 很快，但保险起见轮询一下
-  for (let i = 0; i < 20 && !img.complete; i++) await new Promise(r => setTimeout(r, 100))
+  for (let i = 0; i < 20 && imgs.some(im => !im.complete); i++) await new Promise(r => setTimeout(r, 100))
   const video = p.querySelector('video')
+  // marked 解析失败时不会产出 <img>，而是把整行当普通文本吐回来，
+  // 所以「源码还躺在正文里」是最直接的失败信号
+  const raw = p.textContent ?? ''
   return {
-    imgSrc: (img.getAttribute('src') ?? '').slice(0, 40),
-    imgOk: img.complete && img.naturalWidth > 0,
-    imgW: img.naturalWidth,
-    imgBox: Math.round(img.getBoundingClientRect().width),
+    imgCount: imgs.length,
+    imgSrc: (imgs[0].getAttribute('src') ?? '').slice(0, 40),
+    img2Src: (imgs[1]?.getAttribute('src') ?? '').slice(0, 40),
+    imgOk: imgs[0].complete && imgs[0].naturalWidth > 0,
+    img2Ok: !!imgs[1] && imgs[1].complete && imgs[1].naturalWidth > 0,
+    img3Src: (imgs[2]?.getAttribute('src') ?? '').slice(0, 40),
+    img3Ok: !!imgs[2] && imgs[2].complete && imgs[2].naturalWidth > 0,
+    img4Src: (imgs[3]?.getAttribute('src') ?? '').slice(0, 40),
+    img4Ok: !!imgs[3] && imgs[3].complete && imgs[3].naturalWidth > 0,
+    asks: (window.__asks ?? []).filter(a => a.includes('拍摄')),
+    anchor: p.querySelector('a[href^="#"]')?.getAttribute('href') ?? '',
+    imgW: imgs[0].naturalWidth,
+    imgBox: Math.round(imgs[0].getBoundingClientRect().width),
+    leftover: raw.includes('![') || raw.includes(']('),
     videoSrc: (video?.getAttribute('src') ?? '').slice(0, 46),
     videoControls: video?.hasAttribute('controls') ?? false,
     videoW: Math.round(video?.getBoundingClientRect().width ?? 0),
@@ -438,8 +507,12 @@ const media = await evaluate(`(async () => {
   }
 })()`)
 ok(
-  '10.中文路径的媒体能渲染',
-  media.imgOk && media.imgSrc.startsWith('data:image/svg') &&
+  '10.空格 / 尖括号 / # 的图片路径都能渲染',
+  media.imgCount === 4 && media.imgOk && media.img2Ok && media.img3Ok && media.img4Ok &&
+    media.imgSrc.startsWith('data:image/svg') && media.img2Src.startsWith('data:image/svg') &&
+    media.img3Src.startsWith('data:image/svg') && media.img4Src.startsWith('data:image/svg') &&
+    media.asks.some(a => a.includes('#')) && media.anchor.startsWith('#') &&
+    !media.leftover &&
     (media.videoSrc ?? '').includes('nota-media://local/') &&
     media.videoControls && media.imgBox > 0 &&
     // 视频要铺满一栏，不能被默认的 300×150 卡住

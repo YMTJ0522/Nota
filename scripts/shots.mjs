@@ -15,7 +15,9 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const distDir = path.join(root, 'dist')
 const docsDir = path.join(root, 'docs')
 
-const PIC = 'attachments/【哲风壁纸】励志标语-彩色字体.jpg'
+// 名字里故意留个空格：这是之前图片不显示的那个坑（CommonMark 要求
+// 含空格的地址必须写成 `<>`，否则 marked 整行不解析）
+const PIC = 'attachments/【哲风壁纸】励志标语-彩色字体 2.jpg'
 const VID = 'attachments/【哲风壁纸】人物剪影-开阔-旷野 1.mp4'
 
 /* 真实的一张 PNG 当配图。用应用图标：它是一张规规矩矩的方图，
@@ -262,6 +264,13 @@ await evaluate(`(async () => {
 })()`)
 await sleep(600)
 await shot('screenshot-settings.png')
+
+/* ⑤ 设置 · 外观页（强调色板） */
+await evaluate("document.querySelector('.st-x')?.click()")
+await sleep(400)
+await evaluate("window.dispatchEvent(new CustomEvent('nota:settings', { detail: 'appearance' }))")
+await sleep(900)
+await shot('screenshot-appearance.png')
 
 await send('Page.close').catch(() => {})
 ws.close()

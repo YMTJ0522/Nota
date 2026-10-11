@@ -2,6 +2,7 @@ import type { EditorView } from "@codemirror/view";
 import { openSearchPanel } from "@codemirror/search";
 import { store } from "@/store";
 import {
+  escapeLinkDestination,
   insertBlockIdCommand,
   insertCalloutCommand,
   insertCodeBlockCommand,
@@ -303,7 +304,7 @@ export async function pickImageAndInsert(
     // Markdown 没有原生视频语法，用 <video> 标签，预览里能直接播。
     insertBlock(view, `<video src="${picked.rel}" controls></video>`);
   } else {
-    insertBlock(view, `![${alt}](${picked.rel})`);
+    insertBlock(view, `![${alt}](${escapeLinkDestination(picked.rel)})`);
   }
 
   // 拿旧位置派发一次空事务，让用户取消 / 切窗口回来时光标还在原地
