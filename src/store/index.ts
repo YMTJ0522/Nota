@@ -11,7 +11,16 @@ export interface TreeNode {
   children?: TreeNode[]
   /** 仅文件：从 frontmatter 里摘出来的标签 */
   tags?: string[]
+  /** 仅文件：最后修改时间（毫秒），侧栏「最近编辑」用 */
+  mtime?: number
+  /** 仅文件：frontmatter 里 star: true，进侧栏「收藏」 */
+  starred?: boolean
 }
+
+/** 编辑区三种视图模式：纯编辑 / 左右分栏 / 纯预览 */
+export type ViewMode = 'write' | 'split' | 'read'
+/** 侧栏导航筛选 */
+export type NavFilter = 'all' | 'recent' | 'starred' | 'unfiled'
 
 interface State {
   root: string | null
@@ -35,6 +44,14 @@ interface State {
   activeTag: string | null
   /** 新建文件夹的父目录；非 null 时侧栏弹出一个输入框 */
   newFolderIn: string | null
+  /** 编辑区视图模式 */
+  viewMode: ViewMode
+  /** 侧栏导航当前项 */
+  navFilter: NavFilter
+  /** 侧栏搜索关键词 */
+  searchQuery: string
+  /** 右侧大纲是否展开 */
+  outline: boolean
 }
 
 const state = reactive<State>({
@@ -53,7 +70,14 @@ const state = reactive<State>({
   sidebar: true,
   activeTag: null,
   newFolderIn: null,
+  viewMode: 'write',
+  navFilter: 'all',
+  searchQuery: '',
+  outline: true,
 })
+
+/** 「最近编辑」的时间窗：7 天内有改动的算最近 */
+const RECENT_WINDOW = 7 * 24 * 60 * 60 * 1000
 
 /* ── 派生 ── */
 const dirty = computed(() => state.draft !== state.savedDraft)
@@ -64,10 +88,70 @@ const activeName = computed(() => {
   return parts[parts.length - 1].replace(/\.md$/i, '')
 })
 
+/** 把树里所有文件拍平成一维 */
+function flattenFiles(nodes: TreeNode[], out: TreeNode[] = []): TreeNode[] {
+  for (const n of nodes) {
+    if (n.type === 'dir') {
+      if (n.children) flattenFiles(n.children, out)
+    } else {
+      out.push(n)
+    }
+  }
+  return out
+}
+
+const allFiles = computed(() => flattenFiles(state.tree))
+
+/** 导航项的计数徽标 */
+const navCounts = computed(() => {
+  const now = Date.now()
+  return {
+    all: allFiles.value.length,
+    recent: allFiles.value.filter((f) => now - (f.mtime ?? 0) < RECENT_WINDOW).length,
+    starred: allFiles.value.filter((f) => f.starred).length,
+    unfiled: allFiles.value.filter((f) => !f.tags || f.tags.length === 0).length,
+  }
+})
+
+/** 按名称过滤树；目录只要底下还有命中的文件就保留 */
+function filterTreeByName(nodes: TreeNode[], q: string): TreeNode[] {
+  const walk = (list: TreeNode[]): TreeNode[] => {
+    const out: TreeNode[] = []
+    for (const n of list) {
+      if (n.type === 'dir') {
+        const kids = n.children ? walk(n.children) : []
+        if (kids.length) out.push({ ...n, children: kids })
+        else if (n.name.toLowerCase().includes(q)) out.push({ ...n, children: n.children })
+      } else if (n.name.toLowerCase().includes(q)) {
+        out.push(n)
+      }
+    }
+    return out
+  }
+  return walk(nodes)
+}
+
 /**
- * 全工作区的标签清单：把树里每个文件节点上的 tags 收拢、去重。
- * 标签来源是 frontmatter（主进程读树时已经摘好），不额外读盘。
+ * 侧栏真正要渲染的列表。
+ * 「所有笔记」保持树状；其余导航项拍平成文件列表——
+ * 最近/收藏/未归类本来就是跨目录的横切视图，硬套树反而更难读。
  */
+const visibleTree = computed<TreeNode[]>(() => {
+  const q = state.searchQuery.trim().toLowerCase()
+  if (state.navFilter === 'all') {
+    return q ? filterTreeByName(state.tree, q) : state.tree
+  }
+  let files = allFiles.value
+  if (state.navFilter === 'starred') files = files.filter((f) => f.starred)
+  else if (state.navFilter === 'unfiled') files = files.filter((f) => !f.tags || f.tags.length === 0)
+  else if (state.navFilter === 'recent') {
+    files = [...files].sort((a, b) => (b.mtime ?? 0) - (a.mtime ?? 0)).slice(0, 30)
+  }
+  if (q) files = files.filter((f) => f.name.toLowerCase().includes(q))
+  return files
+})
+
+/** 侧栏标签筛选标签本身（标签计数仍按全量统计） */
 const allTags = computed(() => {
   const set = new Map<string, number>()
   const visit = (nodes: TreeNode[]) => {
@@ -243,6 +327,27 @@ function toggleSidebar() {
   localStorage.setItem('nota-sidebar', state.sidebar ? '1' : '0')
 }
 
+/** 编辑区视图模式 */
+function setViewMode(m: ViewMode) {
+  state.viewMode = m
+  localStorage.setItem('nota-view', m)
+}
+
+/** 侧栏导航项：切到「所有笔记」以外的视图时清掉标签筛选，两个筛选不该叠加 */
+function setNavFilter(f: NavFilter) {
+  state.navFilter = f
+  if (f !== 'all') state.activeTag = null
+}
+
+function setSearchQuery(q: string) {
+  state.searchQuery = q
+}
+
+function toggleOutline() {
+  state.outline = !state.outline
+  localStorage.setItem('nota-outline', state.outline ? '1' : '0')
+}
+
 /** 自动保存开关 */
 function setAutoSave(v: boolean) {
   state.autoSave = v
@@ -252,6 +357,9 @@ function setAutoSave(v: boolean) {
 function initPrefs() {
   state.autoSave = localStorage.getItem('nota-autosave') !== '0'
   state.sidebar = localStorage.getItem('nota-sidebar') !== '0'
+  state.outline = localStorage.getItem('nota-outline') !== '0'
+  const v = localStorage.getItem('nota-view')
+  if (v === 'write' || v === 'split' || v === 'read') state.viewMode = v
 }
 
 function setTheme(t: 'light' | 'dark') {
@@ -279,6 +387,9 @@ export const store = {
   state,
   dirty,
   activeName,
+  allFiles,
+  navCounts,
+  visibleTree,
   allTags,
   openWorkspace,
   refreshTree,
@@ -297,6 +408,10 @@ export const store = {
   autoExpand,
   exportNote,
   toggleSidebar,
+  setViewMode,
+  setNavFilter,
+  setSearchQuery,
+  toggleOutline,
   setAutoSave,
   initPrefs,
 }

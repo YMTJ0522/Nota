@@ -15,12 +15,33 @@ import http from 'node:http'
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { purgeStale, removeProfile } from './tmp-profiles.mjs'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const distDir = path.join(root, 'dist')
 const PORT = 4197
 const EDGE = 'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe'
 const PROFILE = path.join(root, `.tmp-cdp-verify-${Date.now()}`)
+
+const CDP_PORT = 9300 + (Date.now() % 300)
+
+/**
+ * 等上一个实例把调试端口彻底放开。
+ *
+ * 同一份脚本背靠背跑两次时，上一个 Edge 还没死干净，新实例会连到旧浏览器上，
+ * 读到的还是那个已经被关掉的页面 —— 表现出来就是一堆莫名其妙的 FAIL。
+ */
+async function waitPortFree(port) {
+  for (let i = 0; i < 40; i++) {
+    try {
+      await fetch('http://127.0.0.1:' + port + '/json/version')
+      await new Promise((r) => setTimeout(r, 500))
+    } catch {
+      return
+    }
+  }
+}
+
 
 const MIME = {
   '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css',
@@ -36,16 +57,22 @@ const server = http.createServer((req, res) => {
 })
 await new Promise((r) => server.listen(PORT, '127.0.0.1', r))
 
+// 开跑前先把上一轮的残留清掉（依赖退出时序去删，几乎一定会撞 EBUSY）
+const purged = purgeStale()
+if (purged.removed || purged.skipped) console.log('[tmp] 清掉过期 profile:', JSON.stringify(purged))
+
+await waitPortFree(CDP_PORT)
+
 const edge = spawn(EDGE, [
   '--headless=new', '--disable-gpu', '--no-first-run', '--no-default-browser-check',
-  '--remote-debugging-port=9347', `--user-data-dir=${PROFILE}`,
+  "--remote-debugging-port=" + CDP_PORT, `--user-data-dir=${PROFILE}`,
   '--window-size=1400,900', 'about:blank',
 ], { stdio: 'ignore' })
 
 async function pageTarget() {
   for (let i = 0; i < 60; i++) {
     try {
-      const r = await fetch('http://127.0.0.1:9347/json/list')
+      const r = await fetch(`http://127.0.0.1:${CDP_PORT}/json/list`)
       const list = await r.json()
       const p = list.find((t) => t.type === 'page')
       if (p) return p
@@ -324,14 +351,25 @@ const settings = await evaluate(`(async () => {
   if (s) s.click()
   await new Promise(r => setTimeout(r, 400))
   const dlg = document.querySelector('.st')
-  const switches = dlg ? dlg.querySelectorAll('.st-switch').length : 0
+  const nav = document.querySelector('.st-nav')
   const themeBtns = dlg ? dlg.querySelectorAll('.st-seg-btn').length : 0
+  const sect = [...document.querySelectorAll('.st-nav-item .st-nav-label')].map(e => e.textContent.trim())
+  // 切到「编辑器」页，那里才是开关所在
+  const editorTab = [...document.querySelectorAll('.st-nav-item')].find(b => b.textContent.includes('编辑器'))
+  editorTab?.click()
+  await new Promise(r => setTimeout(r, 300))
+  const switches = dlg ? dlg.querySelectorAll('.st-switch').length : 0
   const x = document.querySelector('.st-x')
   if (x) x.click()
   await new Promise(r => setTimeout(r, 250))
-  return { present: !!dlg, switches, themeBtns, closed: !document.querySelector('.st') }
+  return { present: !!dlg, switches, themeBtns, horizontal: !!nav, sect, closed: !document.querySelector('.st') }
 })()`)
-ok('9.设置面板', settings.present && settings.switches >= 2 && settings.themeBtns === 2 && settings.closed, settings)
+ok(
+  '9.设置面板',
+  settings.present && settings.horizontal && settings.switches >= 3 &&
+    settings.themeBtns === 2 && settings.sect.length === 8 && settings.closed,
+  settings,
+)
 await viewAlive('after-9')
 
 /* ── 10. 图片能加载（media widget 出现 + src 正确）── */
@@ -353,18 +391,23 @@ const media = await evaluate(`(async () => {
   if (!v) return { err: 'no view' }
   v.dispatch({ changes: { from: 0, to: v.state.doc.length,
     insert: '# 标题\\n\\n![示例](attachments/pic.png)\\n' } })
-  await new Promise(r => setTimeout(r, 900))
-  const w = document.querySelector('.cm-md-media')
-  const img = w ? w.querySelector('img') : null
+  await new Promise(r => setTimeout(r, 300))
+  // 编辑模式不再渲染图片缩略图，图片只在预览区出现——
+  // 所以这里切到分栏，去预览里查 <img> 有没有换成可加载的 URL
+  const split = [...document.querySelectorAll('.ph-seg-btn')].find(b => (b.getAttribute('title')||'').includes('分栏'))
+  split?.click()
+  await new Promise(r => setTimeout(r, 1400))
+  const img = document.querySelector('.preview img')
+  const thumb = document.querySelectorAll('.cm-md-media').length
   return {
-    widget: !!w,
     src: img ? img.getAttribute('src') : null,
-    isPending: w ? w.classList.contains('is-pending') : null,
+    previewHasImg: !!img,
+    editorThumbCount: thumb,
   }
 })()`)
 ok(
-  '10.图片可加载',
-  media.widget && media.src && media.src.startsWith('nota-media://'),
+  '10.图片在预览区可加载',
+  media.previewHasImg && media.src && media.src.startsWith('nota-media://') && media.editorThumbCount === 0,
   media,
 )
 
@@ -377,4 +420,5 @@ console.log(failed.length === 0 ? 'ALL PASS' : 'FAILED: ' + failed.join(', '))
 ws.close()
 edge.kill()
 server.close()
+removeProfile(PROFILE)
 process.exit(failed.length === 0 ? 0 : 1)

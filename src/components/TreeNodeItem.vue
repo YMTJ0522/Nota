@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { ref, nextTick } from 'vue'
-import { Trash2 } from 'lucide-vue-next'
+import { ref, nextTick, computed } from 'vue'
+import { ChevronRight, FileText, Folder, FolderOpen, Trash2 } from 'lucide-vue-next'
 import { store } from '@/store'
 import type { TreeNode } from '@/store'
 import ConfirmDialog from '@/components/ConfirmDialog.vue'
@@ -8,7 +8,7 @@ import ConfirmDialog from '@/components/ConfirmDialog.vue'
 const props = defineProps<{ node: TreeNode; depth?: number }>()
 const { state } = store
 
-const depth = props.depth ?? 0
+const depth = computed(() => props.depth ?? 0)
 const nameInput = ref<HTMLInputElement | null>(null)
 
 /** 删除确认弹窗：先记下要删的路径，等用户点确认才真删 */
@@ -23,17 +23,9 @@ async function doDelete() {
   await store.removeNote(props.node.path)
 }
 
-function isOpen() {
-  return !!state.expanded[props.node.path]
-}
-
-function isActive() {
-  return state.activePath === props.node.path
-}
-
-function displayName() {
-  return props.node.name.replace(/\.md$/i, '')
-}
+const isOpen = computed(() => !!state.expanded[props.node.path])
+const isActive = computed(() => state.activePath === props.node.path)
+const displayName = computed(() => props.node.name.replace(/\.md$/i, ''))
 
 async function onRenameCommit(e: Event) {
   const val = (e.target as HTMLInputElement).value
@@ -58,24 +50,19 @@ function onKey(e: KeyboardEvent) {
   <li>
     <!-- 目录 -->
     <template v-if="node.type === 'dir'">
-      <button class="row" :style="{ paddingLeft: 8 + depth * 12 + 'px' }" @click="store.toggleDir(node.path)">
-        <svg
-          class="chev"
-          :class="{ open: isOpen() }"
-          width="12"
-          height="12"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          stroke-width="2.2"
-          stroke-linecap="round"
-          stroke-linejoin="round"
-        >
-          <path d="M9 6l6 6-6 6" />
-        </svg>
+      <button
+        class="row dir"
+        :style="{ paddingLeft: 4 + depth * 13 + 'px' }"
+        @click="store.toggleDir(node.path)"
+      >
+        <ChevronRight class="chev" :class="{ open: isOpen }" :size="12" :stroke-width="2.2" />
+        <span class="ico">
+          <FolderOpen v-if="isOpen" :size="14" :stroke-width="1.9" />
+          <Folder v-else :size="14" :stroke-width="1.9" />
+        </span>
         <span class="name dir">{{ node.name }}</span>
       </button>
-      <ul v-show="isOpen()" class="list">
+      <ul v-show="isOpen" class="list">
         <TreeNodeItem v-for="c in node.children" :key="c.path" :node="c" :depth="depth + 1" />
       </ul>
     </template>
@@ -86,22 +73,27 @@ function onKey(e: KeyboardEvent) {
         v-if="state.renaming === node.path"
         ref="nameInput"
         class="rename"
-        :value="displayName()"
+        :value="displayName"
         @blur="onRenameCommit"
         @keydown="onKey"
       />
       <button
         v-else
-        class="row"
-        :class="{ active: isActive() }"
-        :style="{ paddingLeft: 8 + depth * 12 + 18 + 'px' }"
+        class="row file"
+        :class="{ active: isActive }"
+        :style="{ paddingLeft: 4 + depth * 13 + 'px' }"
         @click="store.openNote(node.path)"
         @dblclick="startRename"
       >
-        <span class="name">{{ displayName() }}</span>
+        <span class="chev-slot" />
+        <span class="ico">
+          <FileText :size="14" :stroke-width="1.9" />
+        </span>
+        <span class="name">{{ displayName }}</span>
+        <span v-if="node.starred" class="star">★</span>
       </button>
       <button class="del" title="删除笔记" @click.stop="askDelete">
-        <Trash2 :size="16" :stroke-width="1.9" />
+        <Trash2 :size="15" :stroke-width="1.9" />
       </button>
 
       <!-- 删除前先确认一次，避免误点把笔记删掉。
@@ -109,7 +101,7 @@ function onKey(e: KeyboardEvent) {
       <ConfirmDialog
         :open="confirmOpen"
         title="删除这篇笔记？"
-        :message="`「${displayName()}」将被移到系统回收站。`"
+        :message="`「${displayName}」将被移到系统回收站。`"
         confirm-text="删除"
         danger
         @confirm="doDelete"
@@ -136,27 +128,34 @@ function onKey(e: KeyboardEvent) {
   width: 100%;
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 6px;
   height: 28px;
   padding-right: 8px;
-  border-radius: var(--n-r-sm);
+  border-radius: var(--n-r-md);
   color: var(--n-fg-dim);
   text-align: left;
   transition: background var(--n-dur) var(--n-ease), color var(--n-dur) var(--n-ease);
 }
 
 .row:hover {
-  background: var(--n-bg);
+  background: var(--n-raised);
   color: var(--n-fg);
 }
 
 .row.active {
   background: var(--n-accent-soft);
+  color: var(--n-fg);
+}
+
+.row.active .ico {
   color: var(--n-accent);
 }
 
 .chev {
   flex: none;
+  fill: none;
+  stroke: currentColor;
+  color: var(--n-fg-faint);
   transition: transform var(--n-dur) var(--n-ease);
 }
 
@@ -164,8 +163,28 @@ function onKey(e: KeyboardEvent) {
   transform: rotate(90deg);
 }
 
+/* 文件行没有折叠箭头，用一个同宽的占位把图标对齐到目录的图标列 */
+.chev-slot {
+  flex: none;
+  width: 12px;
+}
+
+.ico {
+  flex: none;
+  display: inline-flex;
+  color: var(--n-fg-faint);
+  transition: color var(--n-dur) var(--n-ease);
+}
+
+.ico svg {
+  fill: none;
+  stroke: currentColor;
+}
+
 .name {
-  font-size: 13px;
+  flex: 1;
+  min-width: 0;
+  font-size: 12.5px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -174,6 +193,12 @@ function onKey(e: KeyboardEvent) {
 .name.dir {
   font-weight: 500;
   color: var(--n-fg);
+}
+
+.star {
+  flex: none;
+  font-size: 10px;
+  color: var(--n-warn);
 }
 
 .del {
@@ -186,7 +211,9 @@ function onKey(e: KeyboardEvent) {
   justify-content: center;
   border-radius: var(--n-r-sm);
   color: var(--n-fg-dim);
+  background: var(--n-raised);
   opacity: 0;
+  pointer-events: none;
   transition: opacity var(--n-dur) var(--n-ease), color var(--n-dur) var(--n-ease),
     background var(--n-dur) var(--n-ease);
 }
@@ -198,6 +225,7 @@ function onKey(e: KeyboardEvent) {
 
 .rowwrap:hover .del {
   opacity: 1;
+  pointer-events: auto;
 }
 
 .del:hover {
@@ -209,10 +237,11 @@ function onKey(e: KeyboardEvent) {
   width: 100%;
   height: 28px;
   padding: 0 8px;
-  font-size: 13px;
+  font-size: 12.5px;
   border: 1px solid var(--n-accent);
   border-radius: var(--n-r-sm);
   background: var(--n-raised);
+  color: var(--n-fg);
   outline: none;
 }
 </style>

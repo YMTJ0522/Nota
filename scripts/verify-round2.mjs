@@ -17,12 +17,33 @@ import http from 'node:http'
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { purgeStale, removeProfile } from './tmp-profiles.mjs'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const distDir = path.join(root, 'dist')
 const PORT = 4291
 const EDGE = 'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe'
 const PROFILE = path.join(root, `.tmp-cdp-round2-${Date.now()}`)
+
+const CDP_PORT = 9300 + (Date.now() % 300)
+
+/**
+ * 等上一个实例把调试端口彻底放开。
+ *
+ * 同一份脚本背靠背跑两次时，上一个 Edge 还没死干净，新实例会连到旧浏览器上，
+ * 读到的还是那个已经被关掉的页面 —— 表现出来就是一堆莫名其妙的 FAIL。
+ */
+async function waitPortFree(port) {
+  for (let i = 0; i < 40; i++) {
+    try {
+      await fetch('http://127.0.0.1:' + port + '/json/version')
+      await new Promise((r) => setTimeout(r, 500))
+    } catch {
+      return
+    }
+  }
+}
+
 const MIME = { '.html':'text/html', '.js':'text/javascript', '.css':'text/css', '.svg':'image/svg+xml', '.png':'image/png', '.woff2':'font/woff2' }
 
 const server = http.createServer((req, res) => {
@@ -34,13 +55,19 @@ const server = http.createServer((req, res) => {
 })
 await new Promise((r) => server.listen(PORT, '127.0.0.1', r))
 
+// 开跑前先把上一轮的残留清掉（依赖退出时序去删，几乎一定会撞 EBUSY）
+const purged = purgeStale()
+if (purged.removed || purged.skipped) console.log('[tmp] 清掉过期 profile:', JSON.stringify(purged))
+
+await waitPortFree(CDP_PORT)
+
 const edge = spawn(EDGE, ['--headless=new','--disable-gpu','--no-first-run','--no-default-browser-check',
-  '--remote-debugging-port=9361', `--user-data-dir=${PROFILE}`, '--window-size=1400,900', 'about:blank'], { stdio:'ignore' })
+  "--remote-debugging-port=" + CDP_PORT, `--user-data-dir=${PROFILE}`, '--window-size=1400,900', 'about:blank'], { stdio:'ignore' })
 
 async function pageTarget() {
   for (let i = 0; i < 60; i++) {
     try {
-      const r = await fetch('http://127.0.0.1:9361/json/list')
+      const r = await fetch(`http://127.0.0.1:${CDP_PORT}/json/list`)
       const list = await r.json()
       const p = list.find((t) => t.type === 'page'); if (p) return p
     } catch {}
@@ -164,24 +191,18 @@ await new Promise((r) => setTimeout(r, 900))
 await evaluate("(() => { const el = document.querySelector('.tree .row'); if (el) el.click(); return !!el })()")
 await new Promise((r) => setTimeout(r, 1800))
 
-/* ── 1. 编辑区富块 ── */
+/* ── 1. 编辑区是纯编辑（本轮起，富块只在预览区渲染） ── */
 const rich = await stable(`(() => ({
-  callout: document.querySelectorAll('.cm-rich-callout').length,
-  calloutType: document.querySelector('.cm-rich-callout')?.dataset.type ?? null,
-  details: document.querySelectorAll('.cm-rich-details').length,
-  tabs: document.querySelectorAll('.cm-rich-tabs').length,
-  tabCount: document.querySelectorAll('.cm-rich-tab').length,
-  mermaid: document.querySelectorAll('.cm-rich-mermaid').length,
-  mermaidSvg: !!document.querySelector('.cm-rich-mermaid svg'),
-  table: document.querySelectorAll('.cm-rich-table').length,
-  tableCols: document.querySelectorAll('.cm-rich-table thead th').length,
   editorCount: document.querySelectorAll('.cm-editor').length,
-  allBlocks: [...document.querySelectorAll('.cm-rich')].map((e) => e.className),
+  richCards: document.querySelectorAll('.cm-rich, .pv-callout, .pv-tabs, .pv-mermaid, .pv-details').length,
+  mediaThumb: document.querySelectorAll('.cm-md-media').length,
+  preview: document.querySelectorAll('.preview').length,
+  lines: window.__notaView ? window.__notaView.state.doc.lines : 0,
 }))()`)
 ok(
-  '1.编辑区富块卡片',
-  rich.callout === 1 && rich.details === 1 && rich.tabs === 1 && rich.tabCount === 2 &&
-    rich.mermaid === 1 && rich.table === 1 && rich.tableCols === 2,
+  '1.编辑区是纯编辑',
+  rich.editorCount === 1 && rich.richCards === 0 && rich.mediaThumb === 0 &&
+    rich.preview === 0 && rich.lines > 10,
   rich,
 )
 
@@ -301,7 +322,7 @@ ok(
 const headBtns = await evaluate(`(() => {
   const head = document.querySelector('.panel .head')
   if (!head) return { err: 'no head' }
-  const btns = [...head.querySelectorAll('.mini')].map(b => b.getAttribute('title'))
+  const btns = [...head.querySelectorAll('.mini')].map(b => b.getAttribute('data-tip'))
   return { btns, hasCollapse: btns.some(t => (t || '').includes('收起侧边栏')),
            hasFolder: btns.some(t => (t || '').includes('新建文件夹')) }
 })()`)
@@ -326,7 +347,8 @@ ok('7.标签区', tags.count === 2 && tags.chips.some(t => t.startsWith('日记'
 
 /* ── 8. 新建文件夹 ── */
 const folder = await evaluate(`(async () => {
-  const btn = [...document.querySelectorAll('.panel .head .mini')].find(b => (b.getAttribute('title')||'').includes('新建文件夹'))
+  const btn = [...document.querySelectorAll('.panel .head .mini, .panel .sec-add')]
+    .find(b => (b.getAttribute('data-tip')||'').includes('新建文件夹'))
   if (!btn) return { err: 'no folder btn' }
   btn.click()
   await new Promise(r => setTimeout(r, 300))
@@ -375,4 +397,5 @@ const failed = Object.entries(out).filter(([, v]) => !v.pass).map(([k]) => k)
 console.log(failed.length === 0 ? 'ALL PASS' : 'FAILED: ' + failed.join(', '))
 
 ws.close(); edge.kill(); server.close()
+removeProfile(PROFILE)
 process.exit(failed.length === 0 ? 0 : 1)

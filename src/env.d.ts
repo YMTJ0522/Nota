@@ -40,9 +40,16 @@ interface TreeNode {
   children?: TreeNode[]
   /** 仅文件：从 frontmatter 里摘出来的标签 */
   tags?: string[]
+  /** 仅文件：最后修改时间（毫秒） */
+  mtime?: number
+  /** 仅文件：frontmatter 里 star: true */
+  starred?: boolean
 }
 
 declare global {
+  /** 由 vite.config.ts 的 define 注入，值取自 package.json */
+  const __APP_VERSION__: string
+
   interface Window {
     api: NoteApi
   }

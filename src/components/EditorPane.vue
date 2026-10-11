@@ -10,7 +10,8 @@ import {
   Eye,
   Check,
   Loader2,
-  PanelLeft,
+  ListTree,
+  PanelRightClose,
 } from 'lucide-vue-next'
 import { store } from '@/store'
 import { baseExtensions } from '@/editor/setup'
@@ -18,12 +19,18 @@ import { notaThemeExtensions } from '@/editor/theme'
 import { countWords, formatWordCount } from '@/editor/word-count'
 import { createSlashCommandsExtension } from '@/editor/slash-commands'
 import type { SlashMenuRenderState, SlashCommandId } from '@/editor/slash-commands'
-import { setMediaBase } from '@/editor/media-preview'
-import { enhancePreview, renderMermaidInHtml } from '@/editor/preview-rich'
+import {
+  enhancePreview,
+  renderMermaidInHtml,
+  renderMathInHtml,
+  stripFrontMatter,
+} from '@/editor/preview-rich'
+import type { HeadingItem } from '@/editor/preview-rich'
 import { highlightCode, langFromClass } from '@/editor/highlight-code'
 import Toolbar from '@/components/Toolbar.vue'
 import SlashMenu from '@/components/SlashMenu.vue'
 import HeaderMenu from '@/components/HeaderMenu.vue'
+import EditorOutline from '@/components/EditorOutline.vue'
 import {
   toolbarInline,
   toolbarWrap,
@@ -50,12 +57,13 @@ import {
 const { state } = store
 
 const host = ref<HTMLDivElement | null>(null)
-/** 预览容器：mermaid 要在 DOM 挂载后往里填 SVG */
+/** 预览容器：既是正文容器，也是大纲的滚动参考；mermaid 也要在 DOM 挂载后往里填 SVG */
 const previewRef = ref<HTMLDivElement | null>(null)
-/** 视图模式：编辑 / 分栏 / 预览（对齐 inkstone 的三段式切换） */
-type ViewMode = 'write' | 'split' | 'read'
-const mode = ref<ViewMode>('write')
+/** 视图模式放在 store 里，切换后重启应用也保持 */
+const mode = computed(() => state.viewMode)
 const html = ref('')
+/** 预览渲染出的标题列表，交给右侧大纲 */
+const headings = ref<HeadingItem[]>([])
 const slash = ref<SlashMenuRenderState | null>(null)
 
 /** 编辑区是否可见 / 预览区是否可见，由模式派生 */
@@ -97,9 +105,9 @@ function onTitleKey(e: KeyboardEvent) {
 /** 快捷键 Ctrl+1/2/3 切视图，和多数编辑器一致 */
 function onViewKey(e: KeyboardEvent) {
   if (!(e.ctrlKey || e.metaKey) || e.shiftKey || e.altKey) return
-  if (e.key === '1') { e.preventDefault(); mode.value = 'write' }
-  else if (e.key === '2') { e.preventDefault(); mode.value = 'split' }
-  else if (e.key === '3') { e.preventDefault(); mode.value = 'read' }
+  if (e.key === '1') { e.preventDefault(); store.setViewMode('write') }
+  else if (e.key === '2') { e.preventDefault(); store.setViewMode('split') }
+  else if (e.key === '3') { e.preventDefault(); store.setViewMode('read') }
 }
 
 let view: EditorView | null = null
@@ -138,16 +146,21 @@ async function render() {
     markedMod = await import('marked')
     markedMod.marked.setOptions({ gfm: true, breaks: true })
   }
-  const raw = markedMod.marked.parse(state.draft, { async: false }) as string
+  const raw = markedMod.marked.parse(stripFrontMatter(state.draft), { async: false }) as string
   // 先补高亮与媒体路径，再做富块增强——顺序有讲究：
   // 富块会重新包裹 HTML 结构，先高亮能保证代码块（含 mermaid）已被标记成 language-*。
   const lit = await highlightFences(raw)
   const media = await resolveMediaInHtml(lit)
-  html.value = enhancePreview(media)
-  // mermaid 是异步画图，等 DOM 挂上再填
+  const enhanced = enhancePreview(media)
+  html.value = enhanced.html
+  headings.value = enhanced.headings
+  // 异步填料的两种「重资产」：mermaid 画图、katex 排公式
   await nextTick()
   const pane = previewRef.value
-  if (pane) void renderMermaidInHtml(pane)
+  if (pane) {
+    void renderMathInHtml(pane)
+    void renderMermaidInHtml(pane)
+  }
 }
 
 /**
@@ -287,9 +300,6 @@ function onToolbarToast(text: string) {
 function createEditor() {
   if (!host.value) return
 
-  // 告诉媒体小部件当前工作区根目录，它才能把 attachments/x.png 换算成可加载的 URL
-  setMediaBase(state.root ?? '')
-
   const extensions = [
     ...baseExtensions({
       placeholder: '开始写点什么… / 唤出命令',
@@ -341,6 +351,7 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   if (timer) clearTimeout(timer)
+  if (previewTimer) clearTimeout(previewTimer)
   view?.destroy()
   view = null
   ;(window as unknown as { __notaView?: EditorView | null }).__notaView = null
@@ -361,7 +372,8 @@ watch(
 )
 
 // 阅读模式：销毁编辑器省内存；回到编辑/分栏再重建。
-// 分栏模式两边都要在，所以只有纯预览才销毁。
+// 注意先判空——从「分栏」切回「编辑」时编辑器还在，
+// 再 createEditor() 会把第二个实例叠进同一个容器，页面上就会出现两套编辑器。
 watch(mode, async (m) => {
   if (m === 'read') {
     view?.destroy()
@@ -369,10 +381,26 @@ watch(mode, async (m) => {
     await render()
   } else {
     await nextTick()
-    createEditor()
-    pushDoc(state.draft)
+    if (!view) {
+      createEditor()
+      pushDoc(state.draft)
+    }
+    await render()
   }
 })
+
+/* 边写边看：分栏/阅读下正文一变就重排预览。
+   180ms 防抖——低于这个值每敲一个字都要重新解析整篇，
+   长文里会明显掉帧；高于这个值又会觉得预览"跟不上手"。 */
+let previewTimer: ReturnType<typeof setTimeout> | null = null
+watch(
+  () => state.draft,
+  () => {
+    if (mode.value === 'write') return
+    if (previewTimer) clearTimeout(previewTimer)
+    previewTimer = setTimeout(() => void render(), 180)
+  },
+)
 
 /** 工具栏调用入口：把 EditorView 暴露给子组件 */
 defineExpose({ getView: () => view })
@@ -395,15 +423,6 @@ defineExpose({ getView: () => view })
       />
 
       <div class="ph-right">
-        <!-- 侧栏开关放在最左，和「内容区」的操作分开 -->
-        <button
-          class="ph-icon"
-          :title="state.sidebar ? '隐藏侧边栏' : '显示侧边栏'"
-          @click="store.toggleSidebar()"
-        >
-          <PanelLeft :size="14" :stroke-width="1.9" />
-        </button>
-
         <span class="ph-stat">{{ statText }}</span>
 
         <!-- 保存状态：图标 + 文案，比一个圆点说得更清楚 -->
@@ -417,6 +436,18 @@ defineExpose({ getView: () => view })
         <!-- 导出 / 版本历史 / 设置 -->
         <HeaderMenu />
 
+        <!-- 大纲开关：只在有预览的时候才有意义 -->
+        <button
+          v-if="showPreview"
+          class="ph-icon"
+          :class="{ on: state.outline }"
+          :title="state.outline ? '隐藏大纲' : '显示大纲'"
+          @click="store.toggleOutline()"
+        >
+          <PanelRightClose v-if="state.outline" :size="14" :stroke-width="1.9" />
+          <ListTree v-else :size="14" :stroke-width="1.9" />
+        </button>
+
         <!-- 视图切换：编辑 / 分栏 / 预览 -->
         <div class="ph-seg" role="radiogroup" aria-label="视图模式">
           <button
@@ -426,7 +457,7 @@ defineExpose({ getView: () => view })
             aria-label="编辑模式 (Ctrl+1)"
             title="编辑模式 (Ctrl+1)"
             :class="{ on: mode === 'write' }"
-            @click="mode = 'write'"
+            @click="store.setViewMode('write')"
           >
             <Pencil :size="12.5" :stroke-width="1.9" />
           </button>
@@ -437,7 +468,7 @@ defineExpose({ getView: () => view })
             aria-label="分栏视图 (Ctrl+2)"
             title="分栏视图 (Ctrl+2)"
             :class="{ on: mode === 'split' }"
-            @click="mode = 'split'"
+            @click="store.setViewMode('split')"
           >
             <Columns2 :size="12.5" :stroke-width="1.9" />
           </button>
@@ -448,7 +479,7 @@ defineExpose({ getView: () => view })
             aria-label="阅读模式 (Ctrl+3)"
             title="阅读模式 (Ctrl+3)"
             :class="{ on: mode === 'read' }"
-            @click="mode = 'read'"
+            @click="store.setViewMode('read')"
           >
             <Eye :size="12.5" :stroke-width="1.9" />
           </button>
@@ -468,7 +499,14 @@ defineExpose({ getView: () => view })
         ref="host"
         class="host"
       />
-      <div v-if="showPreview" ref="previewRef" class="preview" v-html="html" />
+      <div v-if="showPreview" class="pvw">
+        <div ref="previewRef" class="preview" v-html="html" />
+        <EditorOutline
+          v-if="state.outline"
+          :headings="headings"
+          :scroller="previewRef"
+        />
+      </div>
 
       <SlashMenu
         v-if="slash && mode === 'write'"
@@ -565,6 +603,11 @@ defineExpose({ getView: () => view })
 .ph-icon:hover {
   background: var(--n-raised);
   color: var(--n-fg);
+}
+
+.ph-icon.on {
+  background: var(--n-accent-soft);
+  color: var(--n-accent);
 }
 
 /* ── 保存状态 ──
@@ -674,9 +717,8 @@ defineExpose({ getView: () => view })
   flex-direction: row;
 }
 
-/* 纯编辑 / 纯预览：单栏占满 */
-.stage[data-layout='write'] .host,
-.stage[data-layout='read'] .preview {
+/* 纯编辑：单栏占满 */
+.stage[data-layout='write'] .host {
   width: 100%;
 }
 
@@ -687,9 +729,13 @@ defineExpose({ getView: () => view })
   border-right: 1px solid var(--n-line);
 }
 
-.stage[data-layout='split'] .preview {
+/* 预览侧：正文 + 右侧大纲并排。
+   大纲是预览的附属信息，放在同一个滚动上下文之外，各自滚各自的。 */
+.pvw {
   flex: 1 1 50%;
   min-width: 0;
+  display: flex;
+  flex-direction: row;
 }
 
 .host {
@@ -942,6 +988,18 @@ defineExpose({ getView: () => view })
 .preview :deep(.pv-details > *:not(summary)) {
   padding: 0 12px;
 }
+.preview :deep(.pv-details-body) {
+  padding: 2px 12px;
+}
+.preview :deep(.pv-details-body > :first-child) {
+  margin-top: 0.6em;
+}
+.preview :deep(.pv-details-body > :last-child) {
+  margin-bottom: 0.6em;
+}
+.preview :deep(.pv-details > summary)::marker {
+  color: var(--n-fg-faint);
+}
 
 .preview :deep(.pv-tabs) {
   margin: 1em 0;
@@ -1002,6 +1060,48 @@ defineExpose({ getView: () => view })
   font-family: var(--n-font-mono);
   font-size: 0.84em;
 }
+/* ── 高亮与公式 ── */
+.preview :deep(.pv-mark) {
+  padding: 0.08em 0.15em;
+  border-radius: 3px;
+  color: var(--n-fg);
+  background: var(--n-mark);
+}
+
+/* 未渲染完成时先按等宽源码展示，避免一片空白让人以为丢了内容 */
+.preview :deep(.pv-math-block) {
+  margin: 1.1em 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  font-family: var(--n-font-mono);
+  font-size: 0.92em;
+  color: var(--n-fg-dim);
+}
+
+.preview :deep(.pv-math:not(.is-rendered)) {
+  font-family: var(--n-font-mono);
+  font-size: 0.92em;
+  color: var(--n-fg-dim);
+}
+
+.preview :deep(.pv-math.is-error),
+.preview :deep(.pv-math-block.is-error) {
+  color: var(--n-danger);
+}
+
+/* KaTeX 自带浅色，深色主题下要把公式本身和 $-符号一起翻过来 */
+.preview :deep(.katex) {
+  font-size: 1.02em;
+  color: var(--n-fg);
+}
+
+.preview :deep(.katex-display) {
+  margin: 0;
+  padding: 0.3em 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+
 .preview :deep(.pv-table-wrap) {
   overflow-x: auto;
   margin: 1em 0;

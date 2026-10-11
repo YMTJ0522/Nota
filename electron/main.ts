@@ -115,7 +115,8 @@ ipcMain.handle('workspace:pick', async () => {
 // 顺带把每篇笔记 frontmatter 里的 tags 摘出来挂在节点上，
 // 这样侧栏的标签筛选不用再为每个文件单独发一次 IPC。
 ipcMain.handle('workspace:tree', async (_e, root: string) => {
-  async function readTags(file: string): Promise<string[]> {
+  async function readMeta(file: string): Promise<{ tags: string[]; starred: boolean }> {
+    const empty = { tags: [] as string[], starred: false }
     try {
       // 只读文件头部：frontmatter 一定在最前面，不必整篇读进来
       const fd = await fs.open(file, 'r')
@@ -124,7 +125,7 @@ ipcMain.handle('workspace:tree', async (_e, root: string) => {
         const { bytesRead } = await fd.read(buf, 0, 2048, 0)
         const head = buf.subarray(0, bytesRead).toString('utf-8')
         const m = head.match(/^---\r?\n([\s\S]*?)\r?\n---/)
-        if (!m) return []
+        if (!m) return empty
         const tags: string[] = []
         // inline 形式：tags: [a, b]
         const inline = m[1].match(/^tags:\s*\[([^\]]*)\]/m)
@@ -145,12 +146,13 @@ ipcMain.handle('workspace:tree', async (_e, root: string) => {
             if (v) tags.push(v)
           }
         }
-        return [...new Set(tags)]
+        const star = /^(star|starred|favorite|favourite):\s*(true|yes|1)\s*$/im.test(m[1])
+        return { tags: [...new Set(tags)], starred: star }
       } finally {
         await fd.close()
       }
     } catch {
-      return []
+      return empty
     }
   }
 
@@ -175,7 +177,21 @@ ipcMain.handle('workspace:tree', async (_e, root: string) => {
           children: await walk(full, depth + 1),
         })
       } else if (e.name.toLowerCase().endsWith('.md')) {
-        nodes.push({ type: 'file', name: e.name, path: full, tags: await readTags(full) })
+        const meta = await readMeta(full)
+        let mtime = 0
+        try {
+          mtime = (await fs.stat(full)).mtimeMs
+        } catch {
+          mtime = 0
+        }
+        nodes.push({
+          type: 'file',
+          name: e.name,
+          path: full,
+          tags: meta.tags,
+          starred: meta.starred,
+          mtime,
+        })
       }
     }
     // 目录在前，文件在后，各自按名称排序

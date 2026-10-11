@@ -69,22 +69,120 @@ function transformMermaid(src: string): string {
   )
 }
 
+/* ── 容器块：`:::: tabs` 与 `::: details` ──
+
+   marked 会把「连续几行」合并成一个 `<p>`，行间用 `<br>` 连接，
+   于是工具栏插出来的结构在 HTML 里长这样：
+
+     <p>:::: tabs<br>::: tab-item 标签一</p>
+     <p>第一个标签页的内容。</p>
+     <p>:::<br>::::</p>
+
+   所以不能按「整行等于 `<p>:::: tabs</p>`」去匹配，那样一条都命中不了。
+
+   做法：定位起始段 → 找到「最后一行是结束标记」的那一段 → 把两段之间的
+   **原始 HTML** 整块取出来 → 再按段落拆行、重建结构。
+
+   关键点是取原始 HTML 而不是只收集 `<p>`：标签页里可能放列表、表格、
+   代码块，它们都不是 `<p>`，只认段落会把内容整段吞掉。 */
+
+/** 把一段 HTML 拆成「行」和「整块 HTML」两类；`<br>` 视为换行 */
+function splitRegionBlocks(html: string): { line: boolean; text: string }[] {
+  const out: { line: boolean; text: string }[] = []
+  const pRe = /<p>([\s\S]*?)<\/p>/g
+  let pos = 0
+  let m: RegExpExecArray | null
+  while ((m = pRe.exec(html))) {
+    if (m.index > pos) pushChunk(out, html.slice(pos, m.index))
+    for (const part of m[1].split(/<br\s*\/?>/g)) {
+      out.push({ line: true, text: stripPara(part) })
+    }
+    pos = pRe.lastIndex
+  }
+  if (pos < html.length) pushChunk(out, html.slice(pos))
+  return out
+}
+
+/** 段落之外的内容：有 `<br>` 的当行（它是上一个段落的零头），否则当整块 */
+function pushChunk(out: { line: boolean; text: string }[], raw: string) {
+  const trimmed = raw.trim()
+  if (!trimmed) return
+  if (/<br\s*\/?>/i.test(trimmed) && !/^</.test(trimmed)) {
+    for (const part of trimmed.split(/<br\s*\/?>/g)) {
+      out.push({ line: true, text: stripPara(part) })
+    }
+    return
+  }
+  out.push({ line: false, text: cleanBlock(trimmed) })
+}
+
 /**
- * 分栏标签：`:::: tabs` 整段交给 marked 会变成一堆冒号段落，这里整体改写。
+ * 清掉块里残留的结束标记行。
  *
- * ⚠️ marked 会把**连续的若干行合并成一个 `<p>`，行间用 `<br>` 连接**，
- * 所以真实输出长这样（不是每行一个 `<p>`）：
- *   <p>:::: tabs<br>::: tab-item 标签一</p>
- *   <p>第一个标签的内容</p>
- *   <p>:::<br>::: tab-item 标签二</p>
- *   <p>第二个标签的内容</p>
- *   <p>:::<br>::::</p>
- * 因此这里不能按「整行等于 `<p>:::: tabs</p>`」匹配，会一条都命中不了。
- * 做法：先定位起始段，再逐段向后吃到含 `::::` 的结束段，
- * 只在这几段内部把 `<br>` 还原成换行、拆成结构行来解析。
+ * Markdown 里收尾的 `:::` 若紧跟在前一行后面（中间没空行），marked 会把它
+ * 当成上一段的「懒继续」，塞进同一个块里，例如：
+ *   <li>也可以放 <code>x</code><br>:::</li>
+ * 这时它已经不是一个独立段落，走不到行解析，只能在这里按「紧贴闭合标签的
+ * 冒号尾巴」清掉。
  */
-const TABS_OPEN_AT = /<p>\s*:{4,}\s*tabs\b/i
-const PARA_RE = /<p>[\s\S]*?<\/p>/g
+function cleanBlock(html: string): string {
+  return html.replace(/<br\s*\/?>\s*:{3,4}\s*(?=<\/(?:li|p|ul|ol|div|blockquote)>)/gi, '')
+}
+
+/** 该位置是否落在代码块内部（代码块里的冒号不算结构标记） */
+function insideCode(src: string, index: number): boolean {
+  const before = src.slice(0, index)
+  const opens = (before.match(/<pre\b/gi) || []).length
+  const closes = (before.match(/<\/pre>/gi) || []).length
+  return opens > closes
+}
+
+/**
+ * 找容器的结束位置。
+ *
+ * 结束行未必独占一个 `<p>`：它可能是某个 `<li>` 的最后一行，
+ * 也可能是 `<p>:::<br>::::</p>` 这种「分隔行 + 结束行」挤在一段里的形态。
+ * 所以不按段落找，而是直接扫「紧贴块级闭合标签的冒号行」，
+ * 再把偏移推到那个闭合标签之后。
+ */
+function findContainerEnd(src: string, from: number, colons: number): number {
+  const re = new RegExp(
+    `(?<!:):{${colons}}(?!:)[ \\t]*(?=\\s*<br\\s*\\/?>|\\s*<\\/(?:p|li|ul|ol|div|blockquote|h[1-6]|td|th|section|article)>)`,
+    'g',
+  )
+  re.lastIndex = from
+  let m: RegExpExecArray | null
+  while ((m = re.exec(src))) {
+    if (insideCode(src, m.index)) continue
+    const gt = src.indexOf('>', m.index)
+    if (gt < 0) return -1
+    // 结束行可能落在列表/引用的内部（懒继续），把外层容器的闭合标签一并吃进来，
+    // 否则切出来的片段会带着一个没闭合的 <ul>，拼出去就是坏结构。
+    let end = gt + 1
+    const tailRe = /^\s*(?:<\/(?:ul|ol|div|blockquote|section|article|table)>)+/i
+    for (;;) {
+      const t = tailRe.exec(src.slice(end))
+      if (!t) break
+      end += t[0].length
+    }
+    return end
+  }
+  return -1
+}
+
+/** 剥掉一行首尾残留的段落标签 */
+function stripPara(line: string): string {
+  return line
+    .trim()
+    .replace(/^<\/p>/, '')
+    .replace(/^<p[^>]*>/, '')
+    .replace(/<\/p>$/, '')
+    .trim()
+}
+
+/* ── 分栏标签 ── */
+
+const TABS_OPEN_AT = /<p>\s*:{4,}\s*tabs\b[ \t]*[^<\n]*/i
 
 function transformTabs(src: string): string {
   let out = ''
@@ -94,61 +192,60 @@ function transformTabs(src: string): string {
     const openAt = TABS_OPEN_AT.exec(rest)
     if (!openAt) break
 
-    /* 从起始段开始，逐段向后吃，直到某段末尾出现 `::::` 为止 */
-    const segs: string[] = []
-    let consumed = openAt.index
-    let closed = false
-    PARA_RE.lastIndex = openAt.index
-    let pm: RegExpExecArray | null
-    while ((pm = PARA_RE.exec(rest))) {
-      segs.push(pm[0])
-      consumed = PARA_RE.lastIndex
-      // 结束段特征：`::::` 紧跟在段尾 `</p>` 前（如 `<p>:::<br>::::</p>`）
-      if (segs.length > 1 && /:{4,}\s*(?:<br\s*\/?>)?\s*<\/p>\s*$/.test(pm[0])) {
-        closed = true
-        break
-      }
-    }
-
-    /* 没闭合就当普通文本放过，避免吃掉后面整篇文章 */
-    if (!closed) {
+    const openEnd = rest.indexOf('</p>', openAt.index)
+    if (openEnd < 0) {
       const cut = openAt.index + openAt[0].length
       out += rest.slice(0, cut)
       rest = rest.slice(cut)
       continue
     }
 
+    // 单段写法：起始行和结束行挤在同一个 <p> 里
+    const openPara = rest.slice(openAt.index, openEnd + 4)
+    const end = /<br\s*\/?>\s*:{4,}\s*<\/p>$/i.test(openPara)
+      ? openEnd + 4
+      : findContainerEnd(rest, openEnd + 4, 4)
+
+    // 没闭合就当普通文本放过，避免吃掉后面整篇文章
+    if (end < 0) {
+      out += rest.slice(0, openEnd + 4)
+      rest = rest.slice(openEnd + 4)
+      continue
+    }
+
     out += rest.slice(0, openAt.index)
-    out += buildTabsHtml(segs)
-    rest = rest.slice(consumed)
+    out += buildTabsHtml(rest.slice(openAt.index, end))
+    rest = rest.slice(end)
   }
 
   return out + rest
 }
 
-/** 把若干 `<p>` 段拼成 tabs 结构；失败时返回原始拼接，退化成普通段落 */
-function buildTabsHtml(segs: string[]): string {
+/** 把容器区域拼成 tabs 结构；识别不出标签时原样退回 */
+function buildTabsHtml(region: string): string {
   const tabs: { label: string; body: string[] }[] = []
   let cur: { label: string; body: string[] } | null = null
 
-  for (const seg of segs) {
-    // 段内 `<br>` 才是真正的行分隔，还原成换行后逐行判结构
-    for (const raw of seg.split(/<br\s*\/?>/g)) {
-      const bare = stripPara(raw)
-      if (/^\s*:{4,}\s*tabs\b/i.test(bare)) continue // 起始行
-      if (/^\s*:{4,}\s*$/.test(bare)) continue // 结束行
-      if (/^\s*:{3}\s*$/.test(bare)) continue // tab 之间的分隔 `:::`
-      const item = /^\s*:{3}\s*tab-item\s*(.*)$/i.exec(bare)
-      if (item) {
-        cur = { label: item[1].trim() || `标签 ${tabs.length + 1}`, body: [] }
-        tabs.push(cur)
-        continue
-      }
-      if (cur) cur.body.push(raw.trim())
+  for (const tok of splitRegionBlocks(region)) {
+    if (!tok.line) {
+      if (cur) cur.body.push(tok.text)
+      continue
     }
+    const bare = tok.text.trim()
+    if (/^:{4,}\s*tabs\b/i.test(bare)) continue // 起始行
+    if (/^:{4,}$/.test(bare)) continue // 结束行
+    if (/^:{3}$/.test(bare)) continue // 标签之间的分隔
+    const item = /^:{3}\s*tab-item\s*(.*)$/i.exec(bare)
+    if (item) {
+      cur = { label: item[1].trim() || `标签 ${tabs.length + 1}`, body: [] }
+      tabs.push(cur)
+      continue
+    }
+    if (!bare) continue
+    if (cur) cur.body.push(`<p>${bare}</p>`)
   }
 
-  if (tabs.length === 0) return segs.join('\n')
+  if (tabs.length === 0) return region
 
   const head = tabs
     .map((t, k) => `<span class="pv-tab${k === 0 ? ' on' : ''}">${t.label}</span>`)
@@ -162,24 +259,141 @@ function buildTabsHtml(segs: string[]): string {
   return `<div class="pv-tabs"><div class="pv-tabbar">${head}</div>${panes}</div>`
 }
 
-/**
- * 剥掉一行首尾残留的段落标签。
- *
- * 段被 `<br>` 拆开后，首行会带前导 `<p>`、末行会带尾随 `</p>`，
- * 直接拿去匹配结构行会失败，所以先剥干净。
- */
-function stripPara(line: string): string {
-  return line
-    .trim()
-    .replace(/^<\/p>/, '')
-    .replace(/^<p[^>]*>/, '')
-    .replace(/<\/p>$/, '')
-    .trim()
+/* ── 折叠详情（`::: details 标题` 围栏写法） ── */
+
+const DETAILS_OPEN_AT = /<p>\s*:{3}\s*details\b[ \t]*([^<\n]*)/i
+
+function transformDetailsFence(src: string): string {
+  let out = ''
+  let rest = src
+
+  for (;;) {
+    const openAt = DETAILS_OPEN_AT.exec(rest)
+    if (!openAt) break
+
+    const openEnd = rest.indexOf('</p>', openAt.index)
+    if (openEnd < 0) {
+      const cut = openAt.index + openAt[0].length
+      out += rest.slice(0, cut)
+      rest = rest.slice(cut)
+      continue
+    }
+
+    const title = (openAt[1] ?? '').trim().replace(/^\[\s*\]$/, '')
+    const openPara = rest.slice(openAt.index, openEnd + 4)
+    const end = /<br\s*\/?>\s*:{3}\s*<\/p>$/i.test(openPara)
+      ? openEnd + 4
+      : findContainerEnd(rest, openEnd + 4, 3)
+
+    if (end < 0) {
+      out += rest.slice(0, openEnd + 4)
+      rest = rest.slice(openEnd + 4)
+      continue
+    }
+
+    out += rest.slice(0, openAt.index)
+    out += buildDetailsFenceHtml(rest.slice(openAt.index, end), title)
+    rest = rest.slice(end)
+  }
+
+  return out + rest
 }
 
-/** 折叠详情：补上样式类，并让 summary 可点（原生 details 已支持） */
+function buildDetailsFenceHtml(region: string, title: string): string {
+  const body: string[] = []
+  let first = true
+
+  for (const tok of splitRegionBlocks(region)) {
+    if (!tok.line) {
+      body.push(tok.text)
+      continue
+    }
+    const bare = tok.text.trim()
+    if (first) {
+      first = false
+      continue // 首行就是 `::: details 标题`
+    }
+    if (/^:{3}$/.test(bare)) continue // 结束行
+    if (!bare) continue
+    body.push(`<p>${bare}</p>`)
+  }
+
+  const label = title || '折叠详情'
+  return (
+    `<details class="pv-details"><summary>${label}</summary>` +
+    `<div class="pv-details-body">${body.join('\n')}</div></details>`
+  )
+}
+
+/** 折叠详情的 HTML 写法：补上样式类（原生 details 已支持点击展开） */
 function transformDetails(src: string): string {
   return src.replace(/<details\b/gi, '<details class="pv-details"')
+}
+
+/**
+ * 在「非代码」片段上做替换。
+ *
+ * 行内替换（==高亮==、$公式$）不能碰代码块——代码里的 `$` 和 `==`
+ * 是字面量，改了就把用户的代码改了。按 `<pre>` / `<code>` 切成奇偶段，
+ * 只对偶数段（非代码）执行 fn。
+ */
+function protectCode(html: string, fn: (s: string) => string): string {
+  const parts = html.split(/(<pre\b[\s\S]*?<\/pre>|<code\b[\s\S]*?<\/code>)/gi)
+  return parts.map((p, i) => (i % 2 === 1 ? p : fn(p))).join('')
+}
+
+/** 高亮：`==文字==`（marked 不认这个写法，会原样输出） */
+function transformMark(src: string): string {
+  return protectCode(src, (s) =>
+    s.replace(/==([^=\n]+)==/g, (_w, text: string) => `<mark class="pv-mark">${text}</mark>`),
+  )
+}
+
+/**
+ * 数学公式：先落成带 `data-tex` 的占位，再交给 KaTeX 异步填充。
+ *
+ * 不在这里直接渲染，是因为 katex 连字体有 1MB 量级——
+ * 只在文档里真的出现公式时才动态加载，普通笔记完全不受影响。
+ *
+ * 块级:行内的判定靠 `$` 的个数，而 marked 已经把连续行合并成一段并用
+ * `<br>` 连接，所以块级公式在 HTML 里是 `<p>$$<br>源码<br>$$</p>`，
+ * 不能按「整行以 $$ 开头」去找。
+ */
+const BLOCK_MATH_RE = /<p>\s*\$\$([\s\S]*?)\$\$\s*<\/p>/g
+
+/**
+ * 行内公式。
+ *
+ * 两个守卫是必须的：
+ *   - `$` 后紧跟空白 → 是货币符号（「花了 $100」），不是公式
+ *   - 闭合 `$` 前是空白 → 同上（「$ 100」），否则跨句误吞一大段
+ * `[^$\n]` 限定不能跨行：跨了就把两个互不相干的 `$` 当成一对。
+ */
+const INLINE_MATH_RE = /\$(?![\s$])((?:[^$\n])+?)(?<![\s\\])\$/g
+
+function transformMath(src: string): string {
+  // 整段包进 protectCode：代码里的 $ 是字面量，不该参与公式改写
+  return protectCode(src, (s) => {
+    let out = s.replace(BLOCK_MATH_RE, (_w, body: string) => {
+      const tex = decodeEntities(body).replace(/<br\s*\/?>/g, '\n').trim()
+      return `<div class="pv-math-block" data-tex="${escapeAttr(tex)}">${escapeHtml(tex)}</div>`
+    })
+    out = out.replace(
+      INLINE_MATH_RE,
+      (_w, tex: string) =>
+        `<span class="pv-math" data-tex="${escapeAttr(tex.trim())}">${escapeHtml(tex.trim())}</span>`,
+    )
+    return out
+  })
+}
+
+function decodeEntities(s: string): string {
+  return s
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&amp;/g, '&')
 }
 
 /** 给表格加一层容器，方便统一控制样式与横向滚动 */
@@ -187,15 +401,58 @@ function transformTables(src: string): string {
   return src.replace(/<table>/g, '<div class="pv-table-wrap"><table class="pv-table">').replace(/<\/table>/g, '</table></div>')
 }
 
-/** 按顺序跑完所有预览增强 */
-export function enhancePreview(html: string): string {
+/* ── 标题锚点与目录 ── */
+
+export interface HeadingItem {
+  /** 预览区里对应元素的 id */
+  id: string
+  level: number
+  text: string
+}
+
+/**
+ * 给预览里的 h1~h6 依次挂 id，并回传目录数据。
+ *
+ * 刻意从 HTML 反推而不是另解析一遍 Markdown：setext 标题（下划线式）
+ * 在源码里看不出来，只有渲染后才知道它是不是标题。同一遍扫描保证
+ * 目录项和页面元素严格一一对应，不会出现「点了没反应」。
+ */
+function decorateHeadings(html: string): { html: string; headings: HeadingItem[] } {
+  const headings: HeadingItem[] = []
+  const next = html.replace(
+    /<h([1-6])([^>]*)>([\s\S]*?)<\/h\1>/g,
+    (whole, lvl: string, attrs: string, inner: string) => {
+      const text = inner.replace(/<[^>]+>/g, '').trim()
+      if (/\sid=/.test(attrs)) {
+        const existing = /\sid="([^"]+)"/.exec(attrs)?.[1]
+        if (existing) headings.push({ id: existing, level: Number(lvl), text })
+        return whole
+      }
+      const id = `h-${headings.length}`
+      headings.push({ id, level: Number(lvl), text })
+      return `<h${lvl}${attrs} id="${id}">${inner}</h${lvl}>`
+    },
+  )
+  return { html: next, headings }
+}
+
+/** 按顺序跑完所有预览增强，并顺带产出目录数据 */
+export function enhancePreview(html: string): { html: string; headings: HeadingItem[] } {
   let out = html
   out = transformCallouts(out)
+  // tabs 必须先于 details：tabs 收尾是 4 个冒号、details 是 3 个，
+  // 先把 tabs 整块替换成 <div class="pv-tabs">，details 才不会把它里面的
+  // `:::` 分隔行误当成自己的收尾。
   out = transformTabs(out)
+  out = transformDetailsFence(out)
   out = transformDetails(out)
+  // 行内改写要在 mermaid 还原成容器之前做：那时候图表源码还在 <pre><code> 里，
+  // protectCode 能挡住它，不会把 mermaid 里的 $ 或 == 当成公式和高亮。
+  out = transformMark(out)
+  out = transformMath(out)
   out = transformMermaid(out)
   out = transformTables(out)
-  return out
+  return decorateHeadings(out)
 }
 
 /* ── Mermaid 异步渲染 ── */
@@ -236,7 +493,69 @@ export async function renderMermaidInHtml(root: HTMLElement): Promise<void> {
   }
 }
 
+/* ── 公式异步渲染 ── */
+
+interface KatexApi {
+  renderToString: (tex: string, opts?: Record<string, unknown>) => string
+}
+
+let katexMod: KatexApi | null = null
+/** 加载失败就别再试第二次，否则每敲一个字都会重新发起一次注定失败的请求 */
+let katexFailed = false
+
+/**
+ * 把预留的公式占位换成 KaTeX 排出来的 HTML。
+ *
+ * 失败时保留源码文本——一个写错的公式不该把整篇预览拖白。
+ * katex 本体连同它的 stylesheet 都是动态加载：文档里没有公式时，
+ * 连一个字节都不会进主包。
+ */
+export async function renderMathInHtml(root: HTMLElement): Promise<void> {
+  const targets = root.querySelectorAll<HTMLElement>('.pv-math[data-tex], .pv-math-block[data-tex]')
+  if (targets.length === 0) return
+
+  if (!katexMod && !katexFailed) {
+    try {
+      // 样式要跟着本体一起到位，否则公式会裸着排成一行纯文本
+      await import('katex/dist/katex.min.css')
+      const mod = (await import('katex')) as unknown as KatexApi & { default?: KatexApi }
+      katexMod = typeof mod.renderToString === 'function' ? mod : (mod.default ?? null)
+      if (!katexMod) throw new Error('katex: no renderToString')
+    } catch {
+      katexFailed = true
+      katexMod = null
+    }
+  }
+  if (!katexMod) return
+
+  for (const el of Array.from(targets)) {
+    const tex = el.dataset.tex ?? ''
+    if (!tex) continue
+    try {
+      el.innerHTML = katexMod.renderToString(tex, {
+        displayMode: el.classList.contains('pv-math-block'),
+        throwOnError: false,
+        strict: false,
+      })
+      el.classList.add('is-rendered')
+    } catch {
+      el.classList.add('is-error')
+    }
+  }
+}
+
 /* ── 小工具 ── */
+
+/**
+ * 预览前剥掉 YAML frontmatter。
+ *
+ * 不剥的话 marked 会把开头的 `---` 当成 setext 标题的下划线，
+ * 把 `title:` / `tags:` 那一整段渲染成一个巨大的二级标题——
+ * 预览顶部会出现一段莫名其妙的元数据，这是最基础的渲染错误。
+ */
+export function stripFrontMatter(md: string): string {
+  return md.replace(/^---[ \t]*\r?\n[\s\S]*?\r?\n---[ \t]*\r?\n?/, '')
+}
 
 function escapeHtml(s: string): string {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')

@@ -41,7 +41,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey))
   <div class="shell">
     <TitleBar />
     <div class="body">
-      <SidePanel v-if="state.root && state.sidebar" />
+      <SidePanel v-if="state.root" />
       <main class="main">
         <WelcomeView v-if="!state.root" />
         <EditorPane v-else-if="state.activePath" />

@@ -1,10 +1,12 @@
 import { defineConfig } from 'vite'
 import vue from '@vitejs/plugin-vue'
 import { spawn } from 'node:child_process'
+import { readFileSync } from 'node:fs'
 import { fileURLToPath, URL } from 'node:url'
 import path from 'node:path'
 
 const root = path.dirname(fileURLToPath(import.meta.url))
+const pkg = JSON.parse(readFileSync(path.join(root, 'package.json'), 'utf-8')) as { version: string }
 
 /**
  * dev 模式下：构建主进程/preload，然后拉起 Electron。
@@ -71,6 +73,10 @@ function launchElectron() {
 
 export default defineConfig({
   base: './',
+  /* 「关于」里要显示真实版本号，从 package.json 注入，避免两处写死对不上 */
+  define: {
+    __APP_VERSION__: JSON.stringify(pkg.version),
+  },
   resolve: {
     alias: {
       '@': fileURLToPath(new URL('./src', import.meta.url)),

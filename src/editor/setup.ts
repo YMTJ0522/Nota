@@ -18,7 +18,7 @@ import {
   historyKeymap,
   indentWithTab,
 } from "@codemirror/commands";
-import { highlightSelectionMatches, searchKeymap } from "@codemirror/search";
+import { highlightSelectionMatches, search, searchKeymap } from "@codemirror/search";
 import {
   bracketMatching,
   foldGutter,
@@ -34,8 +34,6 @@ import { toolbarKeymap } from "./toolbar-keymap";
 import { codeLangCompleteExtensions } from "./code-lang-complete";
 import { fencedCodeBlockHighlighter } from "./code-languages";
 import { markdownLivePreview } from "./live-preview";
-import { markdownMediaPreview } from "./media-preview";
-import { markdownRichBlocks } from "./rich-blocks";
 
 /**
  * Baseline CodeMirror extension set for the Markdown editor.
@@ -67,14 +65,14 @@ export function baseExtensions(options: {
     crosshairCursor(),
     highlightActiveLine(),
     highlightSelectionMatches(),
+    // 查找替换面板：显式注册 search 扩展，Ctrl+F 的面板才有一致的结构与样式
+    search({ top: true }),
     markdown({
       base: markdownLanguage,
       codeLanguages: languages,
       addKeymap: true,
     }),
     markdownLivePreview,
-    markdownMediaPreview,
-    markdownRichBlocks,
     fencedCodeBlockHighlighter(),
     codeLangCompleteExtensions(),
     keymap.of([

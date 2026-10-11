@@ -108,14 +108,78 @@ export const notaTheme = EditorView.theme({
     padding: "0 6px",
   },
 
-  /* ── 搜索面板 ── */
+  /* ── 查找替换面板 ──
+     默认面板是一串裸 inline 元素，挤在一起完全看不出层级。
+     这里给它排成一行：输入框 → 按钮 → 选项开关 → 关闭（推最右）。 */
   ".cm-panels": {
     backgroundColor: "var(--n-surface)",
     borderColor: "var(--n-line)",
     color: "var(--n-fg)",
   },
   ".cm-panels.cm-panels-top": { borderBottom: "1px solid var(--n-line)" },
-  ".cm-panel input, .cm-panel button": {
+  ".cm-panels.cm-panels-bottom": { borderTop: "1px solid var(--n-line)" },
+  ".cm-panel.cm-search": {
+    display: "flex",
+    flexWrap: "wrap",
+    alignItems: "center",
+    gap: "6px",
+    padding: "7px 10px",
+    fontFamily: "var(--n-font-ui)",
+    fontSize: "12.5px",
+  },
+  ".cm-panel.cm-search input.cm-textfield": {
+    width: "180px",
+    height: "24px",
+    padding: "0 8px",
+    fontFamily: "var(--n-font-ui)",
+    fontSize: "12.5px",
+    color: "var(--n-fg)",
+    background: "var(--n-raised)",
+    border: "1px solid var(--n-line)",
+    borderRadius: "var(--n-r-sm)",
+    outline: "none",
+  },
+  ".cm-panel.cm-search input.cm-textfield:focus": {
+    borderColor: "var(--n-accent)",
+  },
+  ".cm-panel.cm-search button.cm-button": {
+    height: "24px",
+    padding: "0 10px",
+    fontFamily: "var(--n-font-ui)",
+    fontSize: "12px",
+    color: "var(--n-fg-dim)",
+    background: "var(--n-raised)",
+    border: "1px solid var(--n-line)",
+    borderRadius: "var(--n-r-sm)",
+    cursor: "pointer",
+  },
+  ".cm-panel.cm-search button.cm-button:hover": {
+    background: "var(--n-accent-soft)",
+    color: "var(--n-accent)",
+    borderColor: "var(--n-accent)",
+  },
+  ".cm-panel.cm-search label": {
+    display: "inline-flex",
+    alignItems: "center",
+    gap: "4px",
+    fontSize: "11.5px",
+    color: "var(--n-fg-dim)",
+    whiteSpace: "nowrap",
+    cursor: "pointer",
+  },
+  ".cm-panel.cm-search input[type=checkbox]": {
+    width: "13px",
+    height: "13px",
+    margin: "0",
+    accentColor: "var(--n-accent)",
+  },
+  /* 关闭推到最右，不和选项开关挤成一团 */
+  ".cm-panel.cm-search button[name=close]": {
+    marginLeft: "auto",
+    padding: "0 8px",
+  },
+  /* 兼容旧的通用规则：面板里其余零散控件仍保持同一套观感 */
+  ".cm-panel input:not(.cm-textfield), .cm-panel button:not(.cm-button)": {
     fontFamily: "var(--n-font-ui)",
     fontSize: "12.5px",
     background: "var(--n-raised)",
@@ -124,7 +188,6 @@ export const notaTheme = EditorView.theme({
     borderRadius: "var(--n-r-sm)",
     padding: "2px 6px",
   },
-  ".cm-panel button:hover": { background: "var(--n-accent-soft)" },
   ".cm-searchMatch": {
     backgroundColor: "var(--n-accent-soft)",
     outline: "1px solid var(--n-accent)",
