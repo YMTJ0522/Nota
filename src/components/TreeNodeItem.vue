@@ -101,7 +101,7 @@ function onKey(e: KeyboardEvent) {
       <ConfirmDialog
         :open="confirmOpen"
         title="删除这篇笔记？"
-        :message="`「${displayName}」将被移到回收站，可以在「附件库与回收站」里恢复。`"
+        :message="`「${displayName}」将被移到回收站，可以在那里找回或彻底删除。`"
         confirm-text="删除"
         danger
         @confirm="doDelete"

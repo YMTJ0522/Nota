@@ -42,7 +42,7 @@ import { getMarked, highlightFences } from '@/editor/markdown'
 import Toolbar from '@/components/Toolbar.vue'
 import NotePickerDialog from '@/components/NotePickerDialog.vue'
 import SlashMenu from '@/components/SlashMenu.vue'
-import HeaderMenu from '@/components/HeaderMenu.vue'
+import EditorActions from '@/components/EditorActions.vue'
 import EditorOutline from '@/components/EditorOutline.vue'
 import {
   toolbarInline,
@@ -254,6 +254,88 @@ function stepFind(dir: 1 | -1) {
   if (dir === 1) findNext(v)
   else findPrevious(v)
   refreshFind()
+}
+
+/* ── 编辑 / 预览同步滚动 ──
+   分栏时两边看的是同一篇，各滚各的会立刻「对不上号」：左边读到第三节，
+   右边还停在开头。
+
+   对齐用的不是像素比例，而是「在文档里的位置」：编辑区取当前看向的文档
+   偏移，预览区取自己的滚动比例，两边互换着写。
+   为什么不直接比像素：CodeMirror 是虚拟滚动的，离屏行的高度它自己也只
+   是估算，一滚动就会重新测量并把 scrollHeight 改掉（实测同一篇文章能从
+   3402 长到 4557），拿像素比例去同步，两边会互相追着跑。
+
+   还得能认出「这一下是我自己写进去的」：两个方向都监听，各自判断这一下
+   是不是自己的回音，是的话直接忽略，不然会来回弹。
+
+   回音之所以要按「时间段」而不是按「落点值」来认：`view.dispatch()` 抛出
+   来的滚动效果 CodeMirror 不会当场落到 DOM 上，它要等自己的 measure 阶段
+   （下一帧）才真的挪动滚动条，所以 dispatch 完立刻读 scrollTop 读到的还
+   是旧值 —— 拿它去比对等于没判。大纲点击用的是平滑滚动，会被这种「没判
+   住的回音」在半路上写回预览区，结果就是点了大纲却跳不过去。 */
+const ECHO_MS = 160
+const echo = { editor: 0, preview: 0 }
+const landed = { editor: -1, preview: -1 }
+
+/** 编辑区当前看向文档的哪个位置（0~1） */
+function editorRatio() {
+  const v = view
+  if (!v || v.state.doc.length === 0) return 0
+  const from = v.visibleRanges[0]?.from ?? 0
+  return from / v.state.doc.length
+}
+
+function syncFromEditor() {
+  if (mode.value !== 'split') return
+  const p = previewRef.value
+  if (!p) return
+  const max = p.scrollHeight - p.clientHeight
+  if (max <= 0) return
+  const next = Math.round(editorRatio() * max)
+  if (Math.abs(p.scrollTop - next) <= 1) return
+  landed.preview = next
+  echo.preview = performance.now() + ECHO_MS
+  p.scrollTop = next
+}
+
+function syncFromPreview() {
+  if (mode.value !== 'split') return
+  const v = view
+  const p = previewRef.value
+  if (!v || !p) return
+  const max = p.scrollHeight - p.clientHeight
+  if (max <= 0) return
+  const pos = Math.round((p.scrollTop / max) * v.state.doc.length)
+  // 用 scrollIntoView 效果而不是直接写 scrollTop：让 CodeMirror 自己
+  // 决定要滚到哪（它知道内边距、也知道视口外那一行有多高）
+  echo.editor = performance.now() + ECHO_MS
+  v.dispatch({ effects: EditorView.scrollIntoView(pos, { y: 'start' }) })
+}
+
+const onEditorScroll = () => {
+  const v = view
+  if (!v) return
+  const top = v.scrollDOM.scrollTop
+  // 时间窗先兜住：我刚抛出去的滚动效果，可能要隔一帧才真的落到 DOM 上
+  if (performance.now() < echo.editor) {
+    landed.editor = top
+    return
+  }
+  // 之后再落到位附近的，也算我自己那一次搬运的余波
+  if (Math.abs(top - landed.editor) <= 4) return
+  syncFromEditor()
+}
+
+const onPreviewScroll = () => {
+  const p = previewRef.value
+  if (!p) return
+  if (performance.now() < echo.preview) {
+    landed.preview = p.scrollTop
+    return
+  }
+  if (Math.abs(p.scrollTop - landed.preview) <= 4) return
+  syncFromPreview()
 }
 
 /* ── 笔记嵌入 ── */
@@ -531,8 +613,20 @@ function createEditor() {
     parent: host.value,
   })
 
+  // 分栏时的同步滚动：编辑区这一侧要监听它的滚动容器
+  view.scrollDOM.addEventListener('scroll', onEditorScroll, { passive: true })
+
   // 供自动化验证脚本访问（无副作用，不参与业务逻辑）
   ;(window as unknown as { __notaView?: EditorView | null }).__notaView = view
+}
+
+/** 销毁编辑器：顺手把滚动监听摘掉，否则重启编辑器会挂上第二个 */
+function destroyEditor() {
+  if (!view) return
+  view.scrollDOM.removeEventListener('scroll', onEditorScroll)
+  view.destroy()
+  view = null
+  ;(window as unknown as { __notaView?: EditorView | null }).__notaView = null
 }
 
 // 设置里改了行号 / 换行：直接重配置视图偏好，滚动位置与撤销历史都不受影响
@@ -569,6 +663,13 @@ onMounted(() => {
   window.addEventListener('nota:insert', onInsertRequest)
 })
 
+/* 预览容器是 v-if 出来的：从「编辑」切到「分栏」时它才出现，
+   所以监听要挂在 ref 本身的变化上，光在 onMounted 挂会漏掉这半程。 */
+watch(previewRef, (el, old) => {
+  old?.removeEventListener('scroll', onPreviewScroll)
+  el?.addEventListener('scroll', onPreviewScroll, { passive: true })
+})
+
 /**
  * 外部（附件库）要求往光标处插一段文本。
  *
@@ -591,9 +692,8 @@ function onInsertRequest(e: Event) {
 onBeforeUnmount(() => {
   if (timer) clearTimeout(timer)
   if (previewTimer) clearTimeout(previewTimer)
-  view?.destroy()
-  view = null
-  ;(window as unknown as { __notaView?: EditorView | null }).__notaView = null
+  previewRef.value?.removeEventListener('scroll', onPreviewScroll)
+  destroyEditor()
   window.removeEventListener('keydown', onViewKey)
   window.removeEventListener('nota:insert', onInsertRequest)
 })
@@ -616,8 +716,7 @@ watch(
 // 再 createEditor() 会把第二个实例叠进同一个容器，页面上就会出现两套编辑器。
 watch(mode, async (m) => {
   if (m === 'read') {
-    view?.destroy()
-    view = null
+    destroyEditor()
     await render()
   } else {
     await nextTick()
@@ -673,8 +772,8 @@ defineExpose({ getView: () => view })
           <span class="ph-save-text">{{ saveLabel }}</span>
         </span>
 
-        <!-- 导出 / 版本历史 / 设置 -->
-        <HeaderMenu />
+        <!-- 导入 / 导出 / 版本历史 -->
+        <EditorActions />
 
         <!-- 大纲开关：只在有预览的时候才有意义 -->
         <button
@@ -732,6 +831,7 @@ defineExpose({ getView: () => view })
       :get-view="() => view"
       @toast="onToolbarToast"
       @embed="embedOpen = true"
+      @find="openFind"
     />
 
     <div class="stage" :data-layout="mode">

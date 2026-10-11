@@ -9,13 +9,15 @@
  * 渲染复用预览区那条 Markdown 管线，所以模型吐出来的代码块、
  * 表格、公式长得和笔记预览一模一样。
  */
-import { computed, nextTick, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import {
   ArrowUp,
   Check,
+  ChevronDown,
   Copy,
   CornerDownLeft,
   Eraser,
+  Loader2,
   MessageSquare,
   PanelLeft,
   Paperclip,
@@ -28,7 +30,7 @@ import {
   Trash2,
   User,
 } from 'lucide-vue-next'
-import { store } from '@/store'
+import { AI_PRESETS, store } from '@/store'
 import { markdownToHtml } from '@/editor/markdown'
 import { renderMathInHtml, renderMermaidInHtml } from '@/editor/preview-rich'
 
@@ -51,6 +53,77 @@ const editingId = ref(0)
 const editingText = ref('')
 
 const modelLabel = computed(() => state.ai.model || '未配置模型')
+
+/* ── 模型选择 ──
+   对话中途想换个模型，不该逼人去设置页翻。头部那枚徽标直接做成下拉：
+   打开时顺手拉一次 /models（本地 Ollama、LM Studio 都支持这个接口），
+   拉不到就退回预设 + 当前填的名字，至少能换个已知的。 */
+const modelMenu = ref(false)
+const modelLoading = ref(false)
+const serverModels = ref<string[]>([])
+/** 拉过一次就不再自动拉；用户点刷新才重来 */
+const modelsFetched = ref(false)
+
+const modelOptions = computed(() => {
+  const set = new Set<string>()
+  const cur = state.ai.model.trim()
+  if (cur) set.add(cur)
+  for (const m of serverModels.value) if (m) set.add(m)
+  for (const p of AI_PRESETS) set.add(p.model)
+  return [...set]
+})
+
+async function loadModels(force = false) {
+  if (modelLoading.value) return
+  if (modelsFetched.value && !force) return
+  modelLoading.value = true
+  try {
+    const r = await window.api.aiTest({ ...state.ai })
+    if (r.ok) {
+      serverModels.value = r.models ?? []
+      modelsFetched.value = true
+    }
+  } catch {
+    /* 拉不到就只用预设，不打断对话 */
+  } finally {
+    modelLoading.value = false
+  }
+}
+
+function toggleModel() {
+  modelMenu.value = !modelMenu.value
+  if (modelMenu.value) void loadModels()
+}
+
+function pickModel(m: string) {
+  store.setAiConfig({ model: m })
+  modelMenu.value = false
+}
+
+function closeModelMenu() {
+  modelMenu.value = false
+}
+
+/** 点击别处 / Esc 关闭下拉。头部没有 overflow 裁剪，直接用文档事件即可 */
+function onDocPointer(e: PointerEvent) {
+  const el = e.target as HTMLElement
+  if (!el.closest('.model-wrap')) closeModelMenu()
+}
+
+function onEsc(e: KeyboardEvent) {
+  if (e.key === 'Escape') closeModelMenu()
+}
+
+onMounted(() => {
+  document.addEventListener('pointerdown', onDocPointer)
+  document.addEventListener('keydown', onEsc)
+})
+
+onBeforeUnmount(() => {
+  document.removeEventListener('pointerdown', onDocPointer)
+  document.removeEventListener('keydown', onEsc)
+})
+
 const canSend = computed(() => draft.value.trim().length > 0 && !state.aiBusy)
 /** 当前会话里最后一条助手消息（它才配拥有「重新生成」） */
 const lastAssistantId = computed(() => {
@@ -309,7 +382,58 @@ function openAiSettings() {
         </button>
         <span class="head-ico"><Sparkles :size="15" :stroke-width="1.9" /></span>
         <span class="head-title">AI 编写</span>
-        <span class="model" :title="state.ai.baseUrl">{{ modelLabel }}</span>
+
+        <!-- 模型徽标即选择器：点一下换模型 -->
+        <div class="model-wrap">
+          <button
+            class="model"
+            :class="{ on: modelMenu }"
+            :title="state.ai.model ? `当前模型：${state.ai.model}` : '未配置模型'"
+            @click="toggleModel"
+          >
+            <span class="model-name">{{ modelLabel }}</span>
+            <ChevronDown class="model-caret" :size="11" :stroke-width="2" />
+          </button>
+
+          <div v-if="modelMenu" class="model-menu">
+            <div class="mm-head">
+              <span class="mm-title">选择模型</span>
+              <button
+                class="mm-refresh"
+                :disabled="modelLoading"
+                title="从接口重新拉一遍模型列表"
+                @click="loadModels(true)"
+              >
+                <Loader2 v-if="modelLoading" class="spin" :size="12" :stroke-width="2" />
+                <RefreshCw v-else :size="12" :stroke-width="2" />
+              </button>
+            </div>
+
+            <div class="mm-list">
+              <button
+                v-for="m in modelOptions"
+                :key="m"
+                class="mm-item"
+                :class="{ on: m === state.ai.model }"
+                @click="pickModel(m)"
+              >
+                <span class="mm-name">{{ m }}</span>
+                <Check v-if="m === state.ai.model" :size="12" :stroke-width="2.2" />
+              </button>
+            </div>
+
+            <div v-if="serverModels.length === 0" class="mm-hint">
+              {{ modelLoading ? '正在读取接口…' : '没读到接口的模型列表，先列出预设' }}
+            </div>
+
+            <span class="mm-sep" />
+            <button class="mm-item mm-dim" @click="openAiSettings">
+              <Settings :size="12" :stroke-width="1.9" />
+              <span>模型设置…</span>
+            </button>
+          </div>
+        </div>
+
         <span class="head-right">
           <button
             v-if="state.chat.length"
@@ -639,18 +763,164 @@ function openAiSettings() {
   color: var(--n-fg);
 }
 
+/* ── 模型选择 ──
+   徽标本身就是按钮，点开是一个列表。 */
+.model-wrap {
+  position: relative;
+  display: inline-flex;
+  min-width: 0;
+}
+
 .model {
-  padding: 2px 8px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 22px;
+  max-width: 260px;
+  padding: 0 6px 0 9px;
   border-radius: 999px;
   border: 1px solid var(--n-line);
   background: var(--n-bg);
+  color: var(--n-fg-dim);
+  transition: border-color var(--n-dur) var(--n-ease), color var(--n-dur) var(--n-ease),
+    background var(--n-dur) var(--n-ease);
+}
+
+.model:hover {
+  border-color: color-mix(in oklab, var(--n-line-strong) 88%, transparent);
+  color: var(--n-fg);
+}
+
+.model.on {
+  border-color: var(--n-accent);
+  background: var(--n-accent-soft);
+  color: var(--n-accent);
+}
+
+.model-name {
+  min-width: 0;
   font-family: var(--n-font-mono);
   font-size: 10.5px;
-  color: var(--n-fg-dim);
-  max-width: 260px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.model-caret {
+  flex: none;
+  opacity: 0.72;
+}
+
+.model-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  z-index: 40;
+  width: 236px;
+  padding: 4px;
+  background: var(--n-raised);
+  border: 1px solid var(--n-line);
+  border-radius: var(--n-r-md);
+  box-shadow: var(--n-shadow-lg);
+  animation: mm-in 120ms var(--n-ease);
+}
+
+.mm-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 24px;
+  padding: 0 4px 0 8px;
+}
+
+.mm-title {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.07em;
+  color: var(--n-fg-faint);
+}
+
+.mm-refresh {
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--n-r-sm);
+  color: var(--n-fg-faint);
+}
+
+.mm-refresh:hover:not(:disabled) {
+  background: var(--n-bg);
+  color: var(--n-accent);
+}
+
+.mm-refresh:disabled {
+  opacity: 0.5;
+}
+
+/* 模型名可能很长，给个上限自己滚 */
+.mm-list {
+  max-height: 240px;
+  overflow-y: auto;
+}
+
+.mm-item {
+  width: 100%;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 0 9px;
+  border-radius: var(--n-r-sm);
+  font-size: 12px;
+  color: var(--n-fg);
+  text-align: left;
+}
+
+.mm-item:hover {
+  background: var(--n-accent-soft);
+  color: var(--n-accent);
+}
+
+.mm-item.on {
+  color: var(--n-accent);
+  font-weight: 600;
+}
+
+.mm-name {
+  flex: 1;
+  min-width: 0;
+  font-family: var(--n-font-mono);
+  font-size: 11.5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mm-dim {
+  color: var(--n-fg-faint);
+  font-size: 11.5px;
+}
+
+.mm-hint {
+  padding: 4px 9px 6px;
+  font-size: 10.5px;
+  line-height: 1.5;
+  color: var(--n-fg-faint);
+}
+
+.mm-sep {
+  display: block;
+  height: 1px;
+  margin: 4px 6px;
+  background: var(--n-line);
+}
+
+@keyframes mm-in {
+  from { opacity: 0; transform: translateY(-4px); }
+  to { opacity: 1; transform: none; }
 }
 
 .head-right {
@@ -682,9 +952,19 @@ function openAiSettings() {
 }
 
 .hbtn svg,
-.rail-add svg {
+.rail-add svg,
+.model svg,
+.model-menu svg {
   fill: none;
   stroke: currentColor;
+}
+
+.spin {
+  animation: hb-spin 900ms linear infinite;
+}
+
+@keyframes hb-spin {
+  to { transform: rotate(360deg); }
 }
 
 /* ── 消息流 ── */

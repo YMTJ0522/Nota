@@ -1,0 +1,312 @@
+<script setup lang="ts">
+/**
+ * 笔记列表栏（资料库与正文之间的那一栏）。
+ *
+ * 侧栏回答「去哪找」，这一栏回答「有哪些」：
+ * 把当前视图（所有笔记 / 最近编辑 / 收藏 / 未归类 / 某个标签 / 搜索结果）
+ * 下的笔记拍平成一列，标题 + 摘要 + 所属目录 + 修改时间一次看全，
+ * 不用像目录树那样一层层展开。
+ *
+ * 摘要由主进程在扫目录时顺手从文件头部摘出来（见 workspace:tree），
+ * 不额外读盘，所以开着这一栏也不会让打开工作区变慢。
+ */
+import { computed } from 'vue'
+import { FilePlus2, PanelLeftClose, Star } from 'lucide-vue-next'
+import { store } from '@/store'
+
+const { state } = store
+
+const files = computed(() => store.visibleFiles.value)
+const title = computed(() => store.navTitle.value)
+const root = computed(() => state.root ?? '')
+
+/** 去掉工作区前缀，只留「目录 / 子目录」 */
+function folderOf(p: string) {
+  const rel = root.value && p.startsWith(root.value) ? p.slice(root.value.length) : p
+  const parts = rel.replace(/^[\\/]+/, '').split(/[\\/]/)
+  parts.pop()
+  return parts.join(' / ') || '根目录'
+}
+
+/** 今天只给时间，七天内给星期，再往上给日期——越近的信息越细 */
+function when(ms?: number) {
+  if (!ms) return ''
+  const d = new Date(ms)
+  const now = new Date()
+  const p = (n: number) => String(n).padStart(2, '0')
+  const sameDay = d.toDateString() === now.toDateString()
+  if (sameDay) return `${p(d.getHours())}:${p(d.getMinutes())}`
+  const days = Math.floor((now.getTime() - ms) / 86400_000)
+  if (days < 7) return `${days === 1 ? '昨天' : `${days} 天前`}`
+  if (d.getFullYear() === now.getFullYear()) return `${d.getMonth() + 1} 月 ${d.getDate()} 日`
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`
+}
+
+function open(path: string) {
+  void store.openNote(path)
+}
+</script>
+
+<template>
+  <section class="nlist">
+    <header class="nl-head">
+      <span class="nl-title">{{ title }}</span>
+      <span class="nl-count">{{ files.length }}</span>
+      <span class="nl-acts">
+        <button class="nl-btn" data-tip="新建笔记 (Ctrl+N)" @click="store.newNote()">
+          <FilePlus2 :size="14" :stroke-width="1.9" />
+        </button>
+        <button class="nl-btn" data-tip="收起列表栏" @click="store.toggleList()">
+          <PanelLeftClose :size="14" :stroke-width="1.9" />
+        </button>
+      </span>
+    </header>
+
+    <div class="nl-scroll">
+      <div v-if="state.loading" class="nl-empty">读取中…</div>
+      <div v-else-if="files.length === 0" class="nl-empty">
+        {{ state.searchQuery || state.activeTag ? '这里没有匹配的笔记' : '这里还没有 .md 文件' }}
+      </div>
+      <template v-else>
+        <button
+          v-for="f in files"
+          :key="f.path"
+          class="nl-item"
+          :class="{ on: f.path === state.activePath }"
+          :title="f.path"
+          @click="open(f.path)"
+        >
+          <span class="nl-name">
+            <span class="nl-text">{{ f.name.replace(/\.md$/i, '') }}</span>
+            <Star v-if="f.starred" class="nl-star" :size="11" :stroke-width="2" />
+          </span>
+          <span v-if="f.excerpt" class="nl-excerpt">{{ f.excerpt }}</span>
+          <span class="nl-meta">
+            <span class="nl-folder">{{ folderOf(f.path) }}</span>
+            <span v-if="f.tags?.length" class="nl-tags">
+              <span v-for="t in f.tags.slice(0, 2)" :key="t" class="nl-tag">#{{ t }}</span>
+            </span>
+            <span class="nl-when">{{ when(f.mtime) }}</span>
+          </span>
+        </button>
+      </template>
+    </div>
+  </section>
+</template>
+
+<style scoped>
+.nlist {
+  flex: none;
+  width: 268px;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border-right: 1px solid var(--n-line);
+  background: color-mix(in oklab, var(--n-sunken) 62%, var(--n-bg));
+}
+
+.nl-head {
+  flex: none;
+  height: 44px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 8px 0 14px;
+  border-bottom: 1px solid var(--n-line);
+}
+
+.nl-title {
+  font-size: 12.5px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--n-fg);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.nl-count {
+  flex: none;
+  min-width: 18px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: var(--n-surface);
+  border: 1px solid var(--n-line);
+  font-size: 10px;
+  line-height: 16px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+  color: var(--n-fg-faint);
+}
+
+.nl-acts {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 1px;
+}
+
+.nl-btn {
+  position: relative;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--n-r-sm);
+  color: var(--n-fg-dim);
+  transition: background var(--n-dur) var(--n-ease), color var(--n-dur) var(--n-ease);
+}
+
+.nl-btn:hover {
+  background: var(--n-raised);
+  color: var(--n-accent);
+}
+
+/* 悬停提示：和折叠窄轨同一套做法，纯 CSS 向右探出 */
+.nl-btn::after {
+  content: attr(data-tip);
+  position: absolute;
+  left: calc(100% + 8px);
+  top: 50%;
+  z-index: 60;
+  padding: 4px 8px;
+  border-radius: 6px;
+  background: var(--n-fg);
+  color: var(--n-bg);
+  font-size: 11.5px;
+  white-space: nowrap;
+  opacity: 0;
+  transform: translateY(-50%) translateX(-4px);
+  pointer-events: none;
+  transition: opacity 130ms var(--n-ease), transform 130ms var(--n-ease);
+  box-shadow: var(--n-shadow-md);
+}
+
+.nl-btn:hover::after {
+  opacity: 1;
+  transform: translateY(-50%) translateX(0);
+}
+
+.nl-head svg {
+  fill: none;
+  stroke: currentColor;
+}
+
+.nl-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 6px;
+}
+
+.nl-empty {
+  padding: 18px 10px;
+  font-size: 12px;
+  line-height: 1.7;
+  color: var(--n-fg-faint);
+}
+
+/* ── 一条笔记 ── */
+.nl-item {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  width: 100%;
+  padding: 8px 10px;
+  border-radius: var(--n-r-md);
+  text-align: left;
+  transition: background var(--n-dur) var(--n-ease);
+}
+
+.nl-item + .nl-item {
+  margin-top: 1px;
+}
+
+.nl-item:hover {
+  background: color-mix(in oklab, var(--n-raised) 62%, transparent);
+}
+
+.nl-item.on {
+  background: color-mix(in oklab, var(--n-accent-soft) 76%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--n-accent) 22%, transparent);
+}
+
+.nl-name {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+}
+
+.nl-text {
+  flex: 1;
+  min-width: 0;
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--n-fg);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.nl-item.on .nl-text {
+  font-weight: 600;
+}
+
+.nl-star {
+  flex: none;
+  fill: currentColor;
+  stroke: currentColor;
+  color: var(--n-accent);
+}
+
+/* 摘要两行截断：够认出这篇讲什么，又不会把列表撑散 */
+.nl-excerpt {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  font-size: 11.5px;
+  line-height: 1.55;
+  color: var(--n-fg-dim);
+  word-break: break-word;
+}
+
+.nl-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 1px;
+  font-size: 10px;
+  color: var(--n-fg-faint);
+  min-width: 0;
+}
+
+.nl-folder {
+  flex: none;
+  max-width: 108px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.nl-tags {
+  display: inline-flex;
+  gap: 4px;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.nl-tag {
+  flex: none;
+  color: color-mix(in oklab, var(--n-accent) 76%, var(--n-fg-faint));
+}
+
+.nl-when {
+  margin-left: auto;
+  flex: none;
+  font-variant-numeric: tabular-nums;
+}
+</style>

@@ -17,6 +17,9 @@ contextBridge.exposeInMainWorld('api', {
   deleteNote: (file: string): Promise<boolean> => ipcRenderer.invoke('note:delete', file),
   renameNote: (file: string, newName: string): Promise<string> =>
     ipcRenderer.invoke('note:rename', file, newName),
+  /* 导入：把工作区外面的 .md 复制进来，返回真正写成功的那些 */
+  importNotes: (root: string, dir: string): Promise<{ name: string; path: string }[]> =>
+    ipcRenderer.invoke('note:import', root, dir),
   pickImage: (
     workspace: string,
     kind?: 'image' | 'video' | 'any',

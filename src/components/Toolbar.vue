@@ -26,9 +26,7 @@ import {
   Sigma,
   Blocks,
   ChevronDown,
-  Sparkles,
 } from 'lucide-vue-next'
-import { runAi, type AiAction } from '@/editor/ai'
 import {
   toolbarInline,
   toolbarWrap,
@@ -50,7 +48,6 @@ import {
   toolbarHorizontalRule,
   toolbarMathBlock,
   toolbarFrontMatter,
-  toolbarFind,
   pickImageAndInsert,
 } from '@/editor/toolbar-commands'
 
@@ -59,6 +56,8 @@ const emit = defineEmits<{
   (e: 'toast', text: string): void
   /** 笔记嵌入：要弹选择器，这件事编辑器才知道怎么做，交给外层 */
   (e: 'embed'): void
+  /** 查找：面板画在编辑区里（外层知道滚动容器在哪），工具栏只负责喊一声 */
+  (e: 'find'): void
 }>()
 
 /** Lucide 图标统一尺寸。inkstone 用 14，这里跟按钮 26px 的高度配 15 更稳，
@@ -82,7 +81,9 @@ function run(fn: (view: EditorView) => void) {
 /* ── 下拉菜单 ──
    顺序与分组对齐 inkstone 参考实现：
    搜索 │ 标题 │ 加粗/斜体/删除线/高亮/行内代码 │ 无序/有序/任务/引用 │
-   链接·图片·笔记 │ 代码块·表格·数学·块 */
+   链接·图片·笔记 │ 代码块·表格·数学·块
+   AI 那一组已移除：写作之外的 AI 动作归「AI 编写」页和编辑区右键菜单，
+   工具栏里再挂一个入口只会让人以为它跟「加粗」是一类东西。 */
 type MenuId =
   | 'heading'
   | 'reference'
@@ -92,7 +93,6 @@ type MenuId =
   | 'math'
   | 'block'
   | 'table'
-  | 'ai'
   | null
 
 const openMenu = ref<MenuId>(null)
@@ -225,7 +225,7 @@ function onArrow(e: KeyboardEvent) {
   if (!openMenu.value) return
   if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return
   const ids: Exclude<MenuId, null>[] = [
-    'heading', 'reference', 'image', 'note', 'code', 'table', 'math', 'block', 'ai',
+    'heading', 'reference', 'image', 'note', 'code', 'table', 'math', 'block',
   ]
   const at = ids.indexOf(openMenu.value)
   if (at < 0) return
@@ -269,22 +269,6 @@ const headingItems = [
 
 /** 标题下拉按钮上曾显示当前档位（H1 徽标），但换上 Lucide 的 Heading 图标后
     两者语义重复，挤在一起反而看不清，已去掉徽标只留图标。 */
-
-/* ── AI ──
-   结果是异步回来的，所以不能走 pick()（它只管同步命令）；
-   菜单得先关掉，否则请求期间菜单一直挂在屏幕上。 */
-async function runAiAction(action: AiAction) {
-  close()
-  const view = v()
-  if (!view) return
-  await runAi(view, action)
-}
-
-/** 直接开设置并定位到 AI 那一页，省得用户自己找 */
-function openAiSettings() {
-  close()
-  window.dispatchEvent(new CustomEvent('nota:settings', { detail: 'ai' }))
-}
 
 /* ── 图片 / 视频：本地上传走原生文件选择 ── */
 async function uploadMedia(kind: 'image' | 'video' | 'any') {
@@ -335,7 +319,7 @@ function insertTable(rows: number, cols: number) {
 <template>
   <div class="tb">
     <!-- 1. 搜索 -->
-    <button class="tb-btn" title="在本文中查找 (Ctrl+F)" @click="run((v) => toolbarFind(v))">
+    <button class="tb-btn" title="在本文中查找 (Ctrl+F)" @click="emit('find')">
       <Search :size="ICON" :stroke-width="STROKE" />
     </button>
 
@@ -649,44 +633,6 @@ function insertTable(rows: number, cols: number) {
         </div>
       </Teleport>
     </div>
-
-    <!-- AI：放在最右，跟「写完了再加工」的动线一致 -->
-    <div :ref="wrapRef('ai')" class="tb-group tb-menu-wrap">
-      <button
-        class="tb-btn tb-ai"
-        :class="{ on: openMenu === 'ai' }"
-        title="AI 编写"
-        @click="toggle('ai')"
-      >
-        <Sparkles :size="ICON" :stroke-width="STROKE" />
-        <ChevronDown class="caret" :size="10" :stroke-width="2" />
-      </button>
-      <Teleport to="body">
-        <div
-          v-if="openMenu === 'ai'"
-          :ref="menuRef('ai')"
-          class="tb-menu tb-menu--float"
-          :style="menuStyle"
-        >
-          <button class="tb-item" @click="runAiAction('continue')">
-            <span>续写</span>
-          </button>
-          <button class="tb-item" @click="runAiAction('polish')">
-            <span>润色选中文字</span>
-          </button>
-          <button class="tb-item" @click="runAiAction('summarize')">
-            <span>总结成要点</span>
-          </button>
-          <button class="tb-item" @click="runAiAction('translate')">
-            <span>翻译为中文</span>
-          </button>
-          <span class="tb-sep-h" />
-          <button class="tb-item tb-item-dim" @click="openAiSettings">
-            <span>模型设置…</span>
-          </button>
-        </div>
-      </Teleport>
-    </div>
   </div>
 </template>
 
@@ -733,19 +679,6 @@ function insertTable(rows: number, cols: number) {
   height: 1px;
   margin: 4px 6px;
   background: var(--n-line);
-}
-
-/* AI 按钮用强调色跟普通格式按钮区分开：它走网络、会改内容，
-   不该和「加粗」这类纯本地操作长得一样 */
-.tb-btn.tb-ai {
-  color: var(--n-accent);
-}
-.tb-btn.tb-ai.on {
-  background: var(--n-accent-soft);
-}
-/* 菜单里跳设置的那一低调用灰，别和真正的动作抢 */
-.tb-item-dim {
-  color: var(--n-fg-faint);
 }
 
 .tb-btn {

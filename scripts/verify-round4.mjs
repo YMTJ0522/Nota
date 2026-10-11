@@ -364,43 +364,58 @@ ok(
   embed,
 )
 
-/* ── 10. 附件库 / 回收站 ── */
+/* ── 10. 附件库 / 回收站（两个各自独立的窗口） ── */
 const lib = await evaluate(`(async () => {
-  // 1.4.0 起附件库入口在侧栏导航里，不再是底部那个按钮
-  const btn = [...document.querySelectorAll('.panel .nav-item')].find(b => (b.querySelector('.nav-label')?.textContent ?? '').includes('附件库'))
-  if (!btn) return { err: 'no entry' }
-  btn.click()
-  await new Promise(r => setTimeout(r, 600))
-  const dlg = document.querySelector('.lib')
-  if (!dlg) return { err: 'no dialog' }
-  const tabs = [...dlg.querySelectorAll('.lib-tab')].map(t => t.textContent.trim())
-  const cards = dlg.querySelectorAll('.lib-card').length
-  // 切到回收站
-  const trashTab = [...dlg.querySelectorAll('.lib-tab')].find(t => t.textContent.includes('回收站'))
-  trashTab?.click()
-  await new Promise(r => setTimeout(r, 500))
-  const rows = dlg.querySelectorAll('.lib-row').length
-  const hasRestore = !!dlg.querySelector('.lib-row .lib-act')
-  const x = dlg.querySelector('.lib-x'); x?.click()
+  const pick = (label) => [...document.querySelectorAll('.panel .nav-item')]
+    .find(b => (b.querySelector('.nav-label')?.textContent ?? '').includes(label))
+
+  // 附件库
+  pick('附件库')?.click()
+  await new Promise(r => setTimeout(r, 650))
+  const attachDlg = document.querySelector('.dlg[aria-label="附件库"]')
+  const cards = attachDlg?.querySelectorAll('.adlg-card').length ?? 0
+  const trashOpenWhileAttach = !!document.querySelector('.dlg[aria-label="回收站"]')
+  attachDlg?.querySelector('.dlg-x')?.click()
   await new Promise(r => setTimeout(r, 300))
-  return { tabs, cards, rows, hasRestore, closed: !document.querySelector('.lib') }
+  const attachClosed = !document.querySelector('.dlg[aria-label="附件库"]')
+
+  // 回收站：单独开一个窗口，不是同一块面板里的第二个页签
+  pick('回收站')?.click()
+  await new Promise(r => setTimeout(r, 650))
+  const trashDlg = document.querySelector('.dlg[aria-label="回收站"]')
+  const rows = trashDlg?.querySelectorAll('.dlg-row').length ?? 0
+  const hasRestore = !!trashDlg?.querySelector('.tdlg-restore')
+  const attachOpenWhileTrash = !!document.querySelector('.dlg[aria-label="附件库"]')
+  const tabs = document.querySelectorAll('.lib-tab').length
+  trashDlg?.querySelector('.dlg-x')?.click()
+  await new Promise(r => setTimeout(r, 300))
+  return {
+    cards, rows, hasRestore, tabs,
+    trashOpenWhileAttach, attachOpenWhileTrash, attachClosed,
+    closed: !document.querySelector('.dlg[aria-label="回收站"]'),
+    heads: document.querySelectorAll('.dlg').length,
+  }
 })()`)
 ok(
-  '10.附件库与回收站',
-  lib.tabs?.length === 2 && lib.cards > 0 && lib.rows > 0 && lib.hasRestore && lib.closed,
+  '10.附件库与回收站各自独立成窗口',
+  lib.cards > 0 && lib.rows > 0 && lib.hasRestore &&
+    // 页签组已经没有了，两个窗口也从不共存
+    lib.tabs === 0 && !lib.trashOpenWhileAttach && !lib.attachOpenWhileTrash &&
+    lib.attachClosed && lib.closed,
   lib,
 )
 
 /* ── 11~12. 入口存在 ── */
 const entries = await evaluate(`(() => ({
-  aiBtn: !!document.querySelector('.tb-btn.tb-ai'),
+  // 工具栏里那个 AI 下拉已经删掉，不该再出现
+  toolbarAi: !!document.querySelector('.tb-btn.tb-ai'),
   navLib: !![...document.querySelectorAll('.panel .nav-item')].find(b => (b.querySelector('.nav-label')?.textContent ?? '').includes('附件库')),
   navTrash: !![...document.querySelectorAll('.panel .nav-item')].find(b => (b.querySelector('.nav-label')?.textContent ?? '').includes('回收站')),
   navAi: !![...document.querySelectorAll('.panel .nav-item')].find(b => (b.querySelector('.nav-label')?.textContent ?? '').includes('AI 编写')),
 }))()`)
 ok(
-  '11.AI 与库入口都在侧栏',
-  entries.aiBtn && entries.navLib && entries.navTrash && entries.navAi,
+  '11.AI 与库入口都在侧栏（工具栏不再有 AI 下拉）',
+  !entries.toolbarAi && entries.navLib && entries.navTrash && entries.navAi,
   entries,
 )
 

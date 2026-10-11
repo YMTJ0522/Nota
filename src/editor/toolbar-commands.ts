@@ -1,5 +1,4 @@
 import type { EditorView } from "@codemirror/view";
-import { openSearchPanel } from "@codemirror/search";
 import { store } from "@/store";
 import {
   escapeLinkDestination,
@@ -237,11 +236,6 @@ export function toolbarMathBlock(view: EditorView) {
 
 export function toolbarFrontMatter(view: EditorView) {
   dispatchResult(view, insertFrontMatterCommand(doc(view)));
-}
-
-/** 打开 CodeMirror 内置搜索面板（Ctrl+F 同款）。 */
-export function toolbarFind(view: EditorView) {
-  openSearchPanel(view);
 }
 
 /**

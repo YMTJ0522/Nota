@@ -15,6 +15,8 @@ export interface TreeNode {
   mtime?: number
   /** 仅文件：frontmatter 里 star: true，进侧栏「收藏」 */
   starred?: boolean
+  /** 仅文件：正文开头的一段纯文本，笔记列表栏拿它当摘要 */
+  excerpt?: string
 }
 
 /** 编辑区三种视图模式：纯编辑 / 左右分栏 / 纯预览 */
@@ -144,6 +146,8 @@ interface State {
   autoSave: boolean
   /** 侧栏是否可见 */
   sidebar: boolean
+  /** 资料库与正文之间的笔记列表栏是否可见 */
+  list: boolean
   /** 当前选中的标签（null = 不筛选，显示全部笔记） */
   activeTag: string | null
   /** 新建文件夹的父目录；非 null 时侧栏弹出一个输入框 */
@@ -236,6 +240,7 @@ const state = reactive<State>({
   lastSavedAt: null,
   autoSave: true,
   sidebar: true,
+  list: true,
   activeTag: null,
   newFolderIn: null,
   viewMode: 'write',
@@ -314,23 +319,45 @@ function filterTreeByName(nodes: TreeNode[], q: string): TreeNode[] {
 }
 
 /**
- * 侧栏真正要渲染的列表。
- * 「所有笔记」保持树状；其余导航项拍平成文件列表——
- * 最近/收藏/未归类本来就是跨目录的横切视图，硬套树反而更难读。
+ * 侧栏与列表栏真正要渲染的笔记。
+ *
+ * 「所有笔记」保持树状（要看得到目录层级）；其余都是跨目录的横切视图
+ * ——最近编辑、收藏、未归类、某个标签、搜索结果——拍平成文件列表更好读，
+ * 硬套树反而要把每一层都展开才找得到。
  */
 const visibleTree = computed<TreeNode[]>(() => {
   const q = state.searchQuery.trim().toLowerCase()
-  if (state.navFilter === 'all') {
-    return q ? filterTreeByName(state.tree, q) : state.tree
+  const tag = state.activeTag
+  if (state.navFilter !== 'all' || tag) {
+    let files = allFiles.value
+    if (tag) files = files.filter((f) => f.tags?.includes(tag))
+    if (state.navFilter === 'starred') files = files.filter((f) => f.starred)
+    else if (state.navFilter === 'unfiled') files = files.filter((f) => !f.tags || f.tags.length === 0)
+    else if (state.navFilter === 'recent') {
+      files = [...files].sort((a, b) => (b.mtime ?? 0) - (a.mtime ?? 0)).slice(0, 30)
+    }
+    if (q) files = files.filter((f) => f.name.toLowerCase().includes(q))
+    return files
   }
-  let files = allFiles.value
-  if (state.navFilter === 'starred') files = files.filter((f) => f.starred)
-  else if (state.navFilter === 'unfiled') files = files.filter((f) => !f.tags || f.tags.length === 0)
-  else if (state.navFilter === 'recent') {
-    files = [...files].sort((a, b) => (b.mtime ?? 0) - (a.mtime ?? 0)).slice(0, 30)
+  return q ? filterTreeByName(state.tree, q) : state.tree
+})
+
+/** 列表栏要的那一列：把当前视图拍平 */
+const visibleFiles = computed(() => flattenFiles(visibleTree.value))
+
+/** 当前视图的名字，侧栏分区标题与列表栏头共用一份，避免两处各写一套 */
+const navTitle = computed(() => {
+  if (state.activeTag) return `# ${state.activeTag}`
+  switch (state.navFilter) {
+    case 'recent':
+      return '最近编辑'
+    case 'starred':
+      return '收藏'
+    case 'unfiled':
+      return '未归类'
+    default:
+      return '所有笔记'
   }
-  if (q) files = files.filter((f) => f.name.toLowerCase().includes(q))
-  return files
 })
 
 /** 侧栏标签筛选标签本身（标签计数仍按全量统计） */
@@ -463,6 +490,30 @@ async function exportNote(kind: 'md' | 'html') {
 }
 
 /**
+ * 把工作区外面的 Markdown 收进来。
+ *
+ * 目标目录取「当前笔记所在的目录」——多数人是正在哪写就往哪收；
+ * 没有打开的笔记时落到工作区根目录。真正的读文件、去重命名在主进程里做
+ * （见 electron/main.ts 的 note:import），这里只负责挑目标和刷新目录树。
+ *
+ * @returns 真正导入进来的文件（用户取消时是空数组）
+ */
+async function importNotes(): Promise<{ name: string; path: string }[]> {
+  if (!state.root) return []
+  const dir = state.activePath
+    ? state.activePath.replace(/[\\/][^\\/]*$/, '')
+    : state.root
+  const added = (await window.api.importNotes?.(state.root, dir)) ?? []
+  if (added.length) {
+    await refreshTree()
+    // 刚收进来的那篇顺手打开，省得再找一次
+    const last = added[added.length - 1]
+    if (last?.path) await openNote(last.path)
+  }
+  return added
+}
+
+/**
  * 把 Markdown 包成一份自带样式的独立 HTML。
  *
  * 已解析好的预览 HTML（含代码高亮 class）由调用方传入会更准，
@@ -509,6 +560,12 @@ function toggleSidebar() {
   localStorage.setItem('nota-sidebar', state.sidebar ? '1' : '0')
 }
 
+/** 笔记列表栏显隐 */
+function toggleList() {
+  state.list = !state.list
+  localStorage.setItem('nota-list', state.list ? '1' : '0')
+}
+
 /** 编辑区视图模式 */
 function setViewMode(m: ViewMode) {
   state.viewMode = m
@@ -539,6 +596,7 @@ function setAutoSave(v: boolean) {
 function initPrefs() {
   state.autoSave = localStorage.getItem('nota-autosave') !== '0'
   state.sidebar = localStorage.getItem('nota-sidebar') !== '0'
+  state.list = localStorage.getItem('nota-list') !== '0'
   state.outline = localStorage.getItem('nota-outline') !== '0'
   const v = localStorage.getItem('nota-view')
   if (v === 'write' || v === 'split' || v === 'read') state.viewMode = v
@@ -896,6 +954,8 @@ export const store = {
   allFiles,
   navCounts,
   visibleTree,
+  visibleFiles,
+  navTitle,
   allTags,
   openWorkspace,
   refreshTree,
@@ -915,7 +975,9 @@ export const store = {
   initTheme,
   autoExpand,
   exportNote,
+  importNotes,
   toggleSidebar,
+  toggleList,
   setViewMode,
   setNavFilter,
   setSearchQuery,

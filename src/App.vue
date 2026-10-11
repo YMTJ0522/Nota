@@ -3,26 +3,30 @@ import { onMounted, onBeforeUnmount, ref, watch } from 'vue'
 import { store } from '@/store'
 import TitleBar from '@/components/TitleBar.vue'
 import SidePanel from '@/components/SidePanel.vue'
+import NoteListPanel from '@/components/NoteListPanel.vue'
 import EditorPane from '@/components/EditorPane.vue'
 import AiChatPanel from '@/components/AiChatPanel.vue'
 import WelcomeView from '@/components/WelcomeView.vue'
-import LibraryDialog from '@/components/LibraryDialog.vue'
+import AttachDialog from '@/components/AttachDialog.vue'
+import TrashDialog from '@/components/TrashDialog.vue'
+import ToastHost from '@/components/ToastHost.vue'
 
 const { state } = store
 
-/** 附件库 + 回收站：由侧边栏抛事件打开，detail 决定停在哪个页签 */
-const libraryOpen = ref(false)
-const libraryTab = ref<'attach' | 'trash'>('attach')
+/** 附件库与回收站是两个独立窗口，各自一个开合状态（见各自的组件注释） */
+const attachOpen = ref(false)
+const trashOpen = ref(false)
 
 function onLibrary(e: Event) {
-  const tab = (e as CustomEvent<'attach' | 'trash'>).detail
-  libraryTab.value = tab === 'trash' ? 'trash' : 'attach'
-  libraryOpen.value = true
+  const which = (e as CustomEvent<'attach' | 'trash'>).detail
+  if (which === 'trash') trashOpen.value = true
+  else attachOpen.value = true
 }
 
+/** 库里有增删（删了附件 / 恢复了笔记 / 清空了回收站），侧栏的计数要跟着变 */
 function closeLibrary() {
-  libraryOpen.value = false
-  // 库里可能删了附件或清了回收站，侧栏的计数要跟着变
+  attachOpen.value = false
+  trashOpen.value = false
   window.dispatchEvent(new CustomEvent('nota:library-changed'))
 }
 
@@ -73,6 +77,8 @@ onBeforeUnmount(() => {
     <TitleBar />
     <div class="body">
       <SidePanel v-if="state.root" />
+      <!-- 列表栏只在「笔记」视图里有意义：AI 编写页没有笔记可列 -->
+      <NoteListPanel v-if="state.root && state.mainView === 'note' && state.list" />
       <main class="main">
         <WelcomeView v-if="!state.root" />
         <AiChatPanel v-else-if="state.mainView === 'ai'" />
@@ -83,7 +89,11 @@ onBeforeUnmount(() => {
       </main>
     </div>
 
-    <LibraryDialog :open="libraryOpen" :tab="libraryTab" @close="closeLibrary" />
+    <AttachDialog :open="attachOpen" @close="closeLibrary" />
+    <TrashDialog :open="trashOpen" @close="closeLibrary" />
+
+    <!-- 全应用共用的轻提示：把各处抛出的 nota:toast 接住 -->
+    <ToastHost />
   </div>
 </template>
 

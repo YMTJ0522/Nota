@@ -293,21 +293,30 @@ const header = await evaluate(`(async () => {
   const menu = document.querySelector('.hm-menu')
   const items = menu ? [...menu.querySelectorAll('.hm-item')].map(b => b.textContent.trim()) : []
   if (menuBtn) menuBtn.click()
+  // 版本历史已经从下拉里独立出来，成了顶栏自己的一枚按钮
+  const histBtn = document.querySelector('.ea-btn[title="版本历史"]')
+  const impBtn = document.querySelector('.ea-btn[title^="导入"]')
   return {
     saveText: save ? save.textContent.trim() : null,
     saveClass: save ? save.className : null,
     hasMenuBtn: !!menuBtn,
     menuItems: items,
+    hasHistoryBtn: !!histBtn,
+    historyAfterExport: !!(histBtn && menuBtn &&
+      (menuBtn.compareDocumentPosition(histBtn) & Node.DOCUMENT_POSITION_FOLLOWING)),
+    hasImportBtn: !!impBtn,
   }
 })()`)
 /* 「设置」已经按需求从顶栏菜单挪到侧边栏左下角，
-   所以这里反过来断言：顶栏菜单里**不该**再有设置。 */
+   所以这里反过来断言：顶栏菜单里**不该**再有设置。
+   版本历史同理：它现在是自己一枚按钮，不在下拉里。 */
 ok(
   '6.顶栏功能簇',
   header.saveText && header.hasMenuBtn &&
     header.menuItems.some((t) => t.includes('Markdown')) &&
-    header.menuItems.some((t) => t.includes('版本历史')) &&
-    !header.menuItems.some((t) => t.includes('设置')),
+    !header.menuItems.some((t) => t.includes('设置')) &&
+    !header.menuItems.some((t) => t.includes('版本历史')) &&
+    header.hasHistoryBtn && header.hasImportBtn && header.historyAfterExport,
   header,
 )
 
@@ -326,12 +335,9 @@ ok('7.导出可用', exp && exp.kind === 'md' && exp.name.endsWith('.md'), exp)
 
 /* ── 8. 版本历史面板 ── */
 const hist = await evaluate(`(async () => {
-  const menuBtn = document.querySelector('.hm-anchor')
-  menuBtn.click()
-  await new Promise(r => setTimeout(r, 220))
-  const items = [...document.querySelectorAll('.hm-menu .hm-item')]
-  const h = items.find(b => b.textContent.includes('版本历史'))
-  if (h) h.click()
+  // 独立的按钮，不再藏在导出下拉里
+  const btn = document.querySelector('.ea-btn[title="版本历史"]')
+  if (btn) btn.click()
   await new Promise(r => setTimeout(r, 500))
   const panel = document.querySelector('.hp')
   const rows = panel ? panel.querySelectorAll('.hp-row').length : 0

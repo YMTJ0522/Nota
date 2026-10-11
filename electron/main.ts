@@ -253,10 +253,28 @@ ipcMain.handle('workspace:pick', async () => {
 // 递归读取目录树（只读 .md，跳过隐藏目录）
 // 顺带把每篇笔记 frontmatter 里的 tags 摘出来挂在节点上，
 // 这样侧栏的标签筛选不用再为每个文件单独发一次 IPC。
+// 正文开头也顺手截一句摘要——笔记列表栏要显示，读的是同一个文件头，
+// 不额外开销一次 IO。
 ipcMain.handle('workspace:tree', async (_e, root: string) => {
   workspaceRoot = root
-  async function readMeta(file: string): Promise<{ tags: string[]; starred: boolean }> {
-    const empty = { tags: [] as string[], starred: false }
+
+  /** 从正文里摘一段能当摘要的纯文本：去掉标记符号，只留内容 */
+  function excerptOf(body: string) {
+    return body
+      .replace(/```[\s\S]*?```/g, ' ')        // 代码块整段丢
+      .replace(/!\[[^\]]*\]\([^)]*\)/g, ' ')  // 图片
+      .replace(/\[([^\]]*)\]\([^)]*\)/g, '$1') // 链接只留文字
+      .replace(/^\s{0,3}#{1,6}\s+/gm, ' ')    // 标题号
+      .replace(/^\s{0,3}([-*+]|\d+\.)\s+/gm, ' ') // 列表号
+      .replace(/[`*_>~|]/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim()
+  }
+
+  async function readMeta(
+    file: string,
+  ): Promise<{ tags: string[]; starred: boolean; excerpt: string }> {
+    const empty = { tags: [] as string[], starred: false, excerpt: '' }
     try {
       // 只读文件头部：frontmatter 一定在最前面，不必整篇读进来
       const fd = await fs.open(file, 'r')
@@ -265,29 +283,36 @@ ipcMain.handle('workspace:tree', async (_e, root: string) => {
         const { bytesRead } = await fd.read(buf, 0, 2048, 0)
         const head = buf.subarray(0, bytesRead).toString('utf-8')
         const m = head.match(/^---\r?\n([\s\S]*?)\r?\n---/)
-        if (!m) return empty
         const tags: string[] = []
-        // inline 形式：tags: [a, b]
-        const inline = m[1].match(/^tags:\s*\[([^\]]*)\]/m)
-        if (inline) {
-          for (const t of inline[1].split(',')) {
-            const v = t.trim().replace(/^["']|["']$/g, '')
-            if (v) tags.push(v)
+        let starred = false
+        if (m) {
+          // inline 形式：tags: [a, b]
+          const inline = m[1].match(/^tags:\s*\[([^\]]*)\]/m)
+          if (inline) {
+            for (const t of inline[1].split(',')) {
+              const v = t.trim().replace(/^["']|["']$/g, '')
+              if (v) tags.push(v)
+            }
           }
-        }
-        // 列表形式：
-        // tags:
-        //   - a
-        //   - b
-        const listBlock = m[1].match(/^tags:\s*\n((?:[ \t]*-[ \t]*.+\n?)*)/m)
-        if (listBlock) {
-          for (const line of listBlock[1].split('\n')) {
-            const v = line.replace(/^[ \t]*-[ \t]*/, '').trim().replace(/^["']|["']$/g, '')
-            if (v) tags.push(v)
+          // 列表形式：
+          // tags:
+          //   - a
+          //   - b
+          const listBlock = m[1].match(/^tags:\s*\n((?:[ \t]*-[ \t]*.+\n?)*)/m)
+          if (listBlock) {
+            for (const line of listBlock[1].split('\n')) {
+              const v = line.replace(/^[ \t]*-[ \t]*/, '').trim().replace(/^["']|["']$/g, '')
+              if (v) tags.push(v)
+            }
           }
+          starred = /^(star|starred|favorite|favourite):\s*(true|yes|1)\s*$/im.test(m[1])
         }
-        const star = /^(star|starred|favorite|favourite):\s*(true|yes|1)\s*$/im.test(m[1])
-        return { tags: [...new Set(tags)], starred: star }
+        const body = m ? head.slice(m[0].length) : head
+        return {
+          tags: [...new Set(tags)],
+          starred,
+          excerpt: excerptOf(body).slice(0, 110),
+        }
       } finally {
         await fd.close()
       }
@@ -330,6 +355,7 @@ ipcMain.handle('workspace:tree', async (_e, root: string) => {
           path: full,
           tags: meta.tags,
           starred: meta.starred,
+          excerpt: meta.excerpt,
           mtime,
         })
       }
@@ -343,6 +369,54 @@ ipcMain.handle('workspace:tree', async (_e, root: string) => {
   }
   return walk(root, 0)
 })
+
+/* ── 导入 ──
+   把工作区外面的 Markdown 收进来。和「插图」不同：插图只引用原文件、
+   把副本放进 attachments/；导入是真的把笔记复制进工作区，之后它就是
+   这里的一篇普通笔记，可以改名、可以进回收站。 */
+ipcMain.handle(
+  'note:import',
+  async (_e, root: string, dir?: string): Promise<{ name: string; path: string }[]> => {
+    if (!win) return []
+    const result = await dialog.showOpenDialog(win, {
+      title: '导入笔记',
+      properties: ['openFile', 'multiSelections'],
+      filters: [
+        { name: 'Markdown', extensions: ['md', 'markdown', 'mdx', 'txt'] },
+        { name: '所有文件', extensions: ['*'] },
+      ],
+    })
+    if (result.canceled || result.filePaths.length === 0) return []
+
+    const target = dir || root
+    if (!target) return []
+    await fs.mkdir(target, { recursive: true })
+
+    const out: { name: string; path: string }[] = []
+    for (const src of result.filePaths) {
+      try {
+        const content = await fs.readFile(src, 'utf8')
+        const base =
+          path.basename(src, path.extname(src)).replace(/[\\/:*?"<>|]/g, '-').trim() ||
+          '导入的笔记'
+        let name = `${base}.md`
+        let full = path.join(target, name)
+        let i = 1
+        // 重名就往后加序号，绝不覆盖已有的笔记
+        while (existsSync(full)) {
+          name = `${base} ${i}.md`
+          full = path.join(target, name)
+          i++
+        }
+        await fs.writeFile(full, content, 'utf8')
+        out.push({ name, path: full })
+      } catch {
+        /* 单个文件读不出来不该拖垮整次导入 */
+      }
+    }
+    return out
+  },
+)
 
 // 新建文件夹（父目录下，重名自动加序号）
 ipcMain.handle('folder:create', async (_e, parent: string, name: string) => {

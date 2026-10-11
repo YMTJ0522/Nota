@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
-import { PanelLeftOpen, PanelLeftClose } from 'lucide-vue-next'
+import { PanelLeftOpen, PanelLeftClose, PanelLeft } from 'lucide-vue-next'
 import { store } from '@/store'
 
 const { state, dirty, activeName } = store
@@ -32,6 +32,18 @@ const winClose = () => window.api.closeWindow()
         <PanelLeftClose v-if="state.sidebar" :size="15" :stroke-width="1.8" />
         <PanelLeftOpen v-else :size="15" :stroke-width="1.8" />
       </button>
+
+      <!-- 笔记列表栏的开关。侧栏可以整块收起，列表栏收起后就靠这一枚唤回来 -->
+      <button
+        v-if="state.root && state.mainView === 'note'"
+        class="icon side-pill"
+        :class="{ off: !state.list }"
+        :title="state.list ? '收起笔记列表栏' : '展开笔记列表栏'"
+        @click="store.toggleList()"
+      >
+        <PanelLeft :size="15" :stroke-width="1.8" />
+      </button>
+
       <span class="mark">Nota</span>
       <span v-if="state.activePath" class="sep">/</span>
       <span v-if="state.activePath" class="file">
@@ -126,6 +138,12 @@ const winClose = () => window.api.closeWindow()
 .side-pill svg {
   fill: none;
   stroke: currentColor;
+}
+
+/* 列表栏关掉时按钮整体压暗，一眼能看出当前是关着的 */
+.side-pill.off {
+  color: var(--n-fg-faint);
+  opacity: 0.6;
 }
 
 .right {

@@ -18,7 +18,7 @@ import {
   historyKeymap,
   indentWithTab,
 } from "@codemirror/commands";
-import { highlightSelectionMatches, search, searchKeymap } from "@codemirror/search";
+import { highlightSelectionMatches, search } from "@codemirror/search";
 import {
   bracketMatching,
   foldGutter,
@@ -82,7 +82,10 @@ export function baseExtensions(options: {
     crosshairCursor(),
     highlightActiveLine(),
     highlightSelectionMatches(),
-    // 查找替换面板：显式注册 search 扩展，Ctrl+F 的面板才有一致的结构与样式
+    /* search 扩展只为了它的状态字段——自绘查找条靠 setSearchQuery 写进去，
+       匹配高亮与 findNext/findPrevious 都读它。
+       刻意不挂 searchKeymap：CodeMirror 原生面板带 Find/Replace 一整行
+       控件和「正则 / 整词 / 大小写」一排勾选框，对笔记来说太重了。 */
     search({ top: true }),
     markdown({
       base: markdownLanguage,
@@ -92,7 +95,7 @@ export function baseExtensions(options: {
     markdownLivePreview,
     fencedCodeBlockHighlighter(),
     codeLangCompleteExtensions(),
-    // 自定义搜索条优先于原生面板：Prec.highest 保证 Ctrl+F 不被 searchKeymap 抢走
+    // 自绘查找条：Ctrl+F 直接交给外层那条输入框
     ...(onFind
       ? [
           Prec.highest(
@@ -105,7 +108,6 @@ export function baseExtensions(options: {
     keymap.of([
       ...closeBracketsKeymap,
       ...defaultKeymap,
-      ...searchKeymap,
       ...historyKeymap,
       ...foldKeymap,
       ...toolbarKeymap,

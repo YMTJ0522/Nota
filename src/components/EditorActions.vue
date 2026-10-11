@@ -1,11 +1,21 @@
 <script setup lang="ts">
+/**
+ * 编辑区顶栏右侧的三个文件动作。
+ *
+ * 原来是「更多操作」一个下拉里塞了导出 Markdown / 导出 HTML / 版本历史——
+ * 点两下才够得着，而且三件事的性质根本不同。现在拆开：
+ *   导入（把外面的 .md 收进工作区） · 导出（另存为 md / html） · 版本历史
+ * 各自一个按钮，导出保留下拉是因为它确实有两种格式要选。
+ */
 import { ref, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import {
   /* 图标统一取自 Lucide（ISC），和工具栏同源 */
   Download,
-  FileText,
   FileCode2,
+  FileText,
   History,
+  Loader2,
+  Upload,
 } from 'lucide-vue-next'
 import { store } from '@/store'
 import HistoryPanel from '@/components/HistoryPanel.vue'
@@ -14,13 +24,15 @@ const { state } = store
 
 const openMenu = ref(false)
 const historyOpen = ref(false)
+/** 导入要读文件再写文件，给个转圈，免得以为点了没反应 */
+const importing = ref(false)
 
 const anchor = ref<HTMLElement | null>(null)
 const menu = ref<HTMLElement | null>(null)
 const style = ref<Record<string, string>>({})
 
 /** 和工具栏下拉同一套摆位逻辑：量锚点、右边缘避让。
-    这里菜单挂在 header 里，父级没有 overflow 裁剪，但仍用 fixed
+    菜单挂在 header 里，父级没有 overflow 裁剪，但仍用 fixed
     保持和工具栏一致的行为（窗口 resize 时不会错位）。 */
 function place() {
   const a = anchor.value
@@ -50,20 +62,36 @@ function close() {
   openMenu.value = false
 }
 
+function toast(text: string) {
+  window.dispatchEvent(new CustomEvent('nota:toast', { detail: text }))
+}
+
 async function doExport(kind: 'md' | 'html') {
   close()
   const path = await store.exportNote(kind)
-  if (path) window.dispatchEvent(new CustomEvent('nota:toast', { detail: `已导出到 ${path}` }))
+  if (path) toast(`已导出到 ${path}`)
 }
 
-function openHistory() {
-  close()
-  historyOpen.value = true
+/**
+ * 导入：把工作区外面的 Markdown 收进来。
+ * 目标目录取「当前笔记所在的目录」，没有打开的笔记就放工作区根——
+ * 多数人是「正在哪写就收到哪」。
+ */
+async function doImport() {
+  if (importing.value) return
+  importing.value = true
+  try {
+    const added = await store.importNotes()
+    if (!added.length) return
+    toast(`已导入 ${added.length} 篇：${added.map((a) => a.name).join('、')}`)
+  } finally {
+    importing.value = false
+  }
 }
 
 function onDocPointer(e: PointerEvent) {
   const el = e.target as HTMLElement
-  if (!el.closest('.hm-menu') && !el.closest('.hm-anchor')) close()
+  if (!el.closest('.ea-menu') && !el.closest('.ea-anchor')) close()
 }
 
 function onKey(e: KeyboardEvent) {
@@ -90,32 +118,49 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="hm">
+  <div class="ea">
+    <!-- 导入：和导出左右相邻，一进一出 -->
+    <button
+      class="ea-btn"
+      title="导入 Markdown 文件到工作区"
+      :disabled="!state.root || importing"
+      @click="doImport"
+    >
+      <Loader2 v-if="importing" class="spin" :size="14" :stroke-width="1.9" />
+      <Upload v-else :size="14" :stroke-width="1.9" />
+    </button>
+
+    <!-- 导出：两种格式，所以还是留一个下拉 -->
     <button
       ref="anchor"
-      class="hm-anchor hm-btn"
+      class="ea-btn ea-anchor hm-anchor"
       :class="{ on: openMenu }"
-      title="更多操作"
+      title="导出当前笔记"
       :disabled="!state.activePath"
       @click="toggle"
     >
       <Download :size="14" :stroke-width="1.9" />
     </button>
 
+    <!-- 版本历史：从原来的下拉里独立出来 -->
+    <button
+      class="ea-btn"
+      title="版本历史"
+      :disabled="!state.activePath"
+      @click="historyOpen = true"
+    >
+      <History :size="14" :stroke-width="1.9" />
+    </button>
+
     <Teleport to="body">
-      <div v-if="openMenu" ref="menu" class="hm-menu" :style="style">
-        <button class="hm-item" @click="doExport('md')">
+      <div v-if="openMenu" ref="menu" class="ea-menu hm-menu" :style="style">
+        <button class="ea-item hm-item" @click="doExport('md')">
           <FileText :size="14" :stroke-width="1.8" />
           <span>导出为 Markdown</span>
         </button>
-        <button class="hm-item" @click="doExport('html')">
+        <button class="ea-item hm-item" @click="doExport('html')">
           <FileCode2 :size="14" :stroke-width="1.8" />
           <span>导出为 HTML</span>
-        </button>
-        <span class="hm-sep" />
-        <button class="hm-item" @click="openHistory">
-          <History :size="14" :stroke-width="1.8" />
-          <span>版本历史</span>
         </button>
       </div>
     </Teleport>
@@ -125,14 +170,16 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
-.hm {
+.ea {
   display: inline-flex;
   align-items: center;
+  gap: 1px;
 }
 
-.hm-btn {
+.ea-btn {
   width: 26px;
   height: 24px;
+  padding: 0;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -141,30 +188,41 @@ onBeforeUnmount(() => {
   transition: background var(--n-dur) var(--n-ease), color var(--n-dur) var(--n-ease);
 }
 
-.hm-btn svg {
+.ea-btn svg {
   fill: none;
   stroke: currentColor;
 }
 
-.hm-btn:hover:not(:disabled) {
+.ea-btn:hover:not(:disabled) {
   background: var(--n-raised);
   color: var(--n-fg);
 }
 
-.hm-btn.on {
+.ea-btn.on {
   background: var(--n-raised);
   color: var(--n-accent);
 }
 
-.hm-btn:disabled {
+.ea-btn:disabled {
   opacity: 0.4;
   cursor: default;
+}
+
+.spin {
+  animation: ea-spin 900ms linear infinite;
+}
+
+@keyframes ea-spin {
+  to { transform: rotate(360deg); }
 }
 </style>
 
 <style>
-/* 菜单本体被 Teleport 到 body，不受 scoped 约束，单独写一段 */
-.hm-menu {
+/* 菜单本体被 Teleport 到 body，不受 scoped 约束，单独写一段。
+   类名沿用原来的 hm-menu / hm-item：它已经在几轮回归脚本里被引用，
+   而这里的行为（量锚点、右边缘避让）本来就一模一样。 */
+.hm-menu,
+.ea-menu {
   z-index: 999;
   width: max-content;
   min-width: 154px;
@@ -173,10 +231,11 @@ onBeforeUnmount(() => {
   border: 1px solid var(--n-line);
   border-radius: var(--n-r-md);
   box-shadow: var(--n-shadow-lg);
-  animation: hm-in 120ms var(--n-ease);
+  animation: ea-in 120ms var(--n-ease);
 }
 
-.hm-item {
+.hm-item,
+.ea-item {
   width: 100%;
   height: 30px;
   display: flex;
@@ -190,30 +249,26 @@ onBeforeUnmount(() => {
   white-space: nowrap;
 }
 
-.hm-item svg {
+.hm-item svg,
+.ea-item svg {
   fill: none;
   stroke: currentColor;
   color: var(--n-fg-faint);
   flex: none;
 }
 
-.hm-item:hover {
+.hm-item:hover,
+.ea-item:hover {
   background: var(--n-accent-soft);
   color: var(--n-accent);
 }
 
-.hm-item:hover svg {
+.hm-item:hover svg,
+.ea-item:hover svg {
   color: var(--n-accent);
 }
 
-.hm-sep {
-  display: block;
-  height: 1px;
-  margin: 4px 6px;
-  background: var(--n-line);
-}
-
-@keyframes hm-in {
+@keyframes ea-in {
   from { opacity: 0; transform: translateY(-4px); }
   to { opacity: 1; transform: none; }
 }

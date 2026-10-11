@@ -244,7 +244,9 @@ const rootTail = computed(() => {
         <!-- 文件夹 / 笔记 -->
         <section class="sec">
           <div class="sec-head">
-            <span class="sec-title">{{ state.navFilter === 'all' ? '文件夹' : '笔记' }}</span>
+            <span class="sec-title">
+              {{ state.activeTag ? `# ${state.activeTag}` : state.navFilter === 'all' ? '文件夹' : '笔记' }}
+            </span>
             <button class="sec-add" data-tip="新建文件夹" @click="store.startNewFolder()">
               <FolderPlus :size="13" :stroke-width="1.9" />
             </button>

@@ -15,6 +15,7 @@ interface NoteApi {
   createFolder(parent: string, name: string): Promise<string>
   deleteNote(file: string): Promise<boolean>
   renameNote(file: string, newName: string): Promise<string>
+  importNotes(root: string, dir: string): Promise<{ name: string; path: string }[]>
   pickImage(
     workspace: string,
     kind?: 'image' | 'video' | 'any',
@@ -72,6 +73,8 @@ interface TreeNode {
   mtime?: number
   /** 仅文件：frontmatter 里 star: true */
   starred?: boolean
+  /** 仅文件：正文开头的一段纯文本摘要 */
+  excerpt?: string
 }
 
 declare global {
