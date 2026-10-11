@@ -33,13 +33,15 @@ const winClose = () => window.api.closeWindow()
         <PanelLeftOpen v-else :size="15" :stroke-width="1.8" />
       </button>
 
-      <!-- 笔记列表栏的开关。侧栏可以整块收起，列表栏收起后就靠这一枚唤回来 -->
+      <!-- 资料栏（中间那一列）的开关。它收起后就靠这一枚唤回来。
+           这一列里能看笔记、附件、回收站、AI 对话，所以标题不再只说「笔记列表」。 -->
       <button
-        v-if="state.root && state.mainView === 'note'"
+        v-if="state.root"
         class="icon side-pill"
-        :class="{ off: !state.list }"
-        :title="state.list ? '收起笔记列表栏' : '展开笔记列表栏'"
-        @click="store.toggleList()"
+        data-role="column-toggle"
+        :class="{ off: !state.column }"
+        :title="state.column ? '收起侧栏列表' : '展开侧栏列表'"
+        @click="store.toggleColumn()"
       >
         <PanelLeft :size="15" :stroke-width="1.8" />
       </button>
@@ -176,8 +178,9 @@ const winClose = () => window.api.closeWindow()
   text-overflow: ellipsis;
 }
 
+/* 文件名后面的「未保存」小点：和顶栏那个保存状态同一套交通灯语言 */
 .dot {
-  color: var(--n-accent);
+  color: var(--n-danger);
   font-size: 16px;
   line-height: 1;
 }

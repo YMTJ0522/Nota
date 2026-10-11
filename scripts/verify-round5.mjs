@@ -279,26 +279,35 @@ ok(
   navSel,
 )
 
-/* ── 3. AI 编写是主区聊天页 ── */
+/* ── 3. AI 编写在资料栏里（紧凑布局，不再占满主区） ──
+   铺满整屏时它把要改的正文挡住了 —— 而它的用法本来就是「边看边改」。
+   所以挪进中间那一列：左边聊，右边正文还看得见。 */
 const chat = await evaluate(`(async () => {
   await new Promise(r => setTimeout(r, 500))
   const el = document.querySelector('.chat')
-  const inSide = !!el?.closest('.panel')
+  const col = el?.closest('.col')
   return {
     exists: !!el,
-    inSide,
-    title: el?.querySelector('.head-title')?.textContent?.trim() ?? '',
-    model: el?.querySelector('.model')?.textContent?.trim() ?? '',
+    compact: el?.classList.contains('compact') ?? false,
+    inColumn: col?.getAttribute('data-view') === 'ai',
+    // 紧凑下标题让位给会话下拉，模型收成一个图标
+    sessPicker: !!el?.querySelector('.sess-wrap .hbtn'),
+    modelIconOnly: !!el?.querySelector('.model-wrap.model-icon-only'),
+    railHidden: !el?.querySelector('.rail'),
     hero: !!el?.querySelector('.hero-title'),
     quick: el?.querySelectorAll('.quick-card').length ?? 0,
     hasComposer: !!el?.querySelector('.composer .input'),
     width: Math.round(el?.getBoundingClientRect().width ?? 0),
+    // 正文还得在 —— 这是搬进来的全部理由
+    editorAlive: !!document.querySelector('.stage'),
   }
 })()`)
 ok(
-  '3.AI 编写是主区聊天页',
-  chat.exists && !chat.inSide && chat.title === 'AI 编写' && chat.quick === 4 &&
-    chat.hasComposer && chat.width > 700,
+  '3.AI 编写在资料栏里（紧凑）且正文仍可见',
+  chat.exists && chat.compact && chat.inColumn && chat.sessPicker &&
+    chat.modelIconOnly && chat.railHidden &&
+    chat.hero && chat.quick === 4 && chat.hasComposer &&
+    chat.width > 200 && chat.width < 600 && chat.editorAlive,
   chat,
 )
 
@@ -622,56 +631,80 @@ ok(
   groups.groups,
 )
 
-/* ── 15. AI 会话管理：新建 / 自动起名 / 切换 / 落盘 ── */
+/* ── 15. AI 会话管理：新建 / 自动起名 / 切换 / 落盘 ──
+   紧凑布局没有常驻侧轨了，会话收进头部那个下拉里：
+   点标题出菜单，菜单顶栏的 + 就是新建。功能一样，只是换了个地方。 */
 const sess = await evaluate(`(async () => {
+  const wait = (ms) => new Promise(r => setTimeout(r, ms))
   const nav = [...document.querySelectorAll('.panel .nav-item')]
     .find(x => (x.querySelector('.nav-label')?.textContent ?? '').trim() === 'AI 编写')
   nav?.click()
-  await new Promise(r => setTimeout(r, 500))
-  const before = document.querySelectorAll('.chat .rail .sess').length
-  document.querySelector('.chat .rail-add')?.click()
-  await new Promise(r => setTimeout(r, 450))
-  const items = [...document.querySelectorAll('.chat .rail .sess')]
-  const activeFirst = items[0]?.classList.contains('on') ?? false
+  await wait(500)
+
+  const openMenu = async () => {
+    document.querySelector('.chat .sess-wrap .hbtn')?.click()
+    await wait(320)
+    return document.querySelector('.chat .sess-menu')
+  }
+  const names = () => [...document.querySelectorAll('.chat .sess-menu .n-menu-name')]
+    .map(e => e.textContent.trim())
+
+  const menu = await openMenu()
+  const menuIsDropdown = menu?.classList.contains('n-menu') ?? false
+  const before = menu?.querySelectorAll('.n-menu-item').length ?? 0
+
+  // 新建：菜单顶栏那个 +
+  menu?.querySelector('.sess-mini')?.click()
+  await wait(450)
+  const titleAfterNew = document.querySelector('.chat .sess-wrap .hbtn-name')?.textContent?.trim() ?? ''
   const emptyRows = document.querySelectorAll('.chat .stream .row').length
-  const hasNewTitle = items.some(e => (e.querySelector('.sess-name')?.textContent ?? '').trim() === '新对话')
+
+  await openMenu()
+  const after = names().length
+  const activeFirst = document.querySelector('.chat .sess-menu .n-menu-item')?.classList.contains('on') ?? false
+  document.body.click()
+  await wait(200)
+
   // 发一条，会话标题应自动变成那句提问
   const box = document.querySelector('.chat .composer .input')
   box.focus(); box.value = '这是一句用来当标题的提问'
   box.dispatchEvent(new Event('input', { bubbles: true }))
-  await new Promise(r => setTimeout(r, 150))
+  await wait(150)
   document.querySelector('.chat .composer .send')?.click()
-  await new Promise(r => setTimeout(r, 1300))
-  const titles2 = [...document.querySelectorAll('.chat .rail .sess')]
-    .map(e => (e.querySelector('.sess-name')?.textContent ?? '').trim())
+  await wait(1300)
+  const titleAfterAsk = document.querySelector('.chat .sess-wrap .hbtn-name')?.textContent?.trim() ?? ''
+
   // 我的消息靠右、AI 靠左
   const userRow = document.querySelector('.chat .stream .row.user')
   const aiRow = document.querySelector('.chat .stream .row.assistant')
   const dir = { user: userRow ? getComputedStyle(userRow).flexDirection : '', ai: aiRow ? getComputedStyle(aiRow).flexDirection : '' }
+
   // 切回最早那条，消息要跟着换
-  const list = [...document.querySelectorAll('.chat .rail .sess')]
+  const m2 = await openMenu()
+  const list = [...(m2?.querySelectorAll('.n-menu-item') ?? [])]
   list[list.length - 1]?.click()
-  await new Promise(r => setTimeout(r, 700))
+  await wait(700)
   const rowsAfterSwitch = document.querySelectorAll('.chat .stream .row').length
+
   let saved = {}
   try { saved = JSON.parse(localStorage.getItem('nota-chat-sessions') || '{}') } catch {}
   return {
-    before, after: document.querySelectorAll('.chat .rail .sess').length,
-    activeFirst, emptyRows, hasNewTitle, titles2, dir, rowsAfterSwitch,
+    menuIsDropdown, before, after, activeFirst, titleAfterNew, emptyRows,
+    titleAfterAsk, dir, rowsAfterSwitch,
     savedCount: (saved.sessions || []).length,
     savedActive: saved.active,
     savedMsgs: (saved.sessions || []).reduce((n, s) => n + (s.messages || []).length, 0),
   }
 })()`)
 ok(
-  '15.会话管理：新建 / 自动起名 / 左右分明 / 落盘',
-  sess.after === sess.before + 1 && sess.activeFirst && sess.emptyRows === 0 &&
-    sess.hasNewTitle &&
-    sess.titles2.some((t) => t.includes('这是一句用来当标题的提问')) &&
+  '15.会话管理：头部下拉里新建 / 自动起名 / 左右分明 / 落盘',
+  sess.menuIsDropdown && sess.after === sess.before + 1 && sess.activeFirst &&
+    sess.titleAfterNew === '新对话' && sess.emptyRows === 0 &&
+    sess.titleAfterAsk.includes('这是一句用来当标题的提问') &&
     sess.dir.user === 'row-reverse' && sess.dir.ai === 'row' &&
     sess.rowsAfterSwitch > 0 &&
     sess.savedCount >= 2 && sess.savedActive > 0 && sess.savedMsgs >= 2,
-  { ...sess, titles2: sess.titles2 },
+  sess,
 )
 
 /* ── 16. 编辑区右键菜单 ── */

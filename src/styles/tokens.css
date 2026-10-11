@@ -40,10 +40,14 @@
   --n-ok-soft: #e5f1e8;
 
   /* 编辑器专用 */
-  /* 选中色要能压得住正文又不吃掉文字：透明度过低会"看不清选中了哪"，
-     过高则文字与底色糊在一起。这里用强调色 0.3 + 一层描边感的深底。 */
-  --n-selection: color-mix(in oklab, var(--n-accent) 30%, transparent);
-  --n-selection-fg: #1c2b22;
+  /* 选中色。
+     以前是「强调色 + 透明」，想法是让高亮跟着主题色走，实际效果不好：
+     透明意味着底色会透上来，深色主题下紫色（紫藤）混上近黑底就成了
+     一片发灰的浊色，白字压上去糊成一团，看着像「没选中」。
+     现在改成不透明的实色（和 --n-bg 混），两套主题各给一个合适的浓度：
+     浅色下浅一档即可，深色下要够浓才盖得住底、又留得住文字对比。 */
+  --n-selection: color-mix(in oklab, var(--n-accent) 30%, var(--n-bg));
+  --n-selection-fg: #1b1f1c;
   --n-active-line: color-mix(in oklab, var(--n-accent) 5%, transparent);
   --n-code-bg: #f1efe9;
   --n-code-fg: #7a4a2b;
@@ -165,8 +169,8 @@
   --n-ok: #7fc196;
   --n-ok-soft: #22332a;
 
-  --n-selection: color-mix(in oklab, var(--n-accent) 34%, transparent);
-  --n-selection-fg: #eef5f0;
+  --n-selection: color-mix(in oklab, var(--n-accent) 52%, var(--n-bg));
+  --n-selection-fg: #f4f7f3;
   --n-active-line: color-mix(in oklab, var(--n-accent) 6%, transparent);
   --n-code-bg: #191a1e;
   --n-code-fg: #e0b48c;
@@ -235,6 +239,21 @@
 
 * {
   box-sizing: border-box;
+}
+
+/* 全应用统一的选中态。
+   不写这条的话，输入框、AI 气泡、设置里的文字选中会退回系统默认的
+   蓝色方块 —— 一个界面里出现两套选中色，怎么摆都不像同一个东西。
+   编辑器内部由 CodeMirror 主题接管，用的是同一个变量。 */
+::selection {
+  background: var(--n-selection);
+  color: var(--n-selection-fg);
+}
+
+/* 焦点圈也统一走强调色，别让浏览器默认的蓝色描边漏出来 */
+:focus-visible {
+  outline: 2px solid color-mix(in oklab, var(--n-accent) 62%, transparent);
+  outline-offset: 1px;
 }
 
 html,

@@ -1,84 +1,61 @@
 /* ─────────────────────────────────────────────
-   对话框外壳（全局）
+   侧栏 / 中间栏里的公共件（全局）
 
-   附件库、回收站、版本历史是三个各自独立的窗口，但外壳是同一套：
-   一层遮罩 + 一块面板 + 44px 的头 + 可滚内容 + 底部动作条。
+   附件库、回收站、笔记列表都住进了中间那一列，它们要的那几样东西
+   是同几样：一个小标题行、一条条的行、一个个小按钮、空状态、底部动作条。
    与其在每个组件里 scoped 抄一遍（改个圆角要改三处），不如放全局。
    颜色一律走 tokens，跟着主题与强调色走。
 
-   命名统一 dlg- 前缀，和组件自己的私有样式（adlg- / tdlg-）分得开。
+   命名统一 pn- 前缀（panel），和组件自己的私有样式（av- / tv-）分得开。
    ───────────────────────────────────────────── */
 
-.dlg-mask {
-  position: fixed;
-  inset: 0;
-  z-index: 60;
-  display: flex;
-  align-items: flex-start;
-  justify-content: center;
-  padding: 8vh 16px 16px;
-  background: var(--n-mask);
-}
-
-.dlg {
-  width: 640px;
-  max-width: 100%;
-  display: flex;
-  flex-direction: column;
-  max-height: 76vh;
-  border: 1px solid var(--n-line);
-  border-radius: var(--n-r-lg);
-  background: var(--n-raised);
-  box-shadow: var(--n-shadow-xl);
-  overflow: hidden;
-}
-
-.dlg-head {
+/* ── 栏头 ── */
+.pn-head {
   flex: none;
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 9px 10px 9px 14px;
+  gap: 7px;
+  height: 38px;
+  padding: 0 8px 0 14px;
   border-bottom: 1px solid var(--n-line);
 }
 
-.dlg-head-ico {
+.pn-ico {
   flex: none;
   display: inline-flex;
   color: var(--n-accent);
 }
 
-.dlg-head-ico svg {
-  fill: none;
-  stroke: currentColor;
-}
-
-.dlg-title {
-  font-size: 13px;
+.pn-title {
+  font-size: 12.5px;
   font-weight: 600;
   letter-spacing: -0.01em;
   color: var(--n-fg);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 /* 头部右侧的次要说明：条数、路径之类 */
-.dlg-sub {
+.pn-sub {
   flex: 1;
   min-width: 0;
-  font-size: 11.5px;
+  font-size: 11px;
   color: var(--n-fg-faint);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
-.dlg-spacer {
+.pn-spacer {
   flex: 1;
 }
 
-.dlg-x {
+.pn-x {
   flex: none;
-  width: 26px;
-  height: 26px;
+  width: 24px;
+  height: 24px;
+  padding: 0;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -86,70 +63,69 @@
   color: var(--n-fg-dim);
 }
 
-.dlg-x svg {
+.pn-x:hover {
+  background: var(--n-raised);
+  color: var(--n-fg);
+}
+
+.pn-head svg,
+.pn-x svg,
+.pn-act svg,
+.pn-btn svg {
   fill: none;
   stroke: currentColor;
 }
 
-.dlg-x:hover {
-  background: var(--n-surface);
-  color: var(--n-fg);
-}
-
-.dlg-body {
+/* ── 内容区 ── */
+.pn-body {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  padding: 14px;
+  padding: 10px;
 }
 
-.dlg-empty {
-  padding: 40px 20px;
+.pn-empty {
+  padding: 34px 14px;
   text-align: center;
-  font-size: 12.5px;
+  font-size: 12px;
   line-height: 1.8;
   color: var(--n-fg-faint);
 }
 
-.dlg-empty code {
+.pn-empty code {
   padding: 1px 5px;
   border-radius: 4px;
   background: var(--n-code-bg);
   font-family: var(--n-font-mono);
-  font-size: 11.5px;
+  font-size: 11px;
 }
 
-/* ── 行列表（回收站、附件列表都用） ── */
-.dlg-list {
-  border: 1px solid var(--n-line);
-  border-radius: var(--n-r-md);
-  overflow: hidden;
+/* ── 行列表 ── */
+.pn-list {
+  display: flex;
+  flex-direction: column;
 }
 
-.dlg-row {
+.pn-row {
   display: flex;
   align-items: center;
-  gap: 9px;
+  gap: 8px;
   width: 100%;
-  padding: 9px 11px;
+  padding: 8px 9px;
+  border-radius: var(--n-r-md);
   text-align: left;
 }
 
-.dlg-row + .dlg-row {
-  border-top: 1px solid var(--n-line);
+.pn-row:hover {
+  background: color-mix(in oklab, var(--n-raised) 62%, transparent);
 }
 
-.dlg-row-ico {
+.pn-row-ico {
   flex: none;
   color: var(--n-fg-faint);
 }
 
-.dlg-row-ico svg {
-  fill: none;
-  stroke: currentColor;
-}
-
-.dlg-row-main {
+.pn-row-main {
   flex: 1;
   min-width: 0;
   display: flex;
@@ -157,16 +133,16 @@
   gap: 2px;
 }
 
-.dlg-row-name {
-  font-size: 12.5px;
+.pn-row-name {
+  font-size: 12px;
   color: var(--n-fg);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
-.dlg-row-sub {
-  font-size: 10.5px;
+.pn-row-sub {
+  font-size: 10px;
   color: var(--n-fg-faint);
   white-space: nowrap;
   overflow: hidden;
@@ -174,88 +150,86 @@
 }
 
 /* ── 小按钮 ── */
-.dlg-act {
+.pn-act {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   gap: 4px;
   flex: none;
-  height: 24px;
-  min-width: 30px;
-  padding: 0 9px;
+  height: 23px;
+  min-width: 28px;
+  padding: 0 8px;
   border: 1px solid var(--n-line-strong);
   border-radius: var(--n-r-sm);
-  font-size: 11.5px;
+  font-size: 11px;
   color: var(--n-fg-dim);
   background: none;
 }
 
-.dlg-act svg {
-  fill: none;
-  stroke: currentColor;
-}
-
-.dlg-act:hover {
+.pn-act:hover {
   background: var(--n-accent-soft);
   border-color: var(--n-accent);
   color: var(--n-accent);
 }
 
-.dlg-act.danger:hover {
+.pn-act.danger:hover {
   background: var(--n-danger-soft);
   border-color: var(--n-danger);
   color: var(--n-danger);
 }
 
-.dlg-foot {
+.pn-foot {
   display: flex;
-  justify-content: flex-end;
+  align-items: center;
   gap: 8px;
-  padding-top: 11px;
+  padding: 10px 2px 2px;
 }
 
-.dlg-btn {
+.pn-btn {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  height: 28px;
-  padding: 0 13px;
+  height: 27px;
+  padding: 0 12px;
   border-radius: var(--n-r-md);
   border: 1px solid var(--n-line);
-  font-size: 12px;
+  font-size: 11.5px;
   color: var(--n-fg-dim);
   background: var(--n-surface);
 }
 
-.dlg-btn svg {
-  fill: none;
-  stroke: currentColor;
-}
-
-.dlg-btn:hover {
+.pn-btn:hover {
   color: var(--n-fg);
   background: var(--n-raised);
 }
 
-.dlg-btn.primary {
-  border-color: transparent;
-  background: var(--n-accent);
-  color: var(--n-on-accent);
-}
-
-.dlg-btn.primary:hover {
-  filter: brightness(1.08);
-  color: var(--n-on-accent);
-  background: var(--n-accent);
-}
-
-.dlg-btn.danger {
+.pn-btn.danger {
   border-color: var(--n-danger);
   background: none;
   color: var(--n-danger);
 }
 
-.dlg-btn.danger:hover {
+.pn-btn.danger:hover {
   background: var(--n-danger-soft);
   color: var(--n-danger);
+}
+
+.pn-tip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-right: auto;
+  font-size: 10px;
+  color: var(--n-fg-faint);
+}
+
+/* ── 拖动分隔线时 ──
+   侧栏折叠/展开有一个 220ms 的宽度过渡，那是给「整块滑过去」用的；
+   拖分隔线时这个过渡会让栏像橡皮筋一样甩在后面，得临时关掉。
+   用 body 上的一个标记类控制，SplitHandle 在按下/松开时加减。 */
+body.n-dragging,
+body.n-dragging * {
+  cursor: col-resize !important;
+  transition: none !important;
+  user-select: none !important;
 }

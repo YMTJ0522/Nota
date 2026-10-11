@@ -49,7 +49,7 @@ function isActive(id: SlashCommandId) {
 <template>
   <div
     v-if="items.length"
-    class="slash"
+    class="slash n-menu"
     :style="style"
     role="listbox"
     @pointerdown.prevent
@@ -60,7 +60,7 @@ function isActive(id: SlashCommandId) {
       type="button"
       role="option"
       :aria-selected="isActive(item.id)"
-      :class="['slash-item', { on: isActive(item.id) }]"
+      :class="['slash-item', 'n-menu-item', { on: isActive(item.id) }]"
       @click="emit('pick', item.id)"
     >
       <span class="ico">{{ ICONS[item.id] }}</span>
@@ -71,41 +71,20 @@ function isActive(id: SlashCommandId) {
 </template>
 
 <style scoped>
+/* 面板与行的长相统一在 styles/menu.css 的 .n-menu / .n-menu-item 里，
+   这里只保留斜杠菜单特有的东西：定位、宽度、那枚方块图标和 AI 角标 */
 .slash {
   position: fixed;
   z-index: 60;
   width: 232px;
   max-height: 300px;
   overflow-y: auto;
-  padding: 4px;
-  background: var(--n-raised);
-  border: 1px solid var(--n-line);
-  border-radius: var(--n-r-md);
-  box-shadow: var(--n-shadow-lg);
-  animation: slash-in 120ms var(--n-ease);
-}
-
-@keyframes slash-in {
-  from { opacity: 0; transform: translateY(-4px) scale(0.98); }
-  to { opacity: 1; transform: none; }
 }
 
 .slash-item {
-  width: 100%;
   height: 30px;
-  display: flex;
-  align-items: center;
   gap: 9px;
-  padding: 0 8px;
-  border-radius: var(--n-r-sm);
   font-size: 13px;
-  color: var(--n-fg);
-  text-align: left;
-}
-
-.slash-item.on {
-  background: var(--n-accent-soft);
-  color: var(--n-accent);
 }
 
 .ico {

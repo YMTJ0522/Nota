@@ -364,44 +364,54 @@ ok(
   embed,
 )
 
-/* ── 10. 附件库 / 回收站（两个各自独立的窗口） ── */
+/* ── 10. 附件库 / 回收站（资料栏里的两个视图，不再是弹窗） ──
+   原来是两个各自独立的窗口，开一个就得先想「我现在在第几层」。
+   现在挪进中间那一列：左边挑素材，右边光标还等着，这才是插图该有的样子。
+   所以这里反过来断言「弹窗已经不存在」，免得哪天又长回来。 */
 const lib = await evaluate(`(async () => {
   const pick = (label) => [...document.querySelectorAll('.panel .nav-item')]
     .find(b => (b.querySelector('.nav-label')?.textContent ?? '').includes(label))
+  const wait = (ms) => new Promise(r => setTimeout(r, ms))
 
-  // 附件库
+  // 附件库：点侧栏入口，内容长在资料栏里
   pick('附件库')?.click()
-  await new Promise(r => setTimeout(r, 650))
-  const attachDlg = document.querySelector('.dlg[aria-label="附件库"]')
-  const cards = attachDlg?.querySelectorAll('.adlg-card').length ?? 0
-  const trashOpenWhileAttach = !!document.querySelector('.dlg[aria-label="回收站"]')
-  attachDlg?.querySelector('.dlg-x')?.click()
-  await new Promise(r => setTimeout(r, 300))
-  const attachClosed = !document.querySelector('.dlg[aria-label="附件库"]')
+  await wait(700)
+  const colAttach = document.querySelector('.col[data-view="attach"]')
+  const cards = colAttach?.querySelectorAll('.av-card').length ?? 0
+  const attachTitle = colAttach?.querySelector('.pn-title')?.textContent ?? ''
+  const trashGoneMeanwhile = !document.querySelector('.tv')
+  const dialogs = document.querySelectorAll('.dlg, .dlg-mask').length
 
-  // 回收站：单独开一个窗口，不是同一块面板里的第二个页签
+  // 回收站：同一块栏换一页，不是再叠一个窗口
   pick('回收站')?.click()
-  await new Promise(r => setTimeout(r, 650))
-  const trashDlg = document.querySelector('.dlg[aria-label="回收站"]')
-  const rows = trashDlg?.querySelectorAll('.dlg-row').length ?? 0
-  const hasRestore = !!trashDlg?.querySelector('.tdlg-restore')
-  const attachOpenWhileTrash = !!document.querySelector('.dlg[aria-label="附件库"]')
-  const tabs = document.querySelectorAll('.lib-tab').length
-  trashDlg?.querySelector('.dlg-x')?.click()
-  await new Promise(r => setTimeout(r, 300))
+  await wait(700)
+  const colTrash = document.querySelector('.col[data-view="trash"]')
+  const rows = colTrash?.querySelectorAll('.pn-row').length ?? 0
+  const hasRestore = !!colTrash?.querySelector('.tv-restore')
+  const attachGoneMeanwhile = !document.querySelector('.av')
+
+  // 切回笔记：列表和正文都还在 —— 换页只是换这一栏的内容
+  document.querySelector('.col-tab[data-view="notes"]')?.click()
+  await wait(500)
+  const backToNotes = !!document.querySelector('.col[data-view="notes"] .nlist')
+  const editorAlive = !!document.querySelector('.stage')
   return {
-    cards, rows, hasRestore, tabs,
-    trashOpenWhileAttach, attachOpenWhileTrash, attachClosed,
-    closed: !document.querySelector('.dlg[aria-label="回收站"]'),
-    heads: document.querySelectorAll('.dlg').length,
+    cards, attachTitle, rows, hasRestore,
+    trashGoneMeanwhile, attachGoneMeanwhile,
+    dialogs, backToNotes, editorAlive,
+    inColumn: !!colAttach && !!colTrash,
+    tabs: document.querySelectorAll('.lib-tab').length,
   }
 })()`)
 ok(
-  '10.附件库与回收站各自独立成窗口',
-  lib.cards > 0 && lib.rows > 0 && lib.hasRestore &&
-    // 页签组已经没有了，两个窗口也从不共存
-    lib.tabs === 0 && !lib.trashOpenWhileAttach && !lib.attachOpenWhileTrash &&
-    lib.attachClosed && lib.closed,
+  '10.附件库与回收站是资料栏里的两个视图（不再是弹窗）',
+  lib.cards === 1 && lib.rows === 1 && lib.hasRestore && lib.inColumn &&
+    lib.attachTitle.includes('附件库') &&
+    // 换页是真的换页：切到回收站时附件视图已经不在了，反之亦然
+    lib.trashGoneMeanwhile && lib.attachGoneMeanwhile &&
+    // 反向断言：弹窗和旧页签组一个都不许有
+    lib.dialogs === 0 && lib.tabs === 0 &&
+    lib.backToNotes && lib.editorAlive,
   lib,
 )
 

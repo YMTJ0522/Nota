@@ -1,0 +1,185 @@
+/* ─────────────────────────────────────────────
+   菜单（全局）
+
+   全应用只有这一套菜单长相：顶栏的导出菜单、工具栏的八个下拉、右键菜单、
+   AI 的模型 / 会话选择、设置里的下拉……都是同一块板子上的同一批行。
+
+   为什么放全局：这些东西分散在六七个组件里，各自 scoped 抄一遍的结果就是
+   「顶栏的菜单是圆角浅色、工具栏的是方块、设置里干脆是系统默认的蓝色选中」。
+   统一到一处之后，改一次全都跟着变。
+
+   `appearance: none` 一起处理掉系统默认外观 —— 用户明确不要
+   「选中之后一个蓝色方形」那种浏览器自带的下拉。
+   ───────────────────────────────────────────── */
+
+.n-menu {
+  position: fixed;
+  z-index: 400;
+  min-width: 178px;
+  max-width: 320px;
+  padding: 5px;
+  border: 1px solid var(--n-line);
+  border-radius: var(--n-r-lg);
+  background: var(--n-raised);
+  box-shadow:
+    0 1px 2px color-mix(in oklab, #000 8%, transparent),
+    0 10px 28px -8px color-mix(in oklab, #000 26%, transparent);
+  animation: n-menu-in 110ms var(--n-ease);
+}
+
+/* 就地弹出的菜单（贴在某个按钮下面）不走 Teleport，用 absolute 贴着父级 */
+.n-menu.n-menu-inline {
+  position: absolute;
+  top: calc(100% + 6px);
+}
+
+@keyframes n-menu-in {
+  from {
+    opacity: 0;
+    transform: translateY(-3px) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* 分组标题：小号大写，用来分隔「这一组是什么」 */
+.n-menu-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 9px 6px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--n-fg-faint);
+}
+
+.n-menu-head .n-menu-head-acts {
+  margin-left: auto;
+  display: inline-flex;
+  gap: 2px;
+}
+
+.n-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 29px;
+  padding: 0 9px;
+  border-radius: var(--n-r-sm);
+  font-size: 12.5px;
+  line-height: 1.4;
+  text-align: left;
+  color: var(--n-fg-dim);
+  /* 系统默认外观一律去掉：菜单里不该出现浏览器自带的选中方块 */
+  appearance: none;
+  transition: background var(--n-dur) var(--n-ease), color var(--n-dur) var(--n-ease);
+}
+
+.n-menu-item svg {
+  flex: none;
+  fill: none;
+  stroke: currentColor;
+}
+
+.n-menu-item:hover:not(.off),
+.n-menu-item.on {
+  background: var(--n-accent-soft);
+  color: var(--n-accent);
+}
+
+.n-menu-item.on {
+  font-weight: 600;
+}
+
+.n-menu-item.danger:hover:not(.off) {
+  background: var(--n-danger-soft);
+  color: var(--n-danger);
+}
+
+/* 不可用：不隐藏，但明显压下去（隐藏会让人以为这个功能没了） */
+.n-menu-item.off {
+  color: var(--n-fg-faint);
+  opacity: 0.55;
+  cursor: default;
+}
+
+.n-menu-item .n-menu-name {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* 行尾：快捷键提示、勾选标记、计数 */
+.n-menu-tail {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 10.5px;
+  color: var(--n-fg-faint);
+}
+
+.n-menu-item:hover .n-menu-tail,
+.n-menu-item.on .n-menu-tail {
+  color: inherit;
+  opacity: 0.8;
+}
+
+.n-menu-sep {
+  display: block;
+  height: 1px;
+  margin: 5px 8px;
+  background: var(--n-line);
+}
+
+.n-menu-hint {
+  padding: 6px 9px;
+  font-size: 10.5px;
+  line-height: 1.6;
+  color: var(--n-fg-faint);
+}
+
+/* 设置里那种「一行说明 + 一个下拉」用的触发器：长得像输入框，点开是 n-menu */
+.n-select {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  height: 30px;
+  padding: 0 9px;
+  border: 1px solid var(--n-line);
+  border-radius: var(--n-r-sm);
+  background: var(--n-bg);
+  font-size: 12px;
+  color: var(--n-fg);
+  text-align: left;
+  appearance: none;
+}
+
+.n-select:hover {
+  border-color: var(--n-line-strong);
+}
+
+.n-select.on {
+  border-color: var(--n-accent);
+}
+
+.n-select-name {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.n-select-caret {
+  flex: none;
+  color: var(--n-fg-faint);
+}

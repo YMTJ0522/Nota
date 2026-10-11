@@ -8,6 +8,8 @@
  */
 import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue'
 import {
+  Check,
+  ChevronDown,
   Columns2,
   Eye,
   EyeOff,
@@ -106,8 +108,20 @@ watch(
   () => store.setAiConfig({ ...state.ai }),
 )
 
-function applyPreset(e: Event) {
-  const i = Number((e.target as HTMLSelectElement).value)
+/** 服务商预设：自绘下拉。用「当前 baseUrl 命中哪套预设」反推选中项，
+    不去另外存一份状态 —— 用户手改过地址之后，这里显示的仍然是真实的那套 */
+const presetOpen = ref(false)
+const presetIndex = computed(() => {
+  const i = AI_PRESETS.findIndex((p) => p.baseUrl === state.ai.baseUrl)
+  return i < 0 ? 0 : i + 1
+})
+const presetLabel = computed(() =>
+  presetIndex.value ? AI_PRESETS[presetIndex.value - 1].label : '自定义…',
+)
+
+function pickPreset(i: number) {
+  presetOpen.value = false
+  if (i < 0) return
   const p = AI_PRESETS[i]
   if (!p) return
   store.setAiConfig({ baseUrl: p.baseUrl, model: p.model })
@@ -512,12 +526,39 @@ async function changeWorkspace() {
                   <span class="st-name">服务商预设</span>
                   <span class="st-desc">都是 OpenAI 兼容接口；本机跑模型选 Ollama 或 LM Studio</span>
                 </div>
-                <select class="st-select" @change="applyPreset">
-                  <option value="">自定义…</option>
-                  <option v-for="(p, i) in AI_PRESETS" :key="p.label" :value="String(i)">
-                    {{ p.label }}
-                  </option>
-                </select>
+                <!-- 预设用自绘下拉：原生 select 一展开就是一屏系统样式的
+                     蓝色选中块，跟这个界面不是一套东西 -->
+                <div class="st-drop">
+                  <button
+                    class="n-select st-select"
+                    :class="{ on: presetOpen }"
+                    :aria-expanded="presetOpen"
+                    @click="presetOpen = !presetOpen"
+                  >
+                    <span class="n-select-name">{{ presetLabel }}</span>
+                    <ChevronDown class="n-select-caret" :size="12" :stroke-width="2" />
+                  </button>
+                  <div v-if="presetOpen" class="n-menu st-drop-menu">
+                    <button
+                      class="n-menu-item"
+                      :class="{ on: !presetIndex }"
+                      @click="pickPreset(-1)"
+                    >
+                      <span class="n-menu-name">自定义…</span>
+                      <Check v-if="!presetIndex" :size="12" :stroke-width="2.2" />
+                    </button>
+                    <button
+                      v-for="(p, i) in AI_PRESETS"
+                      :key="p.label"
+                      class="n-menu-item"
+                      :class="{ on: presetIndex === i + 1 }"
+                      @click="pickPreset(i)"
+                    >
+                      <span class="n-menu-name">{{ p.label }}</span>
+                      <Check v-if="presetIndex === i + 1" :size="12" :stroke-width="2.2" />
+                    </button>
+                  </div>
+                </div>
               </div>
 
               <div class="st-row">
@@ -989,6 +1030,7 @@ async function changeWorkspace() {
   gap: 6px;
 }
 .st-swatch {
+  position: relative;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -1005,9 +1047,14 @@ async function changeWorkspace() {
   transition: border-color var(--n-dur) var(--n-ease);
 }
 .st-swatch-dot {
-  flex: none;
-  width: 15px;
-  height: 15px;
+  /* 绝对定位 + inset:0 + margin:auto 才是真正的同心：
+     靠 flex 居中时，外圈那 1px 描边会把内容盒挤歪半像素，
+     七个点排一行就能看出「圈和点不是同一个圆心」。 */
+  position: absolute;
+  inset: 0;
+  margin: auto;
+  width: 14px;
+  height: 14px;
   border-radius: 50%;
   transition: width var(--n-dur) var(--n-ease), height var(--n-dur) var(--n-ease);
 }
@@ -1019,10 +1066,11 @@ async function changeWorkspace() {
 .st-swatch.on {
   border-color: var(--swatch-c, var(--n-accent));
 }
-/* 色点收小一点，和外圈之间留出底色缝隙，才读得出是「圈套点」而不是一个大圆 */
+/* 选中时色点收小一点，和外圈之间留出一圈底色，
+   读起来才是「圈套点」而不是一个大圆 */
 .st-swatch.on .st-swatch-dot {
-  width: 11px;
-  height: 11px;
+  width: 12px;
+  height: 12px;
 }
 
 /* 开关 */
@@ -1087,6 +1135,20 @@ async function changeWorkspace() {
   transition: border-color var(--n-dur) var(--n-ease);
 }
 
+/* ── 自绘下拉（服务商预设） ── */
+.st-drop {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  justify-self: end;
+}
+
+.st-drop-menu {
+  width: 100%;
+  max-height: 280px;
+  overflow-y: auto;
+}
+
 .st-textarea {
   justify-self: end;
   width: 100%;
@@ -1100,6 +1162,7 @@ async function changeWorkspace() {
   flex: none;
   width: 100%;
   padding: 6px 8px;
+  height: 32px;
 }
 
 .st-input:focus,

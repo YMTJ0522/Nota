@@ -1,10 +1,15 @@
 <script setup lang="ts">
 /**
- * AI 编写：主区里的对话页。
+ * AI 编写：对话面板。
  *
  * 布局照常规 agent 的样子来：
- * - 左侧一栏是会话列表，能新建 / 切换 / 重命名 / 删除，刷新后还在；
- * - 右侧是消息流，AI 靠左、我靠右——谁是说话的一眼分得清。
+ * - 会话列表能新建 / 切换 / 重命名 / 删除，刷新后还在；
+ * - 消息流里 AI 靠左、我靠右——谁是说话的一眼分得清。
+ *
+ * 两种形态：
+ * - 默认（宽）：左边一栏常驻会话列表；
+ * - `compact`：住在中间那一列里，宽度只有两三百像素，会话列表放不下，
+ *   改成头部一个下拉。此时模型选择也收成图标，把宽度让给正文。
  *
  * 渲染复用预览区那条 Markdown 管线，所以模型吐出来的代码块、
  * 表格、公式长得和笔记预览一模一样。
@@ -16,6 +21,7 @@ import {
   ChevronDown,
   Copy,
   CornerDownLeft,
+  Cpu,
   Eraser,
   Loader2,
   MessageSquare,
@@ -33,6 +39,8 @@ import {
 import { AI_PRESETS, store } from '@/store'
 import { markdownToHtml } from '@/editor/markdown'
 import { renderMathInHtml, renderMermaidInHtml } from '@/editor/preview-rich'
+
+const props = withDefaults(defineProps<{ compact?: boolean }>(), { compact: false })
 
 const { state } = store
 
@@ -104,14 +112,39 @@ function closeModelMenu() {
   modelMenu.value = false
 }
 
+/** 窄列里的会话下拉：一列放不下常驻的会话栏，收成菜单 */
+const sessMenu = ref(false)
+
+function toggleSess() {
+  sessMenu.value = !sessMenu.value
+}
+
+function closeSess() {
+  sessMenu.value = false
+}
+
+async function pickSessionFromMenu(id: number) {
+  await pickSession(id)
+  closeSess()
+}
+
+async function newSessionFromMenu() {
+  await createSession()
+  closeSess()
+}
+
 /** 点击别处 / Esc 关闭下拉。头部没有 overflow 裁剪，直接用文档事件即可 */
 function onDocPointer(e: PointerEvent) {
   const el = e.target as HTMLElement
   if (!el.closest('.model-wrap')) closeModelMenu()
+  if (!el.closest('.sess-wrap')) closeSess()
 }
 
 function onEsc(e: KeyboardEvent) {
-  if (e.key === 'Escape') closeModelMenu()
+  if (e.key === 'Escape') {
+    closeModelMenu()
+    closeSess()
+  }
 }
 
 onMounted(() => {
@@ -136,6 +169,13 @@ const lastAssistantId = computed(() => {
 /** 会话列表按最近发言倒序，跟大多数聊天工具一致 */
 const sessions = computed(() =>
   [...state.sessions].sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0)),
+)
+
+/** 当前会话的名字：窄列头部那个下拉按钮上要显示它 */
+const activeSessionTitle = computed(
+  () =>
+    state.sessions.find((s) => s.id === state.activeSessionId)?.title ??
+    (state.sessions.length ? '未命名会话' : '新对话'),
 )
 
 /** 列表里只显示「几点」或「几月几号」，完整时间交给 title */
@@ -316,9 +356,10 @@ function openAiSettings() {
 </script>
 
 <template>
-  <div class="chat">
-    <!-- 会话栏：默认展开，窄窗口可以收起让正文宽一点 -->
-    <aside v-if="railOpen" class="rail">
+  <div class="chat" :class="{ compact }">
+    <!-- 会话栏：默认展开，窄窗口可以收起让正文宽一点。
+         窄列形态下放不下常驻的会话栏，改用头部那个下拉（见 .sess-wrap） -->
+    <aside v-if="railOpen && !compact" class="rail">
       <div class="rail-head">
         <span class="rail-title">会话</span>
         <button class="rail-add" title="新建会话" @click="createSession">
@@ -373,6 +414,7 @@ function openAiSettings() {
       <!-- 头部：和编辑区顶栏同高同语言，切换页面不会有跳感 -->
       <header class="head">
         <button
+          v-if="!compact"
           class="hbtn"
           :class="{ on: railOpen }"
           title="会话列表"
@@ -380,56 +422,94 @@ function openAiSettings() {
         >
           <PanelLeft :size="14" :stroke-width="1.9" />
         </button>
-        <span class="head-ico"><Sparkles :size="15" :stroke-width="1.9" /></span>
-        <span class="head-title">AI 编写</span>
 
-        <!-- 模型徽标即选择器：点一下换模型 -->
-        <div class="model-wrap">
+        <!-- 窄列：会话列表换成下拉，标题就是当前会话名 -->
+        <div v-if="compact" class="sess-wrap">
+          <button
+            class="hbtn hbtn-wide"
+            :class="{ on: sessMenu }"
+            :title="activeSessionTitle"
+            @click="toggleSess"
+          >
+            <MessageSquare :size="13" :stroke-width="1.9" />
+            <span class="hbtn-name">{{ activeSessionTitle }}</span>
+            <ChevronDown :size="11" :stroke-width="2" />
+          </button>
+
+          <div v-if="sessMenu" class="n-menu n-menu-inline sess-menu">
+            <div class="n-menu-head">
+              <span>会话</span>
+              <span class="n-menu-head-acts">
+                <button class="sess-mini" title="新建会话" @click="newSessionFromMenu">
+                  <Plus :size="12" :stroke-width="2.2" />
+                </button>
+              </span>
+            </div>
+            <button
+              v-for="s in sessions"
+              :key="s.id"
+              class="n-menu-item"
+              :class="{ on: s.id === state.activeSessionId }"
+              @click="pickSessionFromMenu(s.id)"
+            >
+              <span class="n-menu-name">{{ s.title }}</span>
+              <span class="n-menu-tail">{{ when(s.updatedAt) }}</span>
+            </button>
+            <p v-if="sessions.length === 0" class="n-menu-hint">还没有会话，点上面的 + 开一个</p>
+          </div>
+        </div>
+
+        <span v-if="!compact" class="head-ico"><Sparkles :size="15" :stroke-width="1.9" /></span>
+        <span v-if="!compact" class="head-title">AI 编写</span>
+
+        <!-- 模型徽标即选择器：点一下换模型。窄列里只留图标，把宽度让给正文 -->
+        <div class="model-wrap" :class="{ 'model-icon-only': compact }">
           <button
             class="model"
             :class="{ on: modelMenu }"
             :title="state.ai.model ? `当前模型：${state.ai.model}` : '未配置模型'"
             @click="toggleModel"
           >
-            <span class="model-name">{{ modelLabel }}</span>
-            <ChevronDown class="model-caret" :size="11" :stroke-width="2" />
+            <Cpu v-if="compact" class="model-ico" :size="13" :stroke-width="1.9" />
+            <span v-else class="model-name">{{ modelLabel }}</span>
+            <ChevronDown v-if="!compact" class="model-caret" :size="11" :stroke-width="2" />
           </button>
 
-          <div v-if="modelMenu" class="model-menu">
-            <div class="mm-head">
-              <span class="mm-title">选择模型</span>
-              <button
-                class="mm-refresh"
-                :disabled="modelLoading"
-                title="从接口重新拉一遍模型列表"
-                @click="loadModels(true)"
-              >
-                <Loader2 v-if="modelLoading" class="spin" :size="12" :stroke-width="2" />
-                <RefreshCw v-else :size="12" :stroke-width="2" />
-              </button>
+          <div v-if="modelMenu" class="n-menu n-menu-inline model-menu">
+            <div class="n-menu-head">
+              <span>选择模型</span>
+              <span class="n-menu-head-acts">
+                <button
+                  class="sess-mini"
+                  :disabled="modelLoading"
+                  title="从接口重新拉一遍模型列表"
+                  @click="loadModels(true)"
+                >
+                  <Loader2 v-if="modelLoading" class="spin" :size="12" :stroke-width="2" />
+                  <RefreshCw v-else :size="12" :stroke-width="2" />
+                </button>
+              </span>
             </div>
 
-            <div class="mm-list">
-              <button
-                v-for="m in modelOptions"
-                :key="m"
-                class="mm-item"
-                :class="{ on: m === state.ai.model }"
-                @click="pickModel(m)"
-              >
-                <span class="mm-name">{{ m }}</span>
-                <Check v-if="m === state.ai.model" :size="12" :stroke-width="2.2" />
-              </button>
-            </div>
+            <button
+              v-for="m in modelOptions"
+              :key="m"
+              class="n-menu-item"
+              :class="{ on: m === state.ai.model }"
+              @click="pickModel(m)"
+            >
+              <span class="n-menu-name">{{ m }}</span>
+              <Check v-if="m === state.ai.model" :size="12" :stroke-width="2.2" />
+            </button>
 
-            <div v-if="serverModels.length === 0" class="mm-hint">
+            <p v-if="serverModels.length === 0" class="n-menu-hint">
               {{ modelLoading ? '正在读取接口…' : '没读到接口的模型列表，先列出预设' }}
-            </div>
+            </p>
 
-            <span class="mm-sep" />
-            <button class="mm-item mm-dim" @click="openAiSettings">
+            <span class="n-menu-sep" />
+            <button class="n-menu-item" @click="openAiSettings">
               <Settings :size="12" :stroke-width="1.9" />
-              <span>模型设置…</span>
+              <span class="n-menu-name">模型设置…</span>
             </button>
           </div>
         </div>
@@ -811,38 +891,56 @@ function openAiSettings() {
   opacity: 0.72;
 }
 
-.model-menu {
-  position: absolute;
-  top: calc(100% + 6px);
-  left: 0;
-  z-index: 40;
-  width: 236px;
-  padding: 4px;
-  background: var(--n-raised);
-  border: 1px solid var(--n-line);
-  border-radius: var(--n-r-md);
-  box-shadow: var(--n-shadow-lg);
-  animation: mm-in 120ms var(--n-ease);
-}
-
-.mm-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
+/* 窄列形态：模型只留一个图标，宽度让给正文 */
+.model-icon-only .model {
+  width: 24px;
   height: 24px;
-  padding: 0 4px 0 8px;
+  padding: 0;
+  justify-content: center;
+  border-radius: var(--n-r-sm);
 }
 
-.mm-title {
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 0.07em;
-  color: var(--n-fg-faint);
+.model-ico {
+  flex: none;
 }
 
-.mm-refresh {
-  width: 22px;
-  height: 22px;
+/* 菜单本体走全局那一套（styles/menu.css），这里只管它从哪儿弹、多宽 */
+.model-menu,
+.sess-menu {
+  width: 248px;
+  max-height: 320px;
+  overflow-y: auto;
+}
+
+.sess-menu {
+  left: 0;
+}
+
+/* 宽一点的图标按钮：图标 + 会话名 + 箭头 */
+.hbtn-wide {
+  width: auto;
+  max-width: 100%;
+  padding: 0 7px;
+  gap: 5px;
+}
+
+.hbtn-name {
+  min-width: 0;
+  font-size: 11.5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sess-wrap {
+  position: relative;
+  display: inline-flex;
+  min-width: 0;
+}
+
+.sess-mini {
+  width: 20px;
+  height: 20px;
   padding: 0;
   display: inline-flex;
   align-items: center;
@@ -851,76 +949,24 @@ function openAiSettings() {
   color: var(--n-fg-faint);
 }
 
-.mm-refresh:hover:not(:disabled) {
+.sess-mini svg {
+  fill: none;
+  stroke: currentColor;
+}
+
+.sess-mini:hover:not(:disabled) {
   background: var(--n-bg);
   color: var(--n-accent);
 }
 
-.mm-refresh:disabled {
+.sess-mini:disabled {
   opacity: 0.5;
 }
 
-/* 模型名可能很长，给个上限自己滚 */
-.mm-list {
-  max-height: 240px;
-  overflow-y: auto;
-}
-
-.mm-item {
-  width: 100%;
-  height: 28px;
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  padding: 0 9px;
-  border-radius: var(--n-r-sm);
+/* 会话名可能很长，给个上限自己滚 */
+.sess-menu .n-menu-item .n-menu-name {
+  font-family: inherit;
   font-size: 12px;
-  color: var(--n-fg);
-  text-align: left;
-}
-
-.mm-item:hover {
-  background: var(--n-accent-soft);
-  color: var(--n-accent);
-}
-
-.mm-item.on {
-  color: var(--n-accent);
-  font-weight: 600;
-}
-
-.mm-name {
-  flex: 1;
-  min-width: 0;
-  font-family: var(--n-font-mono);
-  font-size: 11.5px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.mm-dim {
-  color: var(--n-fg-faint);
-  font-size: 11.5px;
-}
-
-.mm-hint {
-  padding: 4px 9px 6px;
-  font-size: 10.5px;
-  line-height: 1.5;
-  color: var(--n-fg-faint);
-}
-
-.mm-sep {
-  display: block;
-  height: 1px;
-  margin: 4px 6px;
-  background: var(--n-line);
-}
-
-@keyframes mm-in {
-  from { opacity: 0; transform: translateY(-4px); }
-  to { opacity: 1; transform: none; }
 }
 
 .head-right {

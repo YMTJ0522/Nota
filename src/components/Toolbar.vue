@@ -340,12 +340,12 @@ function insertTable(rows: number, cols: number) {
         <div
           v-if="openMenu === 'heading'"
           :ref="menuRef('heading')"
-          class="tb-menu tb-menu--float"
+          class="tb-menu tb-menu--float n-menu"
           :style="menuStyle"
         >
           <template v-for="(h, i) in headingItems" :key="h.level">
-            <span v-if="i === 1" class="tb-sep-h" />
-            <button class="tb-item" @click="pick((v) => toolbarHeading(v, h.level))">
+            <span v-if="i === 1" class="tb-sep-h n-menu-sep" />
+            <button class="tb-item n-menu-item" @click="pick((v) => toolbarHeading(v, h.level))">
               <span :style="{ fontSize: `${17 - Math.min(h.level, 4) * 1.1}px`, fontWeight: 600 }">
                 {{ h.label }}
               </span>
@@ -412,24 +412,24 @@ function insertTable(rows: number, cols: number) {
         <div
           v-if="openMenu === 'reference'"
           :ref="menuRef('reference')"
-          class="tb-menu tb-menu--float"
+          class="tb-menu tb-menu--float n-menu"
           :style="menuStyle"
         >
-          <button class="tb-item" @click="pick((v) => toolbarLink(v))">
+          <button class="tb-item n-menu-item" @click="pick((v) => toolbarLink(v))">
             <span>链接</span><span class="kbd">[]()</span>
           </button>
-          <span class="tb-sep-h" />
-          <button class="tb-item" @click="pick((v) => toolbarWrap(v, '[[', ']]'))">
+          <span class="tb-sep-h n-menu-sep" />
+          <button class="tb-item n-menu-item" @click="pick((v) => toolbarWrap(v, '[[', ']]'))">
             <span>双链笔记</span><span class="kbd">[[ ]]</span>
           </button>
-          <button class="tb-item" @click="pickEmbed">
+          <button class="tb-item n-menu-item" @click="pickEmbed">
             <span>笔记嵌入</span><span class="kbd">![[ ]]</span>
           </button>
-          <button class="tb-item" @click="pick((v) => toolbarWrap(v, '[[#^', ']]'))">
+          <button class="tb-item n-menu-item" @click="pick((v) => toolbarWrap(v, '[[#^', ']]'))">
             <span>块引用</span><span class="kbd">[[#^ ]]</span>
           </button>
-          <span class="tb-sep-h" />
-          <button class="tb-item" @click="pick((v) => toolbarFootnote(v))">
+          <span class="tb-sep-h n-menu-sep" />
+          <button class="tb-item n-menu-item" @click="pick((v) => toolbarFootnote(v))">
             <span>脚注</span><span class="kbd">[^1]</span>
           </button>
         </div>
@@ -445,21 +445,21 @@ function insertTable(rows: number, cols: number) {
           <div
             v-if="openMenu === 'image'"
             :ref="menuRef('image')"
-            class="tb-menu tb-menu--float"
+            class="tb-menu tb-menu--float n-menu"
             :style="menuStyle"
           >
-            <button class="tb-item" @click="uploadMedia('any')">
+            <button class="tb-item n-menu-item" @click="uploadMedia('any')">
               <span>上传本地图片或视频</span>
             </button>
-            <span class="tb-sep-h" />
-            <button class="tb-item" @click="uploadMedia('image')">
+            <span class="tb-sep-h n-menu-sep" />
+            <button class="tb-item n-menu-item" @click="uploadMedia('image')">
               <span>从本地插入图片</span>
             </button>
-            <button class="tb-item" @click="uploadMedia('video')">
+            <button class="tb-item n-menu-item" @click="uploadMedia('video')">
               <span>从本地插入视频</span>
             </button>
-            <span class="tb-sep-h" />
-            <button class="tb-item" @click="pick((v) => toolbarImage(v))">
+            <span class="tb-sep-h n-menu-sep" />
+            <button class="tb-item n-menu-item" @click="pick((v) => toolbarImage(v))">
               <span>远程图片链接</span><span class="kbd">![]()</span>
             </button>
           </div>
@@ -480,21 +480,21 @@ function insertTable(rows: number, cols: number) {
         <div
           v-if="openMenu === 'note'"
           :ref="menuRef('note')"
-          class="tb-menu tb-menu--float"
+          class="tb-menu tb-menu--float n-menu"
           :style="menuStyle"
         >
-          <button class="tb-item" @click="pick((v) => toolbarTag(v))">
+          <button class="tb-item n-menu-item" @click="pick((v) => toolbarTag(v))">
             <span>插入标签</span><span class="kbd">#</span>
           </button>
-          <button class="tb-item" @click="pick((v) => toolbarBlockId(v))">
+          <button class="tb-item n-menu-item" @click="pick((v) => toolbarBlockId(v))">
             <span>块 ID</span><span class="kbd">^</span>
           </button>
-          <span class="tb-sep-h" />
-          <button class="tb-item" @click="pick((v) => toolbarFrontMatter(v))">
+          <span class="tb-sep-h n-menu-sep" />
+          <button class="tb-item n-menu-item" @click="pick((v) => toolbarFrontMatter(v))">
             <span>Front Matter</span><span class="kbd">---</span>
           </button>
-          <span class="tb-sep-h" />
-          <button class="tb-item" @click="pick((v) => toolbarInline(v, 'comment'))">
+          <span class="tb-sep-h n-menu-sep" />
+          <button class="tb-item n-menu-item" @click="pick((v) => toolbarInline(v, 'comment'))">
             <span>隐藏注释</span><span class="kbd">%% %%</span>
           </button>
         </div>
@@ -518,17 +518,17 @@ function insertTable(rows: number, cols: number) {
         <div
           v-if="openMenu === 'code'"
           :ref="menuRef('code')"
-          class="tb-menu tb-menu--float"
+          class="tb-menu tb-menu--float n-menu"
           :style="menuStyle"
         >
-          <button class="tb-item" @click="pick((v) => toolbarCodeBlock(v))">
+          <button class="tb-item n-menu-item" @click="pick((v) => toolbarCodeBlock(v))">
             <span>代码块</span><span class="kbd">```</span>
           </button>
-          <button class="tb-item" @click="pick((v) => toolbarAdvancedCodeBlock(v))">
+          <button class="tb-item n-menu-item" @click="pick((v) => toolbarAdvancedCodeBlock(v))">
             <span>高级代码块</span><span class="tag">标题/行号</span>
           </button>
-          <span class="tb-sep-h" />
-          <button class="tb-item" @click="pick((v) => toolbarMermaid(v))">
+          <span class="tb-sep-h n-menu-sep" />
+          <button class="tb-item n-menu-item" @click="pick((v) => toolbarMermaid(v))">
             <span>Mermaid 图表</span>
           </button>
         </div>
@@ -549,7 +549,7 @@ function insertTable(rows: number, cols: number) {
         <div
           v-if="openMenu === 'table'"
           :ref="menuRef('table')"
-          class="tb-menu tb-menu--float tb-grid-menu"
+          class="tb-menu tb-menu--float tb-grid-menu n-menu"
           :style="menuStyle"
         >
           <div class="tb-grid-size">
@@ -587,13 +587,13 @@ function insertTable(rows: number, cols: number) {
         <div
           v-if="openMenu === 'math'"
           :ref="menuRef('math')"
-          class="tb-menu tb-menu--float"
+          class="tb-menu tb-menu--float n-menu"
           :style="menuStyle"
         >
-          <button class="tb-item" @click="pick((v) => toolbarInline(v, 'inlineMath'))">
+          <button class="tb-item n-menu-item" @click="pick((v) => toolbarInline(v, 'inlineMath'))">
             <span>行内公式</span><span class="kbd">$ $</span>
           </button>
-          <button class="tb-item" @click="pick((v) => toolbarMathBlock(v))">
+          <button class="tb-item n-menu-item" @click="pick((v) => toolbarMathBlock(v))">
             <span>块级公式</span><span class="kbd">$$</span>
           </button>
         </div>
@@ -614,20 +614,20 @@ function insertTable(rows: number, cols: number) {
         <div
           v-if="openMenu === 'block'"
           :ref="menuRef('block')"
-          class="tb-menu tb-menu--float"
+          class="tb-menu tb-menu--float n-menu"
           :style="menuStyle"
         >
-          <button class="tb-item" @click="pick((v) => toolbarCallout(v))">
+          <button class="tb-item n-menu-item" @click="pick((v) => toolbarCallout(v))">
             <span>Callout 提示块</span>
           </button>
-          <button class="tb-item" @click="pick((v) => toolbarDetails(v))">
+          <button class="tb-item n-menu-item" @click="pick((v) => toolbarDetails(v))">
             <span>折叠详情块</span>
           </button>
-          <button class="tb-item" @click="pick((v) => toolbarTabs(v, '标签一', '标签二'))">
+          <button class="tb-item n-menu-item" @click="pick((v) => toolbarTabs(v, '标签一', '标签二'))">
             <span>分栏标签</span>
           </button>
-          <span class="tb-sep-h" />
-          <button class="tb-item" @click="pick((v) => toolbarHorizontalRule(v))">
+          <span class="tb-sep-h n-menu-sep" />
+          <button class="tb-item n-menu-item" @click="pick((v) => toolbarHorizontalRule(v))">
             <span>分割线</span>
           </button>
         </div>
@@ -673,12 +673,10 @@ function insertTable(rows: number, cols: number) {
   background: var(--n-line);
 }
 
-/* 下拉菜单内的分组分隔线 */
+/* 下拉菜单内的分组分隔线：长相在 styles/menu.css 的 .n-menu-sep 里，
+   这里留个类名给测试与定位用 */
 .tb-sep-h {
   display: block;
-  height: 1px;
-  margin: 4px 6px;
-  background: var(--n-line);
 }
 
 .tb-btn {
@@ -724,6 +722,8 @@ function insertTable(rows: number, cols: number) {
   stroke: currentColor;
 }
 
+/* 菜单本体的长相统一在 styles/menu.css 的 .n-menu 里，
+   这里只保留工具栏特有的定位与宽度策略。 */
 .tb-menu {
   position: absolute;
   top: calc(100% + 4px);
@@ -735,12 +735,6 @@ function insertTable(rows: number, cols: number) {
   width: max-content;
   min-width: 132px;
   max-width: 260px;
-  padding: 4px;
-  background: var(--n-raised);
-  border: 1px solid var(--n-line);
-  border-radius: var(--n-r-md);
-  box-shadow: var(--n-shadow-lg);
-  animation: menu-in 120ms var(--n-ease);
 }
 
 /* 菜单被 Teleport 到 body 后，工具栏的 overflow 就裁不到它了。
@@ -807,26 +801,17 @@ function insertTable(rows: number, cols: number) {
   to { opacity: 1; transform: none; }
 }
 
+/* 一行菜单项：颜色、悬停、圆角、字号统一走 .n-menu-item，
+   这里只管这一处特有的排版——「标签在左、快捷键贴右」 */
 .tb-item {
   width: 100%;
   height: 30px;
-  display: flex;
-  align-items: center;
   justify-content: space-between;
   /* 标签与快捷键之间给一段固定间距，菜单窄的时候也不会贴在一起。
      auto 的左边距把 kbd 推到右侧，菜单宽度由最长的那一行决定。 */
   gap: 18px;
-  padding: 0 9px;
-  border-radius: var(--n-r-sm);
   font-size: 13px;
-  color: var(--n-fg);
-  text-align: left;
   white-space: nowrap;
-}
-
-.tb-item:hover {
-  background: var(--n-accent-soft);
-  color: var(--n-accent);
 }
 
 .kbd {
@@ -836,8 +821,8 @@ function insertTable(rows: number, cols: number) {
 }
 
 .tb-item:hover .kbd {
-  color: var(--n-accent);
-  opacity: 0.75;
+  color: inherit;
+  opacity: 0.8;
 }
 
 .tag {

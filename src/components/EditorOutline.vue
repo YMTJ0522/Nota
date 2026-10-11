@@ -98,7 +98,8 @@ function jump(h: HeadingItem) {
 <style scoped>
 .outline {
   flex: none;
-  width: 176px;
+  /* 宽度由 App 写在 --outline-w 上，拖分隔线改的就是它 */
+  width: var(--outline-w, 176px);
   min-height: 0;
   overflow-y: auto;
   padding: 16px 8px 24px 0;

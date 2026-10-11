@@ -98,7 +98,7 @@ function onItem() {
     <div
       v-if="open"
       ref="root"
-      class="ctx-menu"
+      class="ctx-menu n-menu"
       role="menu"
       :aria-label="label"
       :style="{ left: `${pos.left}px`, top: `${pos.top}px` }"
@@ -111,28 +111,11 @@ function onItem() {
 </template>
 
 <style scoped>
+/* 面板本身的长相（描边 / 圆角 / 底色 / 阴影 / 入场动画）统一在
+   styles/menu.css 的 .n-menu 里。这里只钉住右键菜单特有的位置与层高。 */
 .ctx-menu {
   position: fixed;
   z-index: 400;
-  min-width: 172px;
-  padding: 5px;
-  border: 1px solid var(--n-line);
-  border-radius: var(--n-r-lg);
-  background: var(--n-surface);
-  box-shadow:
-    0 1px 2px color-mix(in oklab, #000 8%, transparent),
-    0 10px 28px -8px color-mix(in oklab, #000 26%, transparent);
-  animation: ctx-in 110ms var(--n-ease);
-}
-
-@keyframes ctx-in {
-  from {
-    opacity: 0;
-    transform: translateY(-3px) scale(0.985);
-  }
-  to {
-    opacity: 1;
-    transform: none;
-  }
+  min-width: 184px;
 }
 </style>

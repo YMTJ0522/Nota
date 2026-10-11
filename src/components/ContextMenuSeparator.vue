@@ -1,11 +1,7 @@
 <template>
-  <div class="ctx-sep" role="separator" />
+  <div class="ctx-sep n-menu-sep" role="separator" />
 </template>
 
 <style scoped>
-.ctx-sep {
-  height: 1px;
-  margin: 4px 6px;
-  background: color-mix(in oklab, var(--n-line) 76%, transparent);
-}
+/* 分隔线的长相统一在 styles/menu.css 里，这里只留一个语义类名给测试与后续选择器用 */
 </style>

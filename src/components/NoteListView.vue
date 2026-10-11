@@ -1,17 +1,17 @@
 <script setup lang="ts">
 /**
- * 笔记列表栏（资料库与正文之间的那一栏）。
+ * 中间那一列的「笔记」视图。
  *
  * 侧栏回答「去哪找」，这一栏回答「有哪些」：
  * 把当前视图（所有笔记 / 最近编辑 / 收藏 / 未归类 / 某个标签 / 搜索结果）
- * 下的笔记拍平成一列，标题 + 摘要 + 所属目录 + 修改时间一次看全，
+ * 下的笔记拍平成一列，标题 + 摘要 + 所属目录 + 标签 + 修改时间一次看全，
  * 不用像目录树那样一层层展开。
  *
  * 摘要由主进程在扫目录时顺手从文件头部摘出来（见 workspace:tree），
  * 不额外读盘，所以开着这一栏也不会让打开工作区变慢。
  */
 import { computed } from 'vue'
-import { FilePlus2, PanelLeftClose, Star } from 'lucide-vue-next'
+import { FilePlus2, Star } from 'lucide-vue-next'
 import { store } from '@/store'
 
 const { state } = store
@@ -48,16 +48,13 @@ function open(path: string) {
 </script>
 
 <template>
-  <section class="nlist">
+  <div class="nlist">
     <header class="nl-head">
       <span class="nl-title">{{ title }}</span>
       <span class="nl-count">{{ files.length }}</span>
       <span class="nl-acts">
         <button class="nl-btn" data-tip="新建笔记 (Ctrl+N)" @click="store.newNote()">
           <FilePlus2 :size="14" :stroke-width="1.9" />
-        </button>
-        <button class="nl-btn" data-tip="收起列表栏" @click="store.toggleList()">
-          <PanelLeftClose :size="14" :stroke-width="1.9" />
         </button>
       </span>
     </header>
@@ -83,31 +80,30 @@ function open(path: string) {
           <span v-if="f.excerpt" class="nl-excerpt">{{ f.excerpt }}</span>
           <span class="nl-meta">
             <span class="nl-folder">{{ folderOf(f.path) }}</span>
-            <span v-if="f.tags?.length" class="nl-tags">
-              <span v-for="t in f.tags.slice(0, 2)" :key="t" class="nl-tag">#{{ t }}</span>
-            </span>
             <span class="nl-when">{{ when(f.mtime) }}</span>
+          </span>
+          <!-- 标签单独一行：和文件夹挤在一行时，长目录名会把标签整个挤掉 -->
+          <span class="nl-tags">
+            <span v-for="t in f.tags ?? []" :key="t" class="nl-tag">#{{ t }}</span>
+            <span v-if="!f.tags?.length" class="nl-tag nl-tag-none">未打标签</span>
           </span>
         </button>
       </template>
     </div>
-  </section>
+  </div>
 </template>
 
 <style scoped>
 .nlist {
-  flex: none;
-  width: 268px;
   display: flex;
   flex-direction: column;
   min-height: 0;
-  border-right: 1px solid var(--n-line);
-  background: color-mix(in oklab, var(--n-sunken) 62%, var(--n-bg));
+  height: 100%;
 }
 
 .nl-head {
   flex: none;
-  height: 44px;
+  height: 38px;
   display: flex;
   align-items: center;
   gap: 6px;
@@ -285,28 +281,38 @@ function open(path: string) {
 }
 
 .nl-folder {
-  flex: none;
-  max-width: 108px;
+  flex: 1;
+  min-width: 0;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
+.nl-when {
+  flex: none;
+  font-variant-numeric: tabular-nums;
+}
+
+/* 标签独占一行，超过一行就换行，不再被挤没 */
 .nl-tags {
-  display: inline-flex;
+  display: flex;
+  flex-wrap: wrap;
   gap: 4px;
-  min-width: 0;
-  overflow: hidden;
+  margin-top: 1px;
+  font-size: 10px;
 }
 
 .nl-tag {
   flex: none;
-  color: color-mix(in oklab, var(--n-accent) 76%, var(--n-fg-faint));
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: color-mix(in oklab, var(--n-accent-soft) 90%, transparent);
+  color: color-mix(in oklab, var(--n-accent) 82%, var(--n-fg));
+  white-space: nowrap;
 }
 
-.nl-when {
-  margin-left: auto;
-  flex: none;
-  font-variant-numeric: tabular-nums;
+.nl-tag-none {
+  background: none;
+  color: var(--n-fg-faint);
 }
 </style>

@@ -146,8 +146,6 @@ interface State {
   autoSave: boolean
   /** 侧栏是否可见 */
   sidebar: boolean
-  /** 资料库与正文之间的笔记列表栏是否可见 */
-  list: boolean
   /** 当前选中的标签（null = 不筛选，显示全部笔记） */
   activeTag: string | null
   /** 新建文件夹的父目录；非 null 时侧栏弹出一个输入框 */
@@ -183,6 +181,14 @@ interface State {
 
   /** 主区显示什么：笔记 / AI 编写 */
   mainView: MainView
+  /** 中间那一列在显示什么（主区与这一列的分工见 setColumnView） */
+  columnView: ColumnView
+  /** 中间那一列是否可见 */
+  column: boolean
+  /** 各栏宽度（拖动分隔线改的就是它们） */
+  sidebarWidth: number
+  columnWidth: number
+  outlineWidth: number
   /** 全部对话会话。每个会话自带一堆消息 */
   sessions: ChatSession[]
   /** 当前正在看的会话 id */
@@ -240,7 +246,6 @@ const state = reactive<State>({
   lastSavedAt: null,
   autoSave: true,
   sidebar: true,
-  list: true,
   activeTag: null,
   newFolderIn: null,
   viewMode: 'write',
@@ -257,6 +262,11 @@ const state = reactive<State>({
   lineWrap: PREF_DEFAULTS.lineWrap,
   lineNumbers: PREF_DEFAULTS.lineNumbers,
   mainView: 'note',
+  columnView: 'notes',
+  column: true,
+  sidebarWidth: 232,
+  columnWidth: 296,
+  outlineWidth: 176,
   sessions: [],
   activeSessionId: 0,
   chat: [],
@@ -560,10 +570,52 @@ function toggleSidebar() {
   localStorage.setItem('nota-sidebar', state.sidebar ? '1' : '0')
 }
 
-/** 笔记列表栏显隐 */
-function toggleList() {
-  state.list = !state.list
-  localStorage.setItem('nota-list', state.list ? '1' : '0')
+/* ── 中间那一列：一个栏放四件事 ──
+   笔记列表、附件库、回收站、AI 编写，性质不同但「都是某一类东西的清单」，
+   共用一列换着看，比各开一个窗口省事：主区永远留给正文/AI 对话，
+   不用为了插一张图离开正在写的笔记。
+
+   AI 编写也从「占满主区的独立页面」改成这一列的第四格 —— 开着对话
+   还能看着正文，才是它真正的用法。 */
+export type ColumnView = 'notes' | 'attach' | 'trash' | 'ai'
+
+const COLUMN_KEY = 'nota-column'
+
+function setColumnView(v: ColumnView) {
+  state.columnView = v
+  // 两者是同一个意思的两种写法：mainView 给「主区在看什么」，columnView 给这一列
+  state.mainView = v === 'ai' ? 'ai' : 'note'
+  localStorage.setItem(COLUMN_KEY, v)
+}
+
+/** 中间那一列显不显示（AI 也能收起，把宽度还给正文） */
+function toggleColumn() {
+  state.column = !state.column
+  localStorage.setItem('nota-column-open', state.column ? '1' : '0')
+}
+
+/* ── 各栏宽度：拖动分隔线改的就是这几个值 ──
+   都带上下限，免得被拖成 0 或者宽到把正文挤没。 */
+export const WIDTH_LIMITS = {
+  sidebar: { min: 180, max: 420, collapsed: 48 },
+  column: { min: 220, max: 560 },
+  outline: { min: 140, max: 340 },
+} as const
+
+type WidthKey = keyof typeof WIDTH_LIMITS
+
+function clampWidth(key: WidthKey, v: number) {
+  const { min, max } = WIDTH_LIMITS[key]
+  return Math.max(min, Math.min(max, Math.round(v)))
+}
+
+function setWidth(key: WidthKey, v: number) {
+  const next = clampWidth(key, v)
+  if (key === 'sidebar') state.sidebarWidth = next
+  else if (key === 'column') state.columnWidth = next
+  else state.outlineWidth = next
+  localStorage.setItem(`nota-w-${key}`, String(next))
+  return next
 }
 
 /** 编辑区视图模式 */
@@ -596,8 +648,17 @@ function setAutoSave(v: boolean) {
 function initPrefs() {
   state.autoSave = localStorage.getItem('nota-autosave') !== '0'
   state.sidebar = localStorage.getItem('nota-sidebar') !== '0'
-  state.list = localStorage.getItem('nota-list') !== '0'
   state.outline = localStorage.getItem('nota-outline') !== '0'
+  state.column = localStorage.getItem('nota-column-open') !== '0'
+  const cv = localStorage.getItem(COLUMN_KEY)
+  if (cv === 'notes' || cv === 'attach' || cv === 'trash' || cv === 'ai') {
+    state.columnView = cv
+    state.mainView = cv === 'ai' ? 'ai' : 'note'
+  }
+  for (const key of ['sidebar', 'column', 'outline'] as WidthKey[]) {
+    const raw = Number(localStorage.getItem(`nota-w-${key}`))
+    if (raw > 0) setWidth(key, raw)
+  }
   const v = localStorage.getItem('nota-view')
   if (v === 'write' || v === 'split' || v === 'read') state.viewMode = v
   initAccent()
@@ -728,8 +789,12 @@ const SESSION_LIMIT = 30
 /** 单个会话最多留这么多条消息 */
 const MESSAGE_LIMIT = 200
 
+/** 主区显示什么。AI 编写现在住在中间那一列里，两个字段得保持一致：
+    切到 ai 就把那一列也切到 AI；切回 note 只在「本来停在 AI」时才动它，
+    免得把用户自己选的附件库 / 回收站顶掉。 */
 function setMainView(v: MainView) {
-  state.mainView = v
+  if (v === 'ai') setColumnView('ai')
+  else if (state.columnView === 'ai') setColumnView('notes')
 }
 
 function currentSession(): ChatSession | undefined {
@@ -977,7 +1042,10 @@ export const store = {
   exportNote,
   importNotes,
   toggleSidebar,
-  toggleList,
+  setColumnView,
+  toggleColumn,
+  setWidth,
+  WIDTH_LIMITS,
   setViewMode,
   setNavFilter,
   setSearchQuery,

@@ -182,43 +182,44 @@ const clickMode = async (title) => {
   await sleep(700)
 }
 
-/* ── 1. 附件库与回收站：两个独立窗口 ── */
+/* ── 1. 附件库与回收站：资料栏里的两个视图 ──
+   开一个弹窗就得多想一层「我在第几层」，而且插图时正文被盖住。
+   挪进中间那一列之后，这两件事变成同一栏的两个页签。 */
 const libs = await evaluate(`(async () => {
   const pick = (label) => [...document.querySelectorAll('.panel .nav-item')]
     .find(b => (b.querySelector('.nav-label')?.textContent ?? '').includes(label))
 
   pick('附件库')?.click()
   await new Promise(r => setTimeout(r, 700))
-  const attach = document.querySelector('.dlg[aria-label="附件库"]')
-  const cards = attach?.querySelectorAll('.adlg-card').length ?? 0
-  const bothAtOnce1 = !!document.querySelector('.dlg[aria-label="回收站"]')
-  attach?.querySelector('.dlg-x')?.click()
-  await new Promise(r => setTimeout(r, 300))
-  const attachGone = !document.querySelector('.dlg[aria-label="附件库"]')
+  const cards = document.querySelectorAll('.col[data-view="attach"] .av-card').length
+  const bothAtOnce1 = !!document.querySelector('.tv')
 
   pick('回收站')?.click()
   await new Promise(r => setTimeout(r, 700))
-  const trash = document.querySelector('.dlg[aria-label="回收站"]')
-  const rows = trash?.querySelectorAll('.dlg-row').length ?? 0
-  const bothAtOnce2 = !!document.querySelector('.dlg[aria-label="附件库"]')
-  trash?.querySelector('.dlg-x')?.click()
-  await new Promise(r => setTimeout(r, 300))
+  const rows = document.querySelectorAll('.col[data-view="trash"] .pn-row').length
+  const hasRestore = !!document.querySelector('.col[data-view="trash"] .tv-restore')
+  const bothAtOnce2 = !!document.querySelector('.av')
+
+  document.querySelector('.col-tab[data-view="notes"]')?.click()
+  await new Promise(r => setTimeout(r, 400))
   return {
-    cards, rows, attachGone, bothAtOnce1, bothAtOnce2,
+    cards, rows, hasRestore, bothAtOnce1, bothAtOnce2,
     tabs: document.querySelectorAll('.lib-tab').length,
-    trashGone: !document.querySelector('.dlg[aria-label="回收站"]'),
+    dialogs: document.querySelectorAll('.dlg, .dlg-mask').length,
+    backToNotes: !!document.querySelector('.col[data-view="notes"] .nlist'),
   }
 })()`)
 ok(
-  '1.附件库与回收站各自独立成窗口',
-  libs.cards === 1 && libs.rows === 1 && libs.tabs === 0 &&
-    !libs.bothAtOnce1 && !libs.bothAtOnce2 && libs.attachGone && libs.trashGone,
+  '1.附件库与回收站是资料栏里的两个视图（不再是弹窗）',
+  libs.cards === 1 && libs.rows === 1 && libs.hasRestore &&
+    libs.tabs === 0 && libs.dialogs === 0 &&
+    !libs.bothAtOnce1 && !libs.bothAtOnce2 && libs.backToNotes,
   libs,
 )
 
-/* ── 2. 笔记列表栏 ── */
+/* ── 2. 笔记列表（资料栏「笔记」页） ── */
 const list = await evaluate(`(() => {
-  const panel = document.querySelector('.nlist')
+  const panel = document.querySelector('.col[data-view="notes"] .nlist')
   if (!panel) return { err: 'no list panel' }
   const items = [...panel.querySelectorAll('.nl-item')]
   return {
@@ -233,7 +234,7 @@ const list = await evaluate(`(() => {
   }
 })()`)
 ok(
-  '2.笔记列表栏有标题/计数/摘要/标签',
+  '2.笔记列表有标题/计数/摘要/标签',
   list.title === '所有笔记' && list.count === '3' && list.items === 3 &&
     ['周报', '长文', '无标签'].every((n) => (list.names ?? []).includes(n)) &&
     list.excerpt.every((e) => e.length > 0) &&
@@ -245,11 +246,11 @@ ok(
 
 /* ── 3. 点列表里的一条能打开 ── */
 const opened = await evaluate(`(async () => {
-  const items = [...document.querySelectorAll('.nlist .nl-item')]
+  const items = [...document.querySelectorAll('.col .nlist .nl-item')]
   const target = items.find(b => (b.querySelector('.nl-text')?.textContent ?? '').includes('无标签'))
   target?.click()
   await new Promise(r => setTimeout(r, 900))
-  const on = document.querySelector('.nlist .nl-item.on .nl-text')?.textContent?.trim() ?? ''
+  const on = document.querySelector('.col .nlist .nl-item.on .nl-text')?.textContent?.trim() ?? ''
   return { on, title: document.querySelector('.ph-title')?.value ?? '', body: (window.__notes['/ws/无标签.md'] ?? '').slice(0, 6) }
 })()`)
 ok(
@@ -258,21 +259,21 @@ ok(
   opened,
 )
 
-/* ── 4. 列表栏收起展开 + 落盘 ── */
+/* ── 4. 资料栏收起展开 + 落盘 ── */
 const collapse = await evaluate(`(async () => {
-  const btn = document.querySelector('.bar .side-pill[title$="笔记列表栏"]')
+  const btn = document.querySelector('.bar .side-pill[data-role="column-toggle"]')
   if (!btn) return { err: 'no toggle' }
   btn.click()
   await new Promise(r => setTimeout(r, 400))
-  const hidden = !document.querySelector('.nlist')
-  const saved = localStorage.getItem('nota-list')
-  const btn2 = document.querySelector('.bar .side-pill[title$="笔记列表栏"]')
+  const hidden = !document.querySelector('.col')
+  const saved = localStorage.getItem('nota-column-open')
+  const btn2 = document.querySelector('.bar .side-pill[data-role="column-toggle"]')
   btn2?.click()
   await new Promise(r => setTimeout(r, 400))
-  return { hidden, saved, back: !!document.querySelector('.nlist') }
+  return { hidden, saved, back: !!document.querySelector('.col') }
 })()`)
 ok(
-  '4.列表栏可收起展开且状态落盘',
+  '4.资料栏可收起展开且状态落盘',
   collapse.hidden && collapse.saved === '0' && collapse.back,
   collapse,
 )
@@ -396,33 +397,45 @@ ok(
   sync,
 )
 
-/* ── 8. AI 页模型选择 ── */
+/* ── 8. AI 模型选择（紧凑下徽标收成图标，菜单仍是同一套 .n-menu） ── */
 const model = await evaluate(`(async () => {
+  const read = () => { try { return JSON.parse(localStorage.getItem('nota-ai') || '{}') } catch { return {} } }
   const nav = [...document.querySelectorAll('.panel .nav-item')]
     .find(x => (x.querySelector('.nav-label')?.textContent ?? '').trim() === 'AI 编写')
   nav?.click()
   await new Promise(r => setTimeout(r, 600))
-  const badge = document.querySelector('.chat .model')
+
+  // 紧凑下不显示模型名，只读成一个图标徽标 —— 当前模型改由菜单里的选中态表达
+  const badge = document.querySelector('.chat.compact .model-wrap.model-icon-only .model')
   if (!badge) return { err: 'no model badge' }
-  const initial = badge.querySelector('.model-name')?.textContent?.trim() ?? ''
+  const active = () => document.querySelector('.chat .model-menu .n-menu-item.on .n-menu-name')
+    ?.textContent?.trim() ?? ''
   badge.click()
   await new Promise(r => setTimeout(r, 900))
   const menu = document.querySelector('.chat .model-menu')
-  const opts = menu ? [...menu.querySelectorAll('.mm-item')].map(b => b.textContent.trim()) : []
-  const hasSettings = !!menu?.querySelector('.mm-dim')
-  const target = [...(menu?.querySelectorAll('.mm-item') ?? [])].find(b => b.textContent.trim() === 'qwen2.5:7b')
+  const menuIsN = menu?.classList.contains('n-menu') ?? false
+  const items = [...(menu?.querySelectorAll('.n-menu-item') ?? [])]
+  const opts = items.map(b => b.querySelector('.n-menu-name')?.textContent?.trim() ?? '')
+  const hasSettings = opts.includes('模型设置…')
+  const initial = active()
+  const target = items.find(b => (b.querySelector('.n-menu-name')?.textContent ?? '').trim() === 'qwen2.5:7b')
   target?.click()
   await new Promise(r => setTimeout(r, 400))
-  const after = document.querySelector('.chat .model-name')?.textContent?.trim() ?? ''
-  let saved = {}
-  try { saved = JSON.parse(localStorage.getItem('nota-ai') || '{}') } catch {}
-  return { initial, opts, hasSettings, after, savedModel: saved.model, closed: !document.querySelector('.chat .model-menu') }
+  const saved = read()
+  const closed = !document.querySelector('.chat .model-menu')
+  // 再开一次，选中态应当已经挪过去了
+  badge.click()
+  await new Promise(r => setTimeout(r, 700))
+  const after = active()
+  document.body.click()
+  await new Promise(r => setTimeout(r, 200))
+  return { initial, menuIsN, opts, hasSettings, after, savedModel: saved.model, closed }
 })()`)
 ok(
-  '8.AI 页模型徽标可切换模型',
-  model.initial === 'llama3.2' && (model.opts ?? []).includes('qwen2.5:7b') &&
-    model.hasSettings && model.after === 'qwen2.5:7b' && model.savedModel === 'qwen2.5:7b' &&
-    model.closed,
+  '8.AI 模型徽标可切换模型（紧凑下是图标徽标）',
+  model.initial === 'llama3.2' && model.menuIsN &&
+    (model.opts ?? []).includes('qwen2.5:7b') && model.hasSettings &&
+    model.after === 'qwen2.5:7b' && model.savedModel === 'qwen2.5:7b' && model.closed,
   model,
 )
 

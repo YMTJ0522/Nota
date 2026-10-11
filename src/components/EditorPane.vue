@@ -44,6 +44,7 @@ import NotePickerDialog from '@/components/NotePickerDialog.vue'
 import SlashMenu from '@/components/SlashMenu.vue'
 import EditorActions from '@/components/EditorActions.vue'
 import EditorOutline from '@/components/EditorOutline.vue'
+import SplitHandle from '@/components/SplitHandle.vue'
 import {
   toolbarInline,
   toolbarWrap,
@@ -661,6 +662,7 @@ onMounted(() => {
   })
   window.addEventListener('keydown', onViewKey)
   window.addEventListener('nota:insert', onInsertRequest)
+  window.addEventListener('nota:tag', onTagRequest)
 })
 
 /* 预览容器是 v-if 出来的：从「编辑」切到「分栏」时它才出现，
@@ -689,6 +691,84 @@ function onInsertRequest(e: Event) {
   v.focus()
 }
 
+/**
+ * 侧栏「新建标签」要求给当前这篇加上一个标签。
+ *
+ * 标签在 Nota 里没有单独的库，它的唯一来源就是笔记开头的 frontmatter，
+ * 所以「新建标签」＝改这篇笔记：有 frontmatter 就并进 tags，没有就补一段。
+ * 改动走 view.dispatch 进历史栈 —— Ctrl+Z 能撤销，自动保存也会照常落盘，
+ * 不用另外开一条写文件的通道（那样会绕过正在编辑的缓冲区）。
+ */
+function onTagRequest(e: Event) {
+  const raw = (e as CustomEvent<string>).detail
+  const v = view
+  if (!v || !raw) return
+  const tag = raw.trim().replace(/^#+/, '')
+  if (!tag) return
+
+  const doc = v.state.doc.toString()
+  const next = withTag(doc, tag)
+  if (next === doc) {
+    window.dispatchEvent(new CustomEvent('nota:toast', { detail: `这篇已经有 #${tag} 了` }))
+    return
+  }
+  const at = v.state.selection.main.head
+  v.dispatch({
+    changes: { from: 0, to: doc.length, insert: next },
+    // 尽量把光标留在原处：frontmatter 变长/变短多少就补多少
+    selection: { anchor: Math.max(0, Math.min(next.length, at + (next.length - doc.length))) },
+    userEvent: 'input.insert',
+  })
+  window.dispatchEvent(new CustomEvent('nota:toast', { detail: `已加上标签 #${tag}` }))
+  // 标签虽然只是在正文里加了一行，但侧栏那份标签清单是从目录树读出来的。
+  // 等这一笔落盘（自动保存 600ms 防抖）后重读一次树，不然新标签要等到
+  // 下次开关工作区才在侧栏出现 —— 加了却看不见，等于没加。
+  window.setTimeout(() => {
+    void store.saveNote({ silent: true }).then(() => store.refreshTree())
+  }, 700)
+}
+
+/** 把标签并进 frontmatter。返回原文表示「已经有了」 */
+function withTag(doc: string, tag: string): string {
+  const fm = doc.match(/^---\r?\n([\s\S]*?)\r?\n---[ \t]*\r?\n?/)
+  if (!fm) return `---\ntags: [${tag}]\n---\n\n${doc}`
+
+  const head = fm[1]
+  const tagsLine = /^(tags|tag)\s*:\s*(.*)$/m
+  const m = head.match(tagsLine)
+  let body: string
+  if (!m) {
+    body = `${head}\ntags: [${tag}]`
+  } else {
+    // 两种写法都认：`tags: [a, b]` 和 `tags:` 下面挂一串 `- a`
+    const inline = m[2].trim()
+    if (/^\[.*\]$/.test(inline)) {
+      const cur = inline
+        .slice(1, -1)
+        .split(',')
+        .map((s) => s.trim().replace(/^["']|["']$/g, ''))
+        .filter(Boolean)
+      if (cur.includes(tag)) return doc
+      cur.push(tag)
+      body = head.replace(tagsLine, `${m[1]}: [${cur.join(', ')}]`)
+    } else if (inline === '') {
+      // 块状写法：在紧跟其后的那串 `- x` 里补一行
+      const lines = head.split('\n')
+      const idx = lines.findIndex((l) => tagsLine.test(l))
+      let end = idx + 1
+      while (end < lines.length && /^\s*-\s+/.test(lines[end])) end += 1
+      const pad = (lines[idx + 1]?.match(/^\s*/) ?? [''])[0] || '  '
+      lines.splice(end, 0, `${pad}- ${tag}`)
+      body = lines.join('\n')
+    } else {
+      // `tags: 随笔` 这种单值写法
+      if (inline.replace(/^["']|["']$/g, '') === tag) return doc
+      body = head.replace(tagsLine, `${m[1]}: [${inline}, ${tag}]`)
+    }
+  }
+  return `---\n${body}\n---\n${doc.slice(fm[0].length)}`
+}
+
 onBeforeUnmount(() => {
   if (timer) clearTimeout(timer)
   if (previewTimer) clearTimeout(previewTimer)
@@ -696,6 +776,7 @@ onBeforeUnmount(() => {
   destroyEditor()
   window.removeEventListener('keydown', onViewKey)
   window.removeEventListener('nota:insert', onInsertRequest)
+  window.removeEventListener('nota:tag', onTagRequest)
 })
 
 // 切笔记：activePath 变化时把 draft 灌进 CM。
@@ -872,6 +953,8 @@ defineExpose({ getView: () => view })
           class="preview md-body"
           v-html="html"
         />
+        <!-- 大纲的宽度也能拖：最右边这一栏同样得能腾地方 -->
+        <SplitHandle v-if="state.outline" target="outline" :sign="-1" label="拖动调整大纲宽度" />
         <EditorOutline
           v-if="state.outline"
           :headings="headings"
@@ -1004,8 +1087,8 @@ defineExpose({ getView: () => view })
 }
 
 /* ── 保存状态 ──
-   「已保存」刻意做得最安静（灰），只有真正需要注意时才提色：
-   保存中走强调色，未保存走警示色。 */
+   一眼分清「有没有存上」比安静更重要，所以走交通灯：
+   未保存亮红（要你处理）、保存中强调色、已保存亮绿（可以放心走）。 */
 .ph-save {
   display: inline-flex;
   align-items: center;
@@ -1027,11 +1110,11 @@ defineExpose({ getView: () => view })
 }
 
 .ph-save.dirty {
-  color: var(--n-fg-dim);
+  color: var(--n-danger);
 }
 
 .ph-save.saved {
-  color: var(--n-fg-faint);
+  color: var(--n-ok);
 }
 
 /* 未保存 / 保存中用小圆点表示，保持和原来一致的克制 */
@@ -1039,9 +1122,13 @@ defineExpose({ getView: () => view })
   width: 6px;
   height: 6px;
   border-radius: 50%;
-  background: var(--n-accent);
+  background: var(--n-fg-faint);
   flex: none;
   margin: 0 3px;
+}
+
+.ph-save.dirty .ph-dot {
+  background: var(--n-danger);
 }
 
 .spin {

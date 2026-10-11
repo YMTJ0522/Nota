@@ -1,40 +1,40 @@
 <script setup lang="ts">
-import { onMounted, onBeforeUnmount, ref, watch } from 'vue'
+import { onMounted, onBeforeUnmount, watch } from 'vue'
 import { store } from '@/store'
 import TitleBar from '@/components/TitleBar.vue'
 import SidePanel from '@/components/SidePanel.vue'
-import NoteListPanel from '@/components/NoteListPanel.vue'
+import SideColumn from '@/components/SideColumn.vue'
+import SplitHandle from '@/components/SplitHandle.vue'
 import EditorPane from '@/components/EditorPane.vue'
-import AiChatPanel from '@/components/AiChatPanel.vue'
 import WelcomeView from '@/components/WelcomeView.vue'
-import AttachDialog from '@/components/AttachDialog.vue'
-import TrashDialog from '@/components/TrashDialog.vue'
 import ToastHost from '@/components/ToastHost.vue'
 
 const { state } = store
 
-/** 附件库与回收站是两个独立窗口，各自一个开合状态（见各自的组件注释） */
-const attachOpen = ref(false)
-const trashOpen = ref(false)
-
+/**
+ * 附件库 / 回收站不再各开一个窗口，它们现在是中间那一列里的两个视图。
+ * 侧栏那两枚入口（可能还带着「我想看回收站」的意图）改成切这一列的视图。
+ */
 function onLibrary(e: Event) {
   const which = (e as CustomEvent<'attach' | 'trash'>).detail
-  if (which === 'trash') trashOpen.value = true
-  else attachOpen.value = true
+  if (!state.column) store.toggleColumn()
+  store.setColumnView(which === 'trash' ? 'trash' : 'attach')
 }
 
-/** 库里有增删（删了附件 / 恢复了笔记 / 清空了回收站），侧栏的计数要跟着变 */
-function closeLibrary() {
-  attachOpen.value = false
-  trashOpen.value = false
-  window.dispatchEvent(new CustomEvent('nota:library-changed'))
+/** 各栏宽度由 SplitHandle 拖着改，这里只负责把它们写到 CSS 变量上 */
+function widthVars() {
+  return {
+    '--side-w': `${state.sidebarWidth}px`,
+    '--col-w': `${state.columnWidth}px`,
+    '--outline-w': `${state.outlineWidth}px`,
+  }
 }
 
-// AI 入口被关掉时不能停在聊天页——那样既出不去也进不来
+// AI 入口被关掉时不能停在聊天视图——那样这一列就成了一块空白
 watch(
-  () => [state.ai.enabled, state.mainView] as const,
-  ([enabled, view]) => {
-    if (!enabled && view === 'ai') store.setMainView('note')
+  () => state.ai.enabled,
+  (enabled) => {
+    if (!enabled && state.columnView === 'ai') store.setColumnView('notes')
   },
   { immediate: true },
 )
@@ -75,13 +75,14 @@ onBeforeUnmount(() => {
 <template>
   <div class="shell">
     <TitleBar />
-    <div class="body">
+    <div class="body" :style="widthVars()">
       <SidePanel v-if="state.root" />
-      <!-- 列表栏只在「笔记」视图里有意义：AI 编写页没有笔记可列 -->
-      <NoteListPanel v-if="state.root && state.mainView === 'note' && state.list" />
+      <SplitHandle v-if="state.root && state.sidebar" target="sidebar" label="拖动调整侧边栏宽度" />
+      <SideColumn v-if="state.root && state.column" />
+      <SplitHandle v-if="state.root && state.column" target="column" label="拖动调整资料栏宽度" />
+
       <main class="main">
         <WelcomeView v-if="!state.root" />
-        <AiChatPanel v-else-if="state.mainView === 'ai'" />
         <EditorPane v-else-if="state.activePath" />
         <div v-else class="idle">
           <p>从左侧选一篇笔记，或者<button class="link" @click="store.newNote()">新建一篇</button></p>
@@ -89,13 +90,11 @@ onBeforeUnmount(() => {
       </main>
     </div>
 
-    <AttachDialog :open="attachOpen" @close="closeLibrary" />
-    <TrashDialog :open="trashOpen" @close="closeLibrary" />
-
     <!-- 全应用共用的轻提示：把各处抛出的 nota:toast 接住 -->
     <ToastHost />
   </div>
 </template>
+
 
 <style scoped>
 .shell {

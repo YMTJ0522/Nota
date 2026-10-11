@@ -10,6 +10,7 @@ import {
   Paperclip,
   PanelLeftClose,
   PanelLeftOpen,
+  Plus,
   Search,
   Settings,
   Sparkles,
@@ -108,15 +109,49 @@ function clearSearch() {
 /**
  * 附件库 / 回收站 / AI 编写的入口。
  *
- * 库那两项抛全局事件而不是 emit：对话框挂在 App 层（要跨侧栏和编辑区工作），
- * 一层层传 props 会把两边焊死。AI 编写是主区的一个视图，直接改 store。
+ * 三样东西现在都住在中间那一列里（SideColumn），点这里只是把那一列切过去：
+ * 如果这一列被收起来了，先把它叫回来 —— 点了没反应是最糟的交互。
  */
 function openLibrary(tab: 'attach' | 'trash') {
-  window.dispatchEvent(new CustomEvent('nota:library', { detail: tab }))
+  if (!state.column) store.toggleColumn()
+  store.setColumnView(tab)
 }
 
 function openAi() {
+  if (!state.column) store.toggleColumn()
   store.setMainView('ai')
+}
+
+/* ── 新建标签 ──
+   标签的唯一来源是笔记本身（frontmatter 里的 tags），所以「新建标签」
+   就是给当前这篇打上它：改了正文内容 → 走既有的自动保存通道落盘，
+   Ctrl+Z 也能撤销。没有打开笔记时不做假动作，直接说清楚。 */
+const newTagOpen = ref(false)
+const tagInput = ref<HTMLInputElement | null>(null)
+
+async function startNewTag() {
+  if (!state.activePath) {
+    window.dispatchEvent(
+      new CustomEvent('nota:toast', { detail: '先打开一篇笔记 —— 标签是记在笔记上的' }),
+    )
+    return
+  }
+  newTagOpen.value = true
+  await nextTick()
+  tagInput.value?.focus()
+}
+
+function cancelTag() {
+  newTagOpen.value = false
+}
+
+function commitTag(e: Event) {
+  const el = e.target as HTMLInputElement
+  const name = el.value.trim().replace(/^#+/, '')
+  newTagOpen.value = false
+  el.value = ''
+  if (!name) return
+  window.dispatchEvent(new CustomEvent('nota:tag', { detail: name }))
 }
 
 /** 工具栏 AI 菜单的「模型设置…」：打开对话框并停在 AI 分区 */
@@ -216,9 +251,14 @@ const rootTail = computed(() => {
         </nav>
 
         <!-- 附件库 / 回收站 / AI 编写：三件性质完全不同的事，各自独立成组。
-             挤在一个块里会让人以为它们是一类东西。 -->
+             挤在一个块里会让人以为它们是一类东西。
+             点它们不再弹窗，而是把中间那一列切到对应视图。 -->
         <nav class="nav nav-group">
-          <button class="nav-item" @click="openLibrary('attach')">
+          <button
+            class="nav-item"
+            :class="{ on: state.mainView === 'note' && state.column && state.columnView === 'attach' }"
+            @click="openLibrary('attach')"
+          >
             <span class="nav-ico"><Paperclip :size="15" :stroke-width="1.9" /></span>
             <span class="nav-label">附件库</span>
             <span v-if="libCounts.attach > 0" class="nav-count">{{ libCounts.attach }}</span>
@@ -226,7 +266,11 @@ const rootTail = computed(() => {
         </nav>
 
         <nav class="nav nav-group">
-          <button class="nav-item" @click="openLibrary('trash')">
+          <button
+            class="nav-item"
+            :class="{ on: state.mainView === 'note' && state.column && state.columnView === 'trash' }"
+            @click="openLibrary('trash')"
+          >
             <span class="nav-ico"><Trash2 :size="15" :stroke-width="1.9" /></span>
             <span class="nav-label">回收站</span>
             <span v-if="libCounts.trash > 0" class="nav-count">{{ libCounts.trash }}</span>
@@ -234,7 +278,11 @@ const rootTail = computed(() => {
         </nav>
 
         <nav v-if="state.ai.enabled" class="nav nav-group">
-          <button class="nav-item" :class="{ on: state.mainView === 'ai' }" @click="openAi">
+          <button
+            class="nav-item"
+            :class="{ on: state.mainView === 'ai' && state.column }"
+            @click="openAi"
+          >
             <span class="nav-ico"><Sparkles :size="15" :stroke-width="1.9" /></span>
             <span class="nav-label">AI 编写</span>
             <span v-if="state.chat.length" class="nav-count">{{ state.chat.length }}</span>
@@ -272,15 +320,42 @@ const rootTail = computed(() => {
           </ul>
         </section>
 
-        <!-- 标签 -->
-        <section v-if="tags.length" class="sec">
+        <!-- 标签。
+             这一块以前是「有标签才显示」，工作区里的笔记一篇没打过标签时
+             整块就消失了 —— 用户看到的结论是「这里没有标签功能」。
+             现在常显，并且在标题旁给一个入口：标签是记在笔记上的，
+             所以新建＝给当前这篇打上这个标签。 -->
+        <section class="sec">
           <div class="sec-head">
             <span class="sec-title">标签</span>
-            <button v-if="state.activeTag" class="sec-add" data-tip="清除筛选" @click="store.setActiveTag(null)">
+            <button
+              v-if="state.activeTag"
+              class="sec-add"
+              data-tip="清除筛选"
+              @click="store.setActiveTag(null)"
+            >
               <X :size="12" :stroke-width="2.2" />
             </button>
+            <button class="sec-add" data-tip="新建标签" @click="startNewTag">
+              <Plus :size="13" :stroke-width="2.2" />
+            </button>
           </div>
-          <div class="tags-body">
+
+          <div v-if="newTagOpen" class="folder-new">
+            <input
+              ref="tagInput"
+              class="folder-input"
+              placeholder="标签名，回车确认"
+              @keydown.enter="commitTag"
+              @keydown.esc="cancelTag"
+              @blur="commitTag"
+            />
+          </div>
+
+          <div v-if="tags.length === 0" class="hint">
+            还没有标签。标签写在笔记开头的 frontmatter 里，给当前这篇加一个试试。
+          </div>
+          <div v-else class="tags-body">
             <button
               v-for="t in tags"
               :key="t.name"
@@ -342,7 +417,7 @@ const rootTail = computed(() => {
           v-for="t in railTools"
           :key="t.id"
           class="rail-btn"
-          :class="{ on: t.id === 'ai' && state.mainView === 'ai' }"
+          :class="{ on: state.column && state.columnView === (t.id === 'ai' ? 'ai' : t.id) }"
           :data-tip="t.label"
           @click="t.id === 'ai' ? openAi() : openLibrary(t.id === 'attach' ? 'attach' : 'trash')"
         >
@@ -365,7 +440,8 @@ const rootTail = computed(() => {
 .panel {
   position: relative;
   z-index: 20;
-  width: var(--n-sidebar);
+  /* 宽度由 App 写在 --side-w 上，拖动分隔线改的就是它 */
+  width: var(--side-w, var(--n-sidebar));
   flex: none;
   display: flex;
   flex-direction: column;

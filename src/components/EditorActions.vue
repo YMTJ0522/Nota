@@ -153,14 +153,14 @@ onBeforeUnmount(() => {
     </button>
 
     <Teleport to="body">
-      <div v-if="openMenu" ref="menu" class="ea-menu hm-menu" :style="style">
-        <button class="ea-item hm-item" @click="doExport('md')">
+      <div v-if="openMenu" ref="menu" class="ea-menu hm-menu n-menu" :style="style">
+        <button class="ea-item hm-item n-menu-item" @click="doExport('md')">
           <FileText :size="14" :stroke-width="1.8" />
-          <span>导出为 Markdown</span>
+          <span class="n-menu-name">导出为 Markdown</span>
         </button>
-        <button class="ea-item hm-item" @click="doExport('html')">
+        <button class="ea-item hm-item n-menu-item" @click="doExport('html')">
           <FileCode2 :size="14" :stroke-width="1.8" />
-          <span>导出为 HTML</span>
+          <span class="n-menu-name">导出为 HTML</span>
         </button>
       </div>
     </Teleport>
@@ -218,58 +218,14 @@ onBeforeUnmount(() => {
 </style>
 
 <style>
-/* 菜单本体被 Teleport 到 body，不受 scoped 约束，单独写一段。
-   类名沿用原来的 hm-menu / hm-item：它已经在几轮回归脚本里被引用，
-   而这里的行为（量锚点、右边缘避让）本来就一模一样。 */
+/* 菜单被 Teleport 到 body，不受 scoped 约束，所以单独写一段。
+   长相（描边 / 圆角 / 底色 / 阴影 / 行样式 / 入场动画）统一在
+   styles/menu.css 的 .n-menu 里，这里只留这条菜单特有的东西：
+   层级和宽度。类名沿用 hm-menu / hm-item，几轮回归脚本引用过它。 */
 .hm-menu,
 .ea-menu {
   z-index: 999;
   width: max-content;
   min-width: 154px;
-  padding: 4px;
-  background: var(--n-raised);
-  border: 1px solid var(--n-line);
-  border-radius: var(--n-r-md);
-  box-shadow: var(--n-shadow-lg);
-  animation: ea-in 120ms var(--n-ease);
-}
-
-.hm-item,
-.ea-item {
-  width: 100%;
-  height: 30px;
-  display: flex;
-  align-items: center;
-  gap: 9px;
-  padding: 0 9px;
-  border-radius: var(--n-r-sm);
-  font-size: 13px;
-  color: var(--n-fg);
-  text-align: left;
-  white-space: nowrap;
-}
-
-.hm-item svg,
-.ea-item svg {
-  fill: none;
-  stroke: currentColor;
-  color: var(--n-fg-faint);
-  flex: none;
-}
-
-.hm-item:hover,
-.ea-item:hover {
-  background: var(--n-accent-soft);
-  color: var(--n-accent);
-}
-
-.hm-item:hover svg,
-.ea-item:hover svg {
-  color: var(--n-accent);
-}
-
-@keyframes ea-in {
-  from { opacity: 0; transform: translateY(-4px); }
-  to { opacity: 1; transform: none; }
 }
 </style>
