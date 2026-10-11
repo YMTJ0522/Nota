@@ -62,10 +62,11 @@
   --n-code-punct: color-mix(in oklab, var(--n-fg) 88%, var(--n-fg-dim));
   --n-code-comment: var(--n-fg-dim);
 
-  /* 代码块外壳（预览区）：底色比正文略沉，靠描边和头部条分层 */
+  /* 代码块（预览区）：底色比正文略沉，一圈细描边就够了 */
   --n-code-surface: color-mix(in oklab, var(--n-surface) 88%, var(--n-bg));
-  --n-code-head: color-mix(in oklab, var(--n-surface) 60%, var(--n-bg));
   --n-code-line: color-mix(in oklab, var(--n-line) 88%, var(--n-fg-dim));
+  /* 顶边那道一像素高光：纸上看起来像块稍微浮起的板子 */
+  --n-code-inset: rgb(255 255 255 / 38%);
 
   /* 富块（Callout / 折叠 / 分栏 / 表格）在编辑区里的底色 */
   --n-block-bg: #f6f4ef;
@@ -181,8 +182,9 @@
   --n-code-punct: color-mix(in oklab, var(--n-fg) 88%, var(--n-fg-dim));
   --n-code-comment: var(--n-fg-dim);
   --n-code-surface: color-mix(in oklab, var(--n-raised) 72%, var(--n-bg));
-  --n-code-head: color-mix(in oklab, var(--n-raised) 52%, var(--n-bg));
   --n-code-line: color-mix(in oklab, var(--n-line) 88%, var(--n-fg-dim));
+  /* 深色下白色高光会发灰发脏，压到几乎看不见 */
+  --n-code-inset: rgb(255 255 255 / 4%);
 
   --n-block-bg: #1e1f23;
   --n-block-line: #33343a;
@@ -225,6 +227,11 @@
 /* 紫藤：偏紫，深色底上最出挑的一套 */
 :root[data-accent='wisteria'][data-theme='dark'] { --n-accent: oklch(72% 0.13 300); }
 :root[data-accent='wisteria'][data-theme='light'] { --n-accent: oklch(52% 0.14 300); }
+
+/* 石墨：不想要颜色时用这套。彩度压到接近 0，就是一支中性的深灰笔，
+   选中态、按钮、链接都还在，只是不再是「某个颜色」。 */
+:root[data-accent='graphite'][data-theme='dark'] { --n-accent: oklch(76% 0.006 260); }
+:root[data-accent='graphite'][data-theme='light'] { --n-accent: oklch(47% 0.006 260); }
 
 * {
   box-sizing: border-box;

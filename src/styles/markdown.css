@@ -52,14 +52,19 @@
   color: var(--n-code-fg);
   background: var(--n-code-bg);
 }
-/* 块级代码由 .pv-code 外壳接管，pre 只负责横向滚动与排版 */
+/* 块级代码：一层圆角薄框，没有标题栏、语言标签、行号、复制按钮。
+   参考项目就是这么做的——代码块该把注意力让给代码本身，
+   加一堆外壳反而让它比正文更抢眼。 */
 .md-body pre.pv-code-pre {
-  margin: 0;
-  padding: 10px 14px;
-  border: 0;
-  border-radius: 0;
-  background: transparent;
-  box-shadow: none;
+  margin: 0.9em 0;
+  padding: 12px 14px;
+  border: 1px solid var(--n-code-line);
+  border-radius: 10px;
+  background: var(--n-code-surface);
+  color: color-mix(in oklab, var(--n-fg) 92%, var(--n-fg-dim));
+  box-shadow:
+    inset 0 1px var(--n-code-inset),
+    0 1px 2px rgb(49 43 35 / 3%);
   overflow-x: auto;
   tab-size: 2;
 }
@@ -101,145 +106,13 @@
   white-space: nowrap;
 }
 
-/* ── 代码块外壳 ──
-   形态与参考项目一致：一条 28px 的头部（标题 · 语言 · 行数 · 复制）
-   压在代码区上方，整块是一张 10px 圆角的卡片。
-   头部按钮平时隐形、hover 才出现，读代码时视线不被按钮分走。 */
-.md-body .pv-code {
-  position: relative;
+/* 行容器：每行一个 span，靠它让空行也有高度。
+   不再有行号和高亮行——代码块回归最朴素的样子。 */
+.md-body .pv-line {
   display: block;
-  margin: 0.9em 0;
-  padding: 0;
-  border: 1px solid var(--n-code-line);
-  border-radius: 10px;
-  background: var(--n-code-surface);
-  color: color-mix(in oklab, var(--n-fg) 92%, var(--n-fg-dim));
-  overflow: hidden;
-}
-.md-body .pv-code-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  height: 28px;
-  padding: 0 7px 0 12px;
-  border-bottom: 1px solid var(--n-code-line);
-  background: var(--n-code-head);
-}
-.md-body .pv-code-title {
-  min-width: 0;
-  overflow: hidden;
-  color: var(--n-fg-dim);
-  font-family: var(--n-font-mono);
-  font-size: 11px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.md-body .pv-code-lang {
-  margin-left: auto;
-  font-family: var(--n-font-mono);
-  font-size: 10.5px;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  color: var(--n-fg-dim);
-}
-/* 有标题时语言标签挨着按钮，不要贴到标题文字上 */
-.md-body .pv-code-title + .pv-code-lang {
-  margin-right: 8px;
-}
-.md-body .pv-code-fold,
-.md-body .pv-code-copy {
-  display: inline-flex;
-  align-items: center;
-  flex: none;
-  height: 20px;
-  padding: 0 7px;
-  border: 0;
-  border-radius: 5px;
-  background: none;
-  font-family: var(--n-font-ui);
-  font-size: 11px;
-  color: var(--n-fg-dim);
-  opacity: 0;
-  transition:
-    opacity var(--n-dur) var(--n-ease),
-    background-color var(--n-dur) var(--n-ease),
-    color var(--n-dur) var(--n-ease);
-}
-.md-body .pv-code:hover .pv-code-fold,
-.md-body .pv-code:hover .pv-code-copy,
-.md-body .pv-code-fold:focus-visible,
-.md-body .pv-code-copy:focus-visible {
-  opacity: 1;
-}
-.md-body .pv-code-fold:hover,
-.md-body .pv-code-copy:hover {
-  background: color-mix(in oklab, var(--n-fg-dim) 14%, transparent);
-  color: var(--n-fg);
-}
-/* 复制成功后短暂留着反馈 */
-.md-body .pv-code-copy.done {
-  opacity: 1;
-  color: var(--n-ok);
-}
-.md-body .pv-code-body {
-  position: relative;
-  overflow: hidden;
-  transition: max-height 220ms var(--n-ease);
+  min-height: 1lh;
 }
 
-/* 图表类：渲染出来的是图不是代码，别套那层灰底和描边 */
-.md-body .pv-code.is-diagram {
-  margin: 1.1em 0;
-  padding: 10px;
-  border: 0;
-  border-radius: 0;
-  background: transparent;
-}
-.md-body .pv-code.is-diagram pre.pv-code-pre {
-  overflow-x: visible;
-  text-align: center;
-}
-.md-body .pv-code.is-diagram pre.pv-code-pre svg {
-  max-width: 100%;
-  height: auto;
-}
-.md-body .pv-code.is-folded .pv-code-body::after {
-  content: "";
-  position: absolute;
-  inset: auto 0 0 0;
-  height: 56px;
-  background: linear-gradient(to bottom, transparent, var(--n-code-surface));
-  pointer-events: none;
-}
-/* 行容器：行号、高亮行都挂在它上面。
-   宽度 100% 保证高亮底纹铺满整行，代码本身不换行、由 pre 横向滚动。 */
-.md-body .pv-line {
-  display: inline-block;
-  width: 100%;
-  min-height: 1lh;
-  vertical-align: top;
-}
-/* 行号：只有围栏里写了 line-numbers 才出现 */
-.md-body .pv-code.has-line-numbers pre.pv-code-pre {
-  padding-left: 0;
-}
-.md-body .pv-code.has-line-numbers .pv-line::before {
-  display: inline-block;
-  width: 3.4em;
-  margin-right: 1em;
-  padding-right: 0.75em;
-  color: color-mix(in oklab, var(--n-fg-dim) 72%, transparent);
-  content: attr(data-line);
-  font-variant-numeric: tabular-nums;
-  text-align: right;
-  user-select: none;
-}
-/* 高亮行：hl_lines 指定的那几行 */
-.md-body .pv-code .pv-line.is-hl {
-  background: color-mix(in oklab, var(--n-accent) 12%, transparent);
-  box-shadow: inset 2px 0 var(--n-accent);
-}
 .md-body blockquote {
   margin: 1em 0;
   padding: 0.45em 0 0.45em 14px;

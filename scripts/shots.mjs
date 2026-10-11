@@ -173,9 +173,38 @@ await evaluate('(() => {' +
   '  attachDelete: async () => true,' +
   '  trashList: async () => ([{ key: "aGV5", rel: "2026 手记/旧稿.md", name: "旧稿.md", deletedAt: Date.now() - 3600_000, size: 120 }]),' +
   '  trashRestore: async () => "/ws/2026 手记/旧稿.md", trashPurge: async () => true, trashEmpty: async () => true,' +
-  `  aiChat: async () => ({ ok: true, text: ${JSON.stringify(
-    '我看了一遍，结构挺清楚，三处可以再打磨：\n\n1. 「这段 touchend 的处理」缺主语，改成「touchend 里这一段」读起来更顺\n2. 第二段偏长，可以在「然后再看看后面还有触屏上 qb 的 apply8.getPendingUiOps 是否符合预期」前断开\n3. 结尾那句像是口语记录，正式文档里可以省掉\n\n改完大概是这样：\n\n```ts title="建议.md" line-numbers\n// 处理完成后统一刷新，避免重复绘制\nif (pendingOps > 0) refreshView()\n```\n\n要不要我直接替你把整段改一版？',
-  )} }),` +
+  // 假 AI：按最后一句提问给不同的回答，截图里的问答才读得通
+  `  aiChat: async (cfg, msgs) => {` +
+  `    const q = ((msgs && msgs.length ? msgs[msgs.length - 1].content : '') || '');` +
+  `    const L = (a) => a.join(String.fromCharCode(10));` +
+  `    if (q.indexOf('标题') >= 0) {` +
+  `      return { ok: true, text: L([` +
+  `        '挑了三个方向不同的，按场景取用：',` +
+  `        '',` +
+  `        '1. **一周手记 · 第 3 周**——最素素，适合按周归档',` +
+  `        '2. **把想法写下来，它们才会长成东西**——直接用文里那句，有情绪',` +
+  `        '3. **这一周：搬迁、补齐、串起来**——并列三个动作，一眼看清进展',` +
+  `        '',` +
+  `        '标题不用一锤定音，先挑一个用着，写着写着自然就知道该叫什么了。',` +
+  `      ]) };` +
+  `    }` +
+  `    return { ok: true, text: L([` +
+  `      '我看了一遍，结构挺清楚，三处可以再打磨：',` +
+  `      '',` +
+  `      '1. 「这段 touchend 的处理」缺主语，改成「touchend 里这一段」读起来更顺',` +
+  `      '2. 第二段偏长，可以在「然后再看看后面还有触屏上 qb 的 apply8.getPendingUiOps 是否符合预期」前断开',` +
+  `      '3. 结尾那句像是口语记录，正式文档里可以省掉',` +
+  `      '',` +
+  `      '改完大概是这样：',` +
+  `      '',` +
+  `      '\u0060\u0060\u0060ts title="建议.md" line-numbers',` +
+  `      '// 处理完成后统一刷新，避免重复绘制',` +
+  `      'if (pendingOps > 0) refreshView()',` +
+  `      '\u0060\u0060\u0060',` +
+  `      '',` +
+  `      '要不要我直接替你把整段改一版？',` +
+  `    ]) };` +
+  `  },` +
   '  aiTest: async () => ({ ok: true, models: ["llama3.2", "qwen2.5"] }),' +
   '  appInfo: async () => ({ electron: "33.0.0", chrome: "130.0.0.0", node: "20.18.0", platform: "win32", arch: "x64" }),' +
   '  exportSave: async () => "/tmp/x",' +
@@ -238,19 +267,34 @@ const setTheme = async (label) => {
 }
 await setTheme('浅色')
 
-/* ③ AI 聊天页 */
+/* ③ AI 聊天页（含会话管理：多开两条，列表里有得比） */
 await evaluate("(() => { const b=[...document.querySelectorAll('.panel .nav-item')].find(x=>(x.querySelector('.nav-label')?.textContent??'').trim()==='AI 编写'); b?.click(); return true })()")
 await sleep(700)
+// 先在第一条会话里聊一轮
 await evaluate(`(async () => {
   const box = document.querySelector('.chat .composer .input')
   box.focus(); box.value = '帮我看看这段文字有没有可以精简的地方'
   box.dispatchEvent(new Event('input', { bubbles: true }))
   await new Promise(r => setTimeout(r, 200))
   document.querySelector('.chat .composer .send')?.click()
-  await new Promise(r => setTimeout(r, 1400))
+  await new Promise(r => setTimeout(r, 1600))
   return true
 })()`)
-await sleep(900)
+// 再新建一条会话，这样左侧列表里能看到两条、且当前项高亮
+await evaluate("document.querySelector('.chat .rail-add')?.click()")
+await sleep(500)
+await evaluate(`(async () => {
+  const box = document.querySelector('.chat .composer .input')
+  box.focus(); box.value = '给这段笔记起三个标题'
+  box.dispatchEvent(new Event('input', { bubbles: true }))
+  await new Promise(r => setTimeout(r, 200))
+  document.querySelector('.chat .composer .send')?.click()
+  await new Promise(r => setTimeout(r, 1600))
+  return true
+})()`)
+// 再切回第一条会话：这样图里既有两条会话的列表，又能看到带代码块的那种回答
+await evaluate("(() => { const list=[...document.querySelectorAll('.chat .rail .sess')]; list[list.length-1]?.click(); return list.length })()")
+await sleep(1200)
 await shot('screenshot-ai.png')
 
 /* ④ 设置 · AI 编写页 */
@@ -271,6 +315,30 @@ await sleep(400)
 await evaluate("window.dispatchEvent(new CustomEvent('nota:settings', { detail: 'appearance' }))")
 await sleep(900)
 await shot('screenshot-appearance.png')
+
+/* ⑥ 编辑区右键菜单（先关设置、切回笔记、选中一段文字） */
+await evaluate("document.querySelector('.st-x')?.click()")
+await sleep(400)
+await evaluate("(() => { const b=[...document.querySelectorAll('.panel .nav-item')].find(x=>(x.querySelector('.nav-label')?.textContent??'').trim()==='所有笔记'); b?.click(); return true })()")
+await sleep(600)
+await clickMode('分栏')
+await sleep(800)
+// 在编辑器里选一段，让「剪切 / 复制 / AI 操作」都变成可用状态
+await evaluate(`(async () => {
+  const v = window.__notaView
+  if (!v) return 'no view'
+  const end = Math.min(220, v.state.doc.length)
+  v.dispatch({ selection: { anchor: 0, head: end } })
+  await new Promise(r => setTimeout(r, 200))
+  const el = document.querySelector('.cm-content')
+  const r = el.getBoundingClientRect()
+  const opts = { bubbles: true, cancelable: true, clientX: Math.round(r.left + 160), clientY: Math.round(r.top + 90) }
+  el.dispatchEvent(new MouseEvent('contextmenu', opts))
+  await new Promise(r => setTimeout(r, 400))
+  return 'ok'
+})()`)
+await sleep(700)
+await shot('screenshot-contextmenu.png')
 
 await send('Page.close').catch(() => {})
 ws.close()

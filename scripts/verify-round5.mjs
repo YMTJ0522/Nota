@@ -14,6 +14,9 @@
  * 10. 预览：带空格的图片路径（裸写 + 尖括号）都能加载，video 有源有尺寸
  * 11. 代码块：标题、语言、行号、起始行号、高亮行
  * 12. 行号 gutter 不透明（不然后面的文字会透上去）
+ * 14. 附件库与回收站各自独立成组
+ * 15. AI 会话管理：新建 / 自动起名 / 左右分明 / 落盘
+ * 16. 编辑区右键菜单：分组齐、不越界、Esc 可关
  * 13. 全程零 JS 异常
  */
 import { spawn } from 'node:child_process'
@@ -227,12 +230,13 @@ const clickMode = async (title) => {
   await sleep(800)
 }
 
-/* ── 1. 侧边栏分组导航 ── */
+/* ── 1. 侧边栏分组导航 ──
+   笔记视图一组，之后每件不同性质的事（附件库 / 回收站 / AI 编写）
+   各自独立成组，不再挤在一栏里。 */
 const nav = await evaluate(`(() => {
   const groups = [...document.querySelectorAll('.panel .nav')]
   const first = groups[0]
-  const second = groups[1]
-  const items = [...(second?.querySelectorAll('.nav-item') ?? [])].map(b => b.textContent.trim())
+  const rest = groups.slice(1)
   return {
     groups: groups.length,
     views: [...(first?.querySelectorAll('.nav-item') ?? [])].map(b => {
@@ -240,20 +244,18 @@ const nav = await evaluate(`(() => {
       const cnt = b.querySelector('.nav-count')?.textContent?.trim() ?? '0'
       return lab + '|' + cnt
     }),
-    lib: items,
-    hasDivider: second ? getComputedStyle(second).borderTopWidth !== '0px' : false,
+    lib: rest.map(g => [...g.querySelectorAll('.nav-item .nav-label')].map(l => l.textContent.trim()).join(',')),
+    allDivider: rest.every(g => getComputedStyle(g).borderTopWidth !== '0px'),
   }
 })()`)
 ok(
-  '1.侧栏分两组导航',
-  nav.groups === 2 &&
+  '1.侧栏按功能各自成组',
+  nav.groups === 4 &&
     nav.views.length === 4 &&
     nav.views[0].startsWith('所有笔记|') &&
     Number(nav.views[0].split('|')[1]) > 0 &&
-    nav.lib.some((t) => t.startsWith('附件库')) &&
-    nav.lib.some((t) => t.startsWith('回收站')) &&
-    nav.lib.some((t) => t.startsWith('AI 编写')) &&
-    nav.hasDivider,
+    nav.lib.join(' / ') === '附件库 / 回收站 / AI 编写' &&
+    nav.allDivider,
   nav,
 )
 
@@ -318,9 +320,9 @@ const asked = await evaluate(`(async () => {
     rows: rows.length,
     assistant: assistant.length,
     hasMdBody: !!bubble?.classList.contains('md-body'),
-    codeBlocks: bubble?.querySelectorAll('.pv-code').length ?? 0,
-    codeLang: bubble?.querySelector('.pv-code-lang')?.textContent?.trim() ?? '',
-    codeTitle: bubble?.querySelector('.pv-code-title')?.textContent?.trim() ?? '',
+    codeBlocks: bubble?.querySelectorAll('pre.pv-code-pre').length ?? 0,
+    codeShell: bubble?.querySelectorAll('.pv-code').length ?? 0,
+    codeLangCls: bubble?.querySelector('pre.pv-code-pre code')?.className ?? '',
     codeLines: bubble?.querySelectorAll('.pv-line').length ?? 0,
     paras: bubble?.querySelectorAll('p').length ?? 0,
     acts: assistant[assistant.length - 1]?.querySelectorAll('.act').length ?? 0,
@@ -330,7 +332,8 @@ const asked = await evaluate(`(async () => {
 ok(
   '4.AI 回答渲染成 Markdown',
   asked.rows === 2 && asked.assistant === 1 && asked.hasMdBody &&
-    asked.codeBlocks === 1 && asked.codeLang === 'TS' && asked.codeLines === 2 && asked.paras > 0,
+    asked.codeBlocks === 1 && asked.codeShell === 0 &&
+    asked.codeLangCls === 'language-ts' && asked.codeLines === 2 && asked.paras > 0,
   asked,
 )
 
@@ -417,7 +420,18 @@ const look = await evaluate(`(async () => {
   })
   const ringR = document.querySelector('.st-swatch')?.getBoundingClientRect()
   const ring = ringR ? Math.round(ringR.width) + 'x' + Math.round(ringR.height) : ''
-  return { before, plain, dens, dots, ring }
+  // 选中圈的描边颜色应当就是这一格自己的颜色（而不是黑白）
+  const swatches = [...document.querySelectorAll('.st-swatch')]
+  const on = swatches.find(b => b.classList.contains('on'))
+  const ringColor = on ? getComputedStyle(on).borderTopColor : ''
+  const dotColor = on ? getComputedStyle(on.querySelector('.st-swatch-dot')).backgroundColor : ''
+  const offRing = swatches.find(b => !b.classList.contains('on'))
+  const offRingColor = offRing ? getComputedStyle(offRing).borderTopColor : ''
+  return {
+    before, plain, dens, dots, ring,
+    labels: swatches.map(b => b.getAttribute('title')),
+    ringColor, dotColor, offRingColor,
+  }
 })()`)
 ok(
   '7.外观项写进了 <html>',
@@ -425,10 +439,15 @@ ok(
   { before: look.before, plain: look.plain, dens: look.dens },
 )
 ok(
-  '7b.强调色的圆点是正圆不是椭圆',
-  look.dots.length === 6 && look.dots.every(d => d.split('x')[0] === d.split('x')[1]) &&
-    look.ring === '24x24',
-  { dots: look.dots, ring: look.ring },
+  '7b.七个强调色圆点都是正圆',
+  look.dots.length === 7 && look.dots.every(d => d.split('x')[0] === d.split('x')[1]) &&
+    look.ring === '24x24' && look.labels.includes('石墨'),
+  { dots: look.dots, ring: look.ring, labels: look.labels },
+)
+ok(
+  '7c.选中圈的描边跟着色点颜色走',
+  look.ringColor === look.dotColor && look.ringColor !== look.offRingColor,
+  { ringColor: look.ringColor, dotColor: look.dotColor, offRing: look.offRingColor },
 )
 
 /* ── 8. 编辑：字号/行高/栏宽/换行/行号 ── */
@@ -521,36 +540,36 @@ ok(
 )
 
 const code = await evaluate(`(() => {
-  const blocks = [...document.querySelectorAll('.preview .pv-code')]
-  const first = blocks[0]
-  const second = blocks[1]
-  const third = blocks[2]
+  const pres = [...document.querySelectorAll('.preview pre.pv-code-pre')]
+  const cs = pres[0] ? getComputedStyle(pres[0]) : null
   return {
-    count: blocks.length,
-    title: first?.querySelector('.pv-code-title')?.textContent?.trim() ?? '',
-    lang: first?.querySelector('.pv-code-lang')?.textContent?.trim() ?? '',
-    numbersOnFirst: first?.classList.contains('has-line-numbers'),
-    numbersOnSecond: second?.classList.contains('has-line-numbers'),
-    firstLine: first?.querySelector('.pv-line')?.dataset.line ?? '',
-    hl: first?.querySelectorAll('.pv-line.is-hl').length ?? 0,
-    lines: first?.querySelectorAll('.pv-line').length ?? 0,
-    // start=10：第一行显示 10，第二行显示 11 且被高亮
-    thirdStart: third?.querySelector('.pv-line')?.dataset.line ?? '',
-    thirdHlLine: third?.querySelector('.pv-line.is-hl')?.dataset.line ?? '',
-    lineBeforeContent: (() => {
-      const line = first?.querySelector('.pv-line')
-      if (!line) return ''
-      return getComputedStyle(line, '::before').content
-    })(),
+    count: pres.length,
+    radius: cs?.borderRadius ?? '',
+    border: cs?.borderTopWidth ?? '',
+    bg: cs?.backgroundColor ?? '',
+    // 外壳、标题、语言标签、行号、复制按钮统统不该再出现
+    shells: document.querySelectorAll('.preview .pv-code').length,
+    titles: document.querySelectorAll('.preview .pv-code-title').length,
+    langs: document.querySelectorAll('.preview .pv-code-lang').length,
+    numbered: document.querySelectorAll('.preview .pv-line[data-line]').length,
+    copies: document.querySelectorAll('.preview [data-copy]').length,
+    // 围栏后面那串元信息不再被解析成外壳，但仍要留在 code 的语言类上
+    langClasses: pres.map(p => p.querySelector('code')?.className ?? ''),
+    // 元信息本身不该漏进可见文字里
+    leaked: pres.some(p => /title=|line-numbers|start=/.test(p.textContent ?? '')),
+    lines: pres.map(p => p.querySelectorAll('.pv-line').length),
+    tokenColors: new Set([...document.querySelectorAll('.preview pre span[class]')]
+      .map(el => getComputedStyle(el).color)).size,
   }
 })()`)
 ok(
-  '11.代码块有标题/语言/行号/高亮',
-  code.count === 3 && code.title === 'demo.ts' && code.lang === 'TS' &&
-    code.numbersOnFirst === true && code.numbersOnSecond === false &&
-    code.firstLine === '1' && code.hl === 1 && code.lines === 4 &&
-    code.thirdStart === '10' && code.thirdHlLine === '11' &&
-    (code.lineBeforeContent ?? '').includes('1'),
+  '11.代码块只剩一层薄框，元信息不再画外壳',
+  code.count === 3 && code.radius === '10px' && parseFloat(code.border) >= 1 &&
+    code.shells === 0 && code.titles === 0 && code.langs === 0 &&
+    code.numbered === 0 && code.copies === 0 &&
+    code.langClasses.every(c => /language-(ts|python|text)/.test(c)) &&
+    !code.leaked && code.tokenColors >= 2 &&
+    JSON.stringify(code.lines) === JSON.stringify([4, 2, 2]),
   code,
 )
 
@@ -580,6 +599,123 @@ ok(
   gutter.numbers > 0 && gutter.alpha === 'solid' &&
     gutter.lineLeft >= gutter.gutterRight && !gutter.overlap,
   gutter,
+)
+
+/* ── 14. 侧栏：附件库与回收站各自独立成组 ── */
+const groups = await evaluate(`(() => {
+  const navs = [...document.querySelectorAll('.panel .nav')]
+  return {
+    groups: navs.map(n => [...n.querySelectorAll('.nav-item .nav-label')].map(l => l.textContent.trim())),
+    rail: [...document.querySelectorAll('.rail .rail-btn')].map(b => b.getAttribute('data-tip')),
+  }
+})()`)
+ok(
+  '14.附件库与回收站各自独立成组',
+  (() => {
+    const g = groups.groups ?? []
+    const withAttach = g.filter((it) => it.includes('附件库'))
+    const withTrash = g.filter((it) => it.includes('回收站'))
+    // 两者各自独占一组，绝不共处一栏
+    return withAttach.length === 1 && withAttach[0].length === 1 &&
+      withTrash.length === 1 && withTrash[0].length === 1
+  })(),
+  groups.groups,
+)
+
+/* ── 15. AI 会话管理：新建 / 自动起名 / 切换 / 落盘 ── */
+const sess = await evaluate(`(async () => {
+  const nav = [...document.querySelectorAll('.panel .nav-item')]
+    .find(x => (x.querySelector('.nav-label')?.textContent ?? '').trim() === 'AI 编写')
+  nav?.click()
+  await new Promise(r => setTimeout(r, 500))
+  const before = document.querySelectorAll('.chat .rail .sess').length
+  document.querySelector('.chat .rail-add')?.click()
+  await new Promise(r => setTimeout(r, 450))
+  const items = [...document.querySelectorAll('.chat .rail .sess')]
+  const activeFirst = items[0]?.classList.contains('on') ?? false
+  const emptyRows = document.querySelectorAll('.chat .stream .row').length
+  const hasNewTitle = items.some(e => (e.querySelector('.sess-name')?.textContent ?? '').trim() === '新对话')
+  // 发一条，会话标题应自动变成那句提问
+  const box = document.querySelector('.chat .composer .input')
+  box.focus(); box.value = '这是一句用来当标题的提问'
+  box.dispatchEvent(new Event('input', { bubbles: true }))
+  await new Promise(r => setTimeout(r, 150))
+  document.querySelector('.chat .composer .send')?.click()
+  await new Promise(r => setTimeout(r, 1300))
+  const titles2 = [...document.querySelectorAll('.chat .rail .sess')]
+    .map(e => (e.querySelector('.sess-name')?.textContent ?? '').trim())
+  // 我的消息靠右、AI 靠左
+  const userRow = document.querySelector('.chat .stream .row.user')
+  const aiRow = document.querySelector('.chat .stream .row.assistant')
+  const dir = { user: userRow ? getComputedStyle(userRow).flexDirection : '', ai: aiRow ? getComputedStyle(aiRow).flexDirection : '' }
+  // 切回最早那条，消息要跟着换
+  const list = [...document.querySelectorAll('.chat .rail .sess')]
+  list[list.length - 1]?.click()
+  await new Promise(r => setTimeout(r, 700))
+  const rowsAfterSwitch = document.querySelectorAll('.chat .stream .row').length
+  let saved = {}
+  try { saved = JSON.parse(localStorage.getItem('nota-chat-sessions') || '{}') } catch {}
+  return {
+    before, after: document.querySelectorAll('.chat .rail .sess').length,
+    activeFirst, emptyRows, hasNewTitle, titles2, dir, rowsAfterSwitch,
+    savedCount: (saved.sessions || []).length,
+    savedActive: saved.active,
+    savedMsgs: (saved.sessions || []).reduce((n, s) => n + (s.messages || []).length, 0),
+  }
+})()`)
+ok(
+  '15.会话管理：新建 / 自动起名 / 左右分明 / 落盘',
+  sess.after === sess.before + 1 && sess.activeFirst && sess.emptyRows === 0 &&
+    sess.hasNewTitle &&
+    sess.titles2.some((t) => t.includes('这是一句用来当标题的提问')) &&
+    sess.dir.user === 'row-reverse' && sess.dir.ai === 'row' &&
+    sess.rowsAfterSwitch > 0 &&
+    sess.savedCount >= 2 && sess.savedActive > 0 && sess.savedMsgs >= 2,
+  { ...sess, titles2: sess.titles2 },
+)
+
+/* ── 16. 编辑区右键菜单 ── */
+const menu = await evaluate(`(async () => {
+  const nav = [...document.querySelectorAll('.panel .nav-item')]
+    .find(x => (x.querySelector('.nav-label')?.textContent ?? '').trim() === '所有笔记')
+  nav?.click()
+  await new Promise(r => setTimeout(r, 500))
+  const v = window.__notaView
+  if (!v) return { err: 'no view' }
+  v.dispatch({ selection: { anchor: 0, head: 24 } })
+  await new Promise(r => setTimeout(r, 200))
+  const el = document.querySelector('.cm-content')
+  if (!el) return { err: 'no cm-content' }
+  const r = el.getBoundingClientRect()
+  el.dispatchEvent(new MouseEvent('contextmenu', {
+    bubbles: true, cancelable: true,
+    clientX: Math.round(r.left + 120), clientY: Math.round(r.top + 70),
+  }))
+  await new Promise(r2 => setTimeout(r2, 400))
+  const box = document.querySelector('.ctx-menu')
+  if (!box) return { err: 'no menu' }
+  const items = [...box.querySelectorAll('.ctx-item')]
+  const labels = items.map(b => (b.querySelector('.ctx-label')?.textContent ?? '').trim())
+  const off = items.filter(b => b.classList.contains('off')).map(b => (b.querySelector('.ctx-label')?.textContent ?? '').trim())
+  const rect = box.getBoundingClientRect()
+  const inside = rect.left >= 0 && rect.top >= 0 &&
+    rect.right <= window.innerWidth + 1 && rect.bottom <= window.innerHeight + 1
+  const seps = box.querySelectorAll('.ctx-sep').length
+  // Esc 应当关掉菜单
+  document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+  await new Promise(r2 => setTimeout(r2, 300))
+  const closedByEsc = !document.querySelector('.ctx-menu')
+  return { labels, off, inside, seps, closedByEsc }
+})()`)
+ok(
+  '16.右键菜单：分组齐、越界回弹、Esc 可关',
+  menu.labels && menu.labels.length === 10 && menu.seps === 3 &&
+    ['撤销', '重做', '剪切', '复制', '粘贴', '扩写这段', '润色这段', '总结这段', '翻译这段', '全选']
+      .every((l) => menu.labels.includes(l)) &&
+    // 有选区时剪切 / 复制 / AI 组都该是可点的
+    !menu.off.includes('剪切') && !menu.off.includes('复制') && !menu.off.includes('润色这段') &&
+    menu.inside && menu.closedByEsc,
+  menu,
 )
 
 /* ── 13. 零异常 ── */

@@ -25,7 +25,7 @@ export type NavFilter = 'all' | 'recent' | 'starred' | 'unfiled'
 export type MainView = 'note' | 'ai'
 /** 强调色板。id 直接写进 <html data-accent>，与 tokens.css 里的选择器一一对应 */
 export type AccentName =
-  | 'celadon' | 'cinnabar' | 'indigo' | 'amber' | 'lagoon' | 'wisteria'
+  | 'celadon' | 'cinnabar' | 'indigo' | 'amber' | 'lagoon' | 'wisteria' | 'graphite'
 
 /* ── 外观偏好 ──
    全部落到 <html> 的 data 属性或 CSS 变量上，改一次全局生效，
@@ -123,6 +123,7 @@ export const ACCENTS: { id: AccentName; label: string }[] = [
   { id: 'amber', label: '琥珀' },
   { id: 'lagoon', label: '湖蓝' },
   { id: 'wisteria', label: '紫藤' },
+  { id: 'graphite', label: '石墨' },
 ]
 
 interface State {
@@ -178,7 +179,12 @@ interface State {
 
   /** 主区显示什么：笔记 / AI 编写 */
   mainView: MainView
-  /** AI 对话记录。存在内存里，切页面不丢，但重启不留 */
+  /** 全部对话会话。每个会话自带一堆消息 */
+  sessions: ChatSession[]
+  /** 当前正在看的会话 id */
+  activeSessionId: number
+  /** 当前会话的消息列表。始终与 sessions 里那一条**共用同一个数组**，
+      所以 push / splice 都直接生效，不要整体赋值（会把引用换掉） */
   chat: ChatMessage[]
   /** 对话是否在进行中 */
   aiBusy: boolean
@@ -193,6 +199,16 @@ export interface ChatMessage {
   error?: string
 }
 
+/** 一次对话。会话之间互不干扰，切来切去不会串台 */
+export interface ChatSession {
+  id: number
+  /** 由第一条提问自动生成，也可以手动改 */
+  title: string
+  messages: ChatMessage[]
+  /** 最后一次发言的时间，用来倒序排列 */
+  updatedAt: number
+}
+
 /** 色板的预览色。给设置页画圆点用——真正生效的颜色仍在 CSS 里，
     这里只是把两套主题的主色各写一份，免得选择器读不到。 */
 export const ACCENT_SWATCH: Record<AccentName, { light: string; dark: string }> = {
@@ -202,6 +218,8 @@ export const ACCENT_SWATCH: Record<AccentName, { light: string; dark: string }> 
   amber: { light: 'oklch(56% 0.105 95)', dark: 'oklch(80% 0.14 95)' },
   lagoon: { light: 'oklch(49% 0.075 205)', dark: 'oklch(76% 0.105 205)' },
   wisteria: { light: 'oklch(52% 0.14 300)', dark: 'oklch(72% 0.13 300)' },
+  // 石墨是「去色」选项：低饱和的中性灰，浅色下压深、深色下提亮
+  graphite: { light: 'oklch(48% 0.006 260)', dark: 'oklch(76% 0.006 260)' },
 }
 
 const state = reactive<State>({
@@ -234,6 +252,8 @@ const state = reactive<State>({
   lineWrap: PREF_DEFAULTS.lineWrap,
   lineNumbers: PREF_DEFAULTS.lineNumbers,
   mainView: 'note',
+  sessions: [],
+  activeSessionId: 0,
   chat: [],
   aiBusy: false,
 })
@@ -525,6 +545,7 @@ function initPrefs() {
   initAccent()
   initAi()
   initPrefs2()
+  initSessions()
 }
 
 /**
@@ -641,20 +662,153 @@ function resetPrefs() {
 /* ── AI 编写：对话页 ── */
 
 let chatSeq = 0
+let sessionSeq = 0
+
+const CHAT_STORE_KEY = 'nota-chat-sessions'
+/** 最多留这么多个会话，多的从最旧的开始丢 */
+const SESSION_LIMIT = 30
+/** 单个会话最多留这么多条消息 */
+const MESSAGE_LIMIT = 200
 
 function setMainView(v: MainView) {
   state.mainView = v
 }
 
+function currentSession(): ChatSession | undefined {
+  return state.sessions.find((s) => s.id === state.activeSessionId)
+}
+
+/** 把 state.chat 接到某个会话的消息数组上——共用同一个引用，不拷贝 */
+function activateSession(id: number) {
+  const s = state.sessions.find((x) => x.id === id)
+  if (!s) return
+  state.activeSessionId = s.id
+  state.chat = s.messages
+}
+
+/** 由第一条提问起个标题：够短、能认出来是哪次对话就行 */
+function autoTitle(text: string) {
+  const one = text.replace(/\s+/g, ' ').trim()
+  return one.length > 22 ? `${one.slice(0, 22)}…` : one || '新对话'
+}
+
+/** 新建一个空会话并切过去 */
+function newChat() {
+  sessionSeq += 1
+  const s: ChatSession = {
+    id: sessionSeq,
+    title: '新对话',
+    messages: [],
+    updatedAt: Date.now(),
+  }
+  state.sessions.unshift(s)
+  if (state.sessions.length > SESSION_LIMIT) state.sessions.length = SESSION_LIMIT
+  activateSession(s.id)
+  saveSessions()
+  return s.id
+}
+
+function switchSession(id: number) {
+  if (id === state.activeSessionId) return
+  activateSession(id)
+  saveSessions()
+}
+
+function deleteSession(id: number) {
+  const i = state.sessions.findIndex((s) => s.id === id)
+  if (i < 0) return
+  state.sessions.splice(i, 1)
+  if (state.sessions.length === 0) {
+    newChat()
+    return
+  }
+  if (state.activeSessionId === id) {
+    // 删掉当前会话后就近接上：优先它下面那条，没有就往上一条
+    activateSession(state.sessions[Math.min(i, state.sessions.length - 1)].id)
+  }
+  saveSessions()
+}
+
+function renameSession(id: number, title: string) {
+  const s = state.sessions.find((x) => x.id === id)
+  if (!s) return
+  const next = title.trim()
+  if (next) s.title = next
+  saveSessions()
+}
+
+/** 清空当前会话的消息，会话本身留着 */
 function clearChat() {
-  state.chat = []
+  state.chat.splice(0, state.chat.length)
+  const s = currentSession()
+  if (s) {
+    s.title = '新对话'
+    s.updatedAt = Date.now()
+  }
+  saveSessions()
 }
 
 /** 往对话里追加一条消息，返回它的 id */
 function pushChat(role: 'user' | 'assistant', content: string, error?: string) {
   chatSeq += 1
   state.chat.push({ id: chatSeq, role, content, error })
+  const s = currentSession()
+  if (s) {
+    // 首条提问顺手当标题，之后不再改——标题跟着内容一路飘反而认不出来
+    if (role === 'user' && s.title === '新对话') s.title = autoTitle(content)
+    s.updatedAt = Date.now()
+  }
+  saveSessions()
   return chatSeq
+}
+
+/* ── 落盘 ──
+   对话是用户自己敲出来的东西，重启就没了会很恼人。
+   但 localStorage 只有几 MB，所以两头都设上限：会话数、单会话消息数。 */
+function saveSessions() {
+  try {
+    localStorage.setItem(
+      CHAT_STORE_KEY,
+      JSON.stringify({
+        active: state.activeSessionId,
+        sessions: state.sessions.slice(0, SESSION_LIMIT).map((s) => ({
+          id: s.id,
+          title: s.title,
+          updatedAt: s.updatedAt,
+          messages: s.messages.slice(-MESSAGE_LIMIT),
+        })),
+      }),
+    )
+  } catch {
+    /* 配额满了就算了，对话留在内存里照常用 */
+  }
+}
+
+function initSessions() {
+  try {
+    const raw = localStorage.getItem(CHAT_STORE_KEY)
+    if (raw) {
+      const data = JSON.parse(raw) as { active?: number; sessions?: ChatSession[] }
+      const list = Array.isArray(data.sessions) ? data.sessions : []
+      const valid = list.filter((s) => s && typeof s.id === 'number' && Array.isArray(s.messages))
+      if (valid.length) {
+        state.sessions = valid.map((s) => ({
+          id: s.id,
+          title: s.title || '新对话',
+          updatedAt: s.updatedAt || Date.now(),
+          messages: s.messages.filter((m) => m && typeof m.id === 'number'),
+        }))
+        sessionSeq = Math.max(...valid.map((s) => s.id))
+        chatSeq = Math.max(0, ...valid.flatMap((s) => s.messages.map((m) => m.id)))
+        const active = valid.some((s) => s.id === data.active) ? (data.active as number) : valid[0].id
+        activateSession(active)
+        return
+      }
+    }
+  } catch {
+    /* 存档坏了就当没有，下面会建一个新的 */
+  }
+  newChat()
 }
 
 /**
@@ -720,7 +874,9 @@ async function retryChat() {
   }
   if (last < 0) return
   const q = state.chat[last].content
-  state.chat = state.chat.slice(0, last)
+  // 必须原地截断：整体赋值会把 state.chat 换成新数组，
+  // 那样它就和 sessions 里那条会话脱钩了，切走再切回来消息全没了
+  state.chat.splice(last)
   await sendChat(q)
 }
 
@@ -775,4 +931,8 @@ export const store = {
   retryChat,
   clearChat,
   pushChat,
+  newChat,
+  switchSession,
+  deleteSession,
+  renameSession,
 }

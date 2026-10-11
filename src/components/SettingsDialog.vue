@@ -332,6 +332,7 @@ async function changeWorkspace() {
                     :aria-checked="state.accent === a.id"
                     :class="{ on: state.accent === a.id }"
                     :title="a.label"
+                    :style="{ '--swatch-c': swatchOf(a.id) }"
                     @click="store.setAccent(a.id)"
                   >
                     <span
@@ -999,6 +1000,8 @@ async function changeWorkspace() {
   padding: 0;
   border-radius: 50%;
   border: 1px solid transparent;
+  /* 选中圈的颜色由模板按色板值写到 --swatch-c 上，
+     没拿到值时退回当前主题的强调色 */
   transition: border-color var(--n-dur) var(--n-ease);
 }
 .st-swatch-dot {
@@ -1006,12 +1009,20 @@ async function changeWorkspace() {
   width: 15px;
   height: 15px;
   border-radius: 50%;
+  transition: width var(--n-dur) var(--n-ease), height var(--n-dur) var(--n-ease);
 }
 .st-swatch:hover {
   border-color: var(--n-line-strong);
 }
+/* 选中：外圈不再是黑白，而是这一格自己的颜色——
+   一眼就能看出「现在用的是哪个色」 */
 .st-swatch.on {
-  border-color: var(--n-fg);
+  border-color: var(--swatch-c, var(--n-accent));
+}
+/* 色点收小一点，和外圈之间留出底色缝隙，才读得出是「圈套点」而不是一个大圆 */
+.st-swatch.on .st-swatch-dot {
+  width: 11px;
+  height: 11px;
 }
 
 /* 开关 */

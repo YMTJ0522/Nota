@@ -5,9 +5,10 @@
  * 假 IPC 里补了本轮新增的几个方法，弹窗类用例才跑得起来。
  *
  * 覆盖：
- *  1. 代码块有外壳：语言标签 + 复制按钮 + 行容器
+ *  1. 代码块只剩一层圆角薄框（没有标题栏 / 语言标签 / 复制 / 折叠）
  *  2. 行容器的行数和源码行数一致
- *  3. 复制按钮点得动，且拿到的就是源码
+ *  3. 代码仍有语法高亮
+ *  4. 代码块不再渲染行号
  *  4. 超长代码块有折叠，点一下能展开
  *  5. 强调色 6 套都能切，且真的改掉了主色
  *  6. 设置里多了 AI 分区，字段齐全
@@ -165,35 +166,45 @@ const clickMode = async (title) => {
   await sleep(800)
 }
 
-/* ── 1~3. 代码块外壳 ── */
+/* ── 1~4. 代码块：只要一层圆角薄框 ──
+   曾经有一整套外壳（标题栏 / 语言标签 / 复制 / 折叠），现在按参考项目
+   的做法砍掉了——代码块该把注意力让给代码本身。所以这里反过来断言
+   「外壳不存在」，免得哪天又长回来。 */
 await clickMode('分栏')
 const code = await evaluate(`(() => {
   const p = document.querySelector('.preview')
   if (!p) return { err: 'no preview' }
-  // mermaid 是渲染成图的，不进代码块外壳，统计时排除掉
-  const blocks = [...p.querySelectorAll('.pv-code:not(.is-diagram)')]
+  const pres = [...p.querySelectorAll('pre.pv-code-pre')]
+  // 图表（mermaid）不属于代码块，统计时排除掉
+  const diag = p.querySelectorAll('.pv-code.is-diagram, .pv-code').length
+  const first = pres.find(el => !el.querySelector('code.language-mermaid')) ?? pres[0]
+  const cs = first ? getComputedStyle(first) : null
   return {
-    count: blocks.length,
+    count: pres.length,
     diagrams: p.querySelectorAll('.pv-mermaid').length,
-    langs: blocks.map(b => b.querySelector('.pv-code-lang')?.textContent?.trim() ?? ''),
-    heads: blocks.filter(b => b.querySelector('.pv-code-head')).length,
-    copies: blocks.filter(b => b.querySelector('[data-copy]')).length,
-    folds: blocks.filter(b => b.querySelector('[data-fold]')).length,
-    lines: blocks.map(b => b.querySelectorAll('.pv-line').length),
-    firstText: (blocks[0]?.querySelector('code')?.textContent ?? '').slice(0, 60),
-    // 外壳里的 pre 不该再有独立边框，否则会出现双层描边
-    preBorder: blocks[0] ? getComputedStyle(blocks[0].querySelector('pre')).borderTopWidth : '',
+    shells: p.querySelectorAll('.pv-code').length,
+    heads: p.querySelectorAll('.pv-code-head').length,
+    copies: p.querySelectorAll('[data-copy]').length,
+    folds: p.querySelectorAll('[data-fold]').length,
+    hasDiagShell: diag,
+    radius: cs?.borderRadius ?? '',
+    borderW: cs?.borderTopWidth ?? '',
+    lineNumbers: p.querySelectorAll('.pv-line[data-line]').length,
+    lines: [...p.querySelectorAll('pre.pv-code-pre > code')].map(c => c.querySelectorAll('.pv-line').length),
+    tokenColors: new Set([...p.querySelectorAll('code span[class]')].map(s => getComputedStyle(s).color)).size,
+    firstText: (first?.querySelector('code')?.textContent ?? '').slice(0, 60),
   }
 })()`)
 ok(
-  '1.代码块有外壳（图表除外）',
-  code.count >= 2 && code.heads === code.count && code.copies === code.count &&
-    code.langs.every((l) => l.length > 0) && code.diagrams === 1,
+  '1.代码块只剩一层圆角薄框',
+  code.count >= 2 && code.radius === '10px' && parseFloat(code.borderW) >= 1 &&
+    code.shells === 0 && code.heads === 0 && code.copies === 0 &&
+    code.hasDiagShell === 0 && code.diagrams === 1,
   code,
 )
 
 /* ── 2. 行容器数量与源码一致 ── */
-// mermaid 块不走代码块外壳（源码要留给图表渲染），统计时要排除掉
+// mermaid 块不进代码块，统计时要排除掉
 const src = (NOTE.match(/```[\s\S]*?```/g) ?? []).filter((b) => !b.startsWith('```mermaid'))
 const expectLines = src.map((b) => b.split('\n').length - 2)
 const srcTotal = expectLines.reduce((a, b) => a + b, 0)
@@ -204,38 +215,18 @@ ok(
   { srcTotal, gotTotal, perBlock: code.lines, expect: expectLines },
 )
 
-/* ── 3. 复制按钮 ── */
-const copy = await evaluate(`(async () => {
-  const block = document.querySelector('.pv-code')
-  if (!block) return { err: 'no block' }
-  const btn = block.querySelector('[data-copy]')
-  const before = btn.textContent.trim()
-  btn.click()
-  await new Promise(r => setTimeout(r, 300))
-  const after = btn.textContent.trim()
-  return { before, after, text: (block.querySelector('code')?.textContent ?? '').slice(0, 40) }
-})()`)
+/* ── 3. 高亮还在（外壳砍了，配色不该跟着没） ── */
 ok(
-  '3.复制按钮点得动',
-  copy.before === '复制' && ['已复制', '复制失败'].includes(copy.after) && (copy.text ?? '').length > 0,
-  copy,
+  '3.代码仍有语法高亮',
+  (code.tokenColors ?? 0) >= 2 && (code.firstText ?? '').length > 0,
+  { tokenColors: code.tokenColors, firstText: code.firstText },
 )
 
-/* ── 4. 折叠 ── */
-const fold = await evaluate(`(async () => {
-  const btn = document.querySelector('.pv-code [data-fold]')
-  if (!btn) return { none: true }
-  const box = btn.closest('.pv-code')
-  const before = box.classList.contains('is-folded')
-  btn.click()
-  await new Promise(r => setTimeout(r, 350))
-  const after = box.classList.contains('is-folded')
-  return { foldedFirst: before, after, label: btn.textContent.trim() }
-})()`)
+/* ── 4. 行号不再输出 ── */
 ok(
-  '4.长代码块可折叠',
-  fold.none ? true : fold.foldedFirst !== fold.after,
-  fold,
+  '4.代码块不再渲染行号',
+  (code.lineNumbers ?? 0) === 0,
+  { lineNumbers: code.lineNumbers },
 )
 
 /* ── 5. 强调色 ── */
@@ -263,8 +254,10 @@ const accent = await evaluate(`(async () => {
   return { count: dots.length, seen, distinct: new Set(seen.map(s => s.color)).size }
 })()`)
 ok(
-  '5.强调色六套可切',
-  accent.count === 6 && accent.distinct === 6 && accent.seen.every((s) => s.color.length > 0),
+  '5.七套强调色可切（含石墨灰）',
+  accent.count === 7 && accent.distinct === 7 &&
+    accent.seen.every((s) => s.color.length > 0) &&
+    accent.seen.some((s) => s.attr === 'graphite'),
   accent,
 )
 

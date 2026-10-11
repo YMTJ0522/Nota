@@ -47,11 +47,10 @@ interface Segment {
 }
 
 /**
- * 把一段代码渲染成「按行切开」的高亮 HTML。
+ * 把一段代码渲染成高亮 HTML。
  *
- * 比朴素做法多做的那一步是行切分：每行包一个 `<span class="pv-line">`，
- * 行号、高亮行、折叠都要靠它——没有行容器，CSS 只能整块着色，
- * 做不到「第几行」这种粒度。
+ * 每行包一个 `<span class="pv-line">`（只有它，没有行号、没有高亮行），
+ * 这样空行也能靠 CSS 的 min-height 撑出高度，行数不会和源码对不上。
  *
  * 难点在于 token 会跨行（块注释、模板字符串）。处理办法是先收下全部
  * token 区间，再按行边界把跨行的那段切成两半，各自留在自己的行里，
@@ -59,14 +58,8 @@ interface Segment {
  *
  * 语言未知或解析失败时原样转义返回，绝不因为高亮失败而丢内容。
  */
-export async function highlightCode(
-  code: string,
-  lang: string,
-  opts: { start?: number; highlights?: number[] } = {},
-): Promise<string> {
-  const start = Math.max(1, opts.start ?? 1);
-  const marks = new Set(opts.highlights ?? []);
-  const key = `${lang}\u0000${start}\u0000${[...marks].join(",")}\u0000${code}`;
+export async function highlightCode(code: string, lang: string): Promise<string> {
+  const key = `${lang}\u0000${code}`;
   const hit = cache.get(key);
   if (hit !== undefined) return hit;
 
@@ -75,18 +68,16 @@ export async function highlightCode(
 
   try {
     const language = await resolveLanguage(lang);
+    const segments: Segment[] = [];
     if (language) {
       const state = EditorState.create({ doc: code, extensions: [language] });
       const tree = syntaxTree(state);
-      const segments: Segment[] = [];
       highlightTree(tree, notaHighlightClass, (from, to, classes) => {
         if (to > from) segments.push({ from, to, classes });
       });
       segments.sort((a, b) => a.from - b.from);
-      out = renderLines(code, segments, start, marks);
-    } else {
-      out = renderLines(code, [], start, marks);
     }
+    out = renderLines(code, segments);
   } catch {
     out = fallback;
   }
@@ -97,13 +88,7 @@ export async function highlightCode(
 }
 
 /** 按行组装。没有 token 信息时也走同一条路，保证结构一致（都有 .pv-line）。 */
-function renderLines(
-  code: string,
-  segments: Segment[],
-  /** 行号起始值，`start=10` 时第一行显示 10 */
-  firstLine: number,
-  marks: Set<number>,
-): string {
+function renderLines(code: string, segments: Segment[]): string {
   const lines = code.split("\n");
   const parts: string[] = [];
   let cursor = 0; // 行首在原文中的位置
@@ -131,15 +116,12 @@ function renderLines(
     }
     if (at < end) inner.push(escapeHtml(code.slice(at, end)));
 
-    // 高亮行是「文件里的行号」，从 firstLine 起算，所以要加上偏移
-    const lineNo = firstLine + i;
-    parts.push(
-      `<span class="pv-line${marks.has(lineNo) ? " is-hl" : ""}" data-line="${lineNo}">${inner.join("")}</span>`,
-    );
+    parts.push(`<span class="pv-line">${inner.join("")}</span>`);
   }
 
-  // 行与行之间补回真实换行：空行的 span 内容为空，靠 CSS 的 min-height 撑高度
-  return parts.join("\n");
+  // 行容器是 block，换行由它自己负责，所以这里不能留换行符——
+  // 留下的话每一行后面会再空出一行。
+  return parts.join("");
 }
 
 /** 从 marked 生成的 `<pre><code class="language-js">` 里取出语言名 */

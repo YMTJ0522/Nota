@@ -2,6 +2,7 @@
 import { ref, onMounted, onBeforeUnmount, watch, nextTick, computed } from 'vue'
 import { Compartment, EditorState } from '@codemirror/state'
 import { EditorView } from '@codemirror/view'
+import { redo, redoDepth, undo, undoDepth } from '@codemirror/commands'
 import {
   /* 顶部区域与 inkstone 对齐：标题可编辑、右侧一段式视图切换。
      图标同样取自 Lucide（ISC），不碰 inkstone 的 LGPL 源码。 */
@@ -35,7 +36,6 @@ import {
   renderMermaidInHtml,
   renderMathInHtml,
   stripFrontMatter,
-  CODE_COLLAPSE_HEIGHT,
 } from '@/editor/preview-rich'
 import type { HeadingItem } from '@/editor/preview-rich'
 import { getMarked, highlightFences } from '@/editor/markdown'
@@ -66,6 +66,8 @@ import {
   toolbarMathBlock,
   toolbarFrontMatter,
 } from '@/editor/toolbar-commands'
+import EditorContextMenu from '@/components/EditorContextMenu.vue'
+import type { EditorMenuTarget } from '@/components/EditorContextMenu.vue'
 
 const { state } = store
 
@@ -272,60 +274,6 @@ function embedNote(rel: string) {
   v.focus()
 }
 
-/**
- * 预览区里代码块的复制 / 折叠。
- *
- * 走事件委托而不是给每个按钮挂 onclick：预览 HTML 每次渲染都会整块换掉，
- * 逐个元素绑定既绑不住（新节点没有监听）也容易漏，交给容器一个处理器就够了。
- */
-function onPreviewClick(e: MouseEvent) {
-  const btn = (e.target as HTMLElement | null)?.closest<HTMLElement>(
-    '[data-copy], [data-fold]',
-  )
-  const box = btn?.closest<HTMLElement>('.pv-code')
-  if (!btn || !box) return
-
-  if (btn.hasAttribute('data-copy')) {
-    const code = box.querySelector('code')
-    if (!code) return
-    const copy = btn
-    navigator.clipboard?.writeText(code.textContent ?? '').then(
-      () => {
-        copy.textContent = '已复制'
-        copy.classList.add('done')
-        window.setTimeout(() => {
-          copy.textContent = '复制'
-          copy.classList.remove('done')
-        }, 1400)
-      },
-      () => {
-        copy.textContent = '复制失败'
-        copy.classList.add('done')
-        window.setTimeout(() => {
-          copy.textContent = '复制'
-          copy.classList.remove('done')
-        }, 1400)
-      },
-    )
-    return
-  }
-
-  // 折叠：收起时压到固定高度，展开时先量出真实高度再放开，
-  // 这样 max-height 有个确定的终值可以做过渡（none 是过渡不动的）。
-  const body = box.querySelector<HTMLElement>('.pv-code-body')
-  if (!body) return
-  const lines = btn.dataset.lines ?? ''
-  const folded = box.classList.toggle('is-folded')
-  btn.textContent = folded ? `${lines} 行` : '收起'
-  if (folded) {
-    body.style.maxHeight = `${CODE_COLLAPSE_HEIGHT}px`
-  } else {
-    body.style.maxHeight = `${body.scrollHeight}px`
-    window.setTimeout(() => {
-      if (!box.classList.contains('is-folded')) body.style.maxHeight = ''
-    }, 240)
-  }
-}
 
 /**
  * 把预览 HTML 里的相对路径图片/视频换成可加载的 URL。
@@ -435,6 +383,113 @@ async function runSlashAi(id: SlashCommandId, v: EditorView) {
   const action = SLASH_AI[id]
   if (!action) return
   await runAi(v, action)
+}
+
+/* ── 右键菜单 ── */
+
+/** 菜单的落点与可用状态。为 null 时菜单不渲染 */
+const menu = ref<EditorMenuTarget | null>(null)
+
+function onContextMenu(e: MouseEvent) {
+  e.preventDefault()
+  const v = view
+  if (!v) return
+  const { from, to } = v.state.selection.main
+  menu.value = {
+    x: e.clientX,
+    y: e.clientY,
+    hasSelection: from !== to,
+    canUndo: undoDepth(v.state) > 0,
+    canRedo: redoDepth(v.state) > 0,
+  }
+}
+
+function closeMenu() {
+  menu.value = null
+}
+
+function undoEdit() {
+  if (view) undo(view)
+}
+
+function redoEdit() {
+  if (view) redo(view)
+}
+
+function selectAll() {
+  if (!view) return
+  view.dispatch({
+    selection: { anchor: 0, head: view.state.doc.length },
+    scrollIntoView: true,
+  })
+  view.focus()
+}
+
+/** 有选区就复制它；没有选区时「复制」无从谈起，直接返回 */
+function selectedText() {
+  const v = view
+  if (!v) return ''
+  const { from, to } = v.state.selection.main
+  return from === to ? '' : v.state.sliceDoc(from, to)
+}
+
+async function writeClipboard(text: string) {
+  try {
+    await navigator.clipboard.writeText(text)
+    return true
+  } catch {
+    onToolbarToast('剪贴板不可用')
+    return false
+  }
+}
+
+async function copySel() {
+  const t = selectedText()
+  if (t) await writeClipboard(t)
+}
+
+async function cutSel() {
+  const v = view
+  if (!v) return
+  const t = selectedText()
+  if (!t) return
+  if (!(await writeClipboard(t))) return
+  const { from, to } = v.state.selection.main
+  v.dispatch({ changes: { from, to }, selection: { anchor: from } })
+  v.focus()
+}
+
+async function pasteFrom() {
+  const v = view
+  if (!v) return
+  let text = ''
+  try {
+    text = await navigator.clipboard.readText()
+  } catch {
+    onToolbarToast('读取剪贴板失败')
+    return
+  }
+  if (!text) return
+  const { from, to } = v.state.selection.main
+  v.dispatch({
+    changes: { from, to, insert: text },
+    selection: { anchor: from + text.length },
+    scrollIntoView: true,
+  })
+  v.focus()
+}
+
+/** 菜单里的 AI 动作：对选中的那段下手 */
+async function onMenuAi(kind: 'expand' | 'polish' | 'summarize' | 'translate') {
+  const v = view
+  if (!v) return
+  const MAP: Record<string, AiAction> = {
+    expand: 'continue',
+    polish: 'polish',
+    summarize: 'summarize',
+    translate: 'translate',
+  }
+  await runAi(v, MAP[kind] ?? 'polish')
 }
 
 /** 工具栏提示：模板里拿不到 window，统一从这里转发 */
@@ -681,7 +736,7 @@ defineExpose({ getView: () => view })
 
     <div class="stage" :data-layout="mode">
       <div v-show="showEditor" class="ed-wrap">
-        <div ref="host" class="host" />
+        <div ref="host" class="host" @contextmenu="onContextMenu" />
 
         <!-- 查找条。CodeMirror 原生面板带替换框和正则/整词一堆开关，
              这里只要「一个输入框 + 上/下 + 关闭」，所以自己画一条浮在上面。 -->
@@ -716,7 +771,6 @@ defineExpose({ getView: () => view })
           ref="previewRef"
           class="preview md-body"
           v-html="html"
-          @click="onPreviewClick"
         />
         <EditorOutline
           v-if="state.outline"
@@ -730,6 +784,21 @@ defineExpose({ getView: () => view })
         title="嵌入笔记"
         @pick="embedNote"
         @close="embedOpen = false"
+      />
+
+      <!-- 右键菜单：挂在 body 上，不受编辑区滚动与裁剪影响 -->
+      <EditorContextMenu
+        :target="menu"
+        :ai-enabled="state.ai.enabled"
+        :ai-busy="state.aiBusy"
+        @close="closeMenu"
+        @undo="undoEdit"
+        @redo="redoEdit"
+        @cut="cutSel"
+        @copy="copySel"
+        @paste="pasteFrom"
+        @select-all="selectAll"
+        @ai="onMenuAi"
       />
 
       <SlashMenu

@@ -215,24 +215,26 @@ const rootTail = computed(() => {
           </button>
         </nav>
 
-        <!-- 库与 AI：和「笔记视图」不是一类东西，用一条分隔线切开 -->
+        <!-- 附件库 / 回收站 / AI 编写：三件性质完全不同的事，各自独立成组。
+             挤在一个块里会让人以为它们是一类东西。 -->
         <nav class="nav nav-group">
           <button class="nav-item" @click="openLibrary('attach')">
             <span class="nav-ico"><Paperclip :size="15" :stroke-width="1.9" /></span>
             <span class="nav-label">附件库</span>
             <span v-if="libCounts.attach > 0" class="nav-count">{{ libCounts.attach }}</span>
           </button>
+        </nav>
+
+        <nav class="nav nav-group">
           <button class="nav-item" @click="openLibrary('trash')">
             <span class="nav-ico"><Trash2 :size="15" :stroke-width="1.9" /></span>
             <span class="nav-label">回收站</span>
             <span v-if="libCounts.trash > 0" class="nav-count">{{ libCounts.trash }}</span>
           </button>
-          <button
-            v-if="state.ai.enabled"
-            class="nav-item"
-            :class="{ on: state.mainView === 'ai' }"
-            @click="openAi"
-          >
+        </nav>
+
+        <nav v-if="state.ai.enabled" class="nav nav-group">
+          <button class="nav-item" :class="{ on: state.mainView === 'ai' }" @click="openAi">
             <span class="nav-ico"><Sparkles :size="15" :stroke-width="1.9" /></span>
             <span class="nav-label">AI 编写</span>
             <span v-if="state.chat.length" class="nav-count">{{ state.chat.length }}</span>
@@ -514,10 +516,11 @@ const rootTail = computed(() => {
   gap: 1px;
 }
 
-/* 库与 AI 自成一组：和笔记视图之间有一条淡淡的分隔线 */
+/* 每个入口单独一组，组间一条淡分隔线。
+   间距收在 6px：三组连着排也不至于散开。 */
 .nav-group {
-  margin-top: 8px;
-  padding-top: 8px;
+  margin-top: 6px;
+  padding-top: 6px;
   border-top: 1px solid color-mix(in oklab, var(--n-line) 60%, transparent);
 }
 

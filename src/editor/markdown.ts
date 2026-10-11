@@ -11,7 +11,6 @@
  * 代码块（含 mermaid）都已经被标成 language-*。
  */
 import { highlightCode, langFromClass } from './highlight-code'
-import { parseFenceInfo } from './fence-info'
 import { enhancePreview, stripFrontMatter } from './preview-rich'
 import type { HeadingItem } from './preview-rich'
 
@@ -183,18 +182,13 @@ export async function getMarked() {
   if (markedMod) return markedMod
   markedMod = await import('marked')
   markedMod.marked.setOptions({ gfm: true, breaks: true })
-  // 围栏后面那串信息（```js title="x" line-numbers {2-4}）默认渲染器会丢掉，
-  // 只留下 language-js。这里把它原样带到 <pre data-info> 上，
-  // 后面的增强步骤才知道该不该画标题、行号和高亮行。
   markedMod.marked.use({
     renderer: {
       code({ text, lang, escaped }) {
-        const info = (lang ?? '').trim()
-        const first = info.split(/\s+/)[0] ?? ''
+        const first = (lang ?? '').trim().split(/\s+/)[0] ?? ''
         const cls = first ? ` class="language-${escapeAttr(first)}"` : ''
-        const attrs = info ? ` data-info="${escapeAttr(info)}"` : ''
         const body = escaped ? text : escapeCode(text)
-        return `<pre class="pv-code-pre"${attrs}><code${cls}>${body}</code></pre>\n`
+        return `<pre class="pv-code-pre"><code${cls}>${body}</code></pre>\n`
       },
     },
   })
@@ -203,7 +197,7 @@ export async function getMarked() {
 }
 
 /**
- * 给代码块补高亮与外壳所需的元信息。
+ * 给代码块补高亮。
  *
  * marked 只输出 `<pre><code class="language-js">原文</code></pre>`，
  * 没有 token 信息；这里把它换成带 class 的 span，颜色和编辑区同源。
@@ -215,12 +209,7 @@ export async function highlightFences(source: string): Promise<string> {
 
   const rendered = await Promise.all(
     blocks.map(async (m) => {
-      const info = parseFenceInfo(
-        (/\sdata-info="([^"]*)"/.exec(m[1])?.[1] ?? '')
-          .replace(/&quot;/g, '"')
-          .replace(/&amp;/g, '&'),
-      )
-      const lang = langFromClass(m[2]) || info.lang
+      const lang = langFromClass(m[2])
       // mermaid 不是代码：一旦按行包成 <span class="pv-line">，
       // 后面取图表源码时拿到的就是带标签的 HTML，画出来一片空白。
       // 原样放过去，交给 transformMermaid 处理。
@@ -228,10 +217,7 @@ export async function highlightFences(source: string): Promise<string> {
       // marked 会在代码块末尾留一个换行。留着的话行容器会多出一个空行，
       // 底部凭空多一道空白，行数也对不上源码。
       const code = decodeCode(m[3]).replace(/\n$/, '')
-      const inner = await highlightCode(code, lang, {
-        start: info.start,
-        highlights: info.highlights,
-      })
+      const inner = await highlightCode(code, lang)
       const cls = lang ? ` class="language-${lang}"` : ''
       return `<pre${m[1]}><code${cls}>${inner}</code></pre>`
     }),
