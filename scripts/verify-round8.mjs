@@ -372,6 +372,22 @@ const shape = await evaluate(`(() => {
     // 消息流 / 快捷指令 / 输入区 / 底部
     stream: !!q('.stream'),
     chips: labels,
+    chipEven: (() => {
+      const bs = [...(el?.querySelectorAll('.chip') ?? [])].map(c => Math.round(c.getBoundingClientRect().width))
+      return bs.length === 4 && Math.max(...bs) - Math.min(...bs) <= 1
+    })(),
+    chipRowFull: (() => {
+      const wrap = el?.querySelector('.chips')
+      const bs = [...(el?.querySelectorAll('.chip') ?? [])].map(c => c.getBoundingClientRect())
+      if (!wrap || bs.length !== 4) return false
+      const w = wrap.getBoundingClientRect()
+      const cs = getComputedStyle(wrap)
+      const pl = parseFloat(cs.paddingLeft) || 0
+      const pr = parseFloat(cs.paddingRight) || 0
+      // 四个同一水平线，左右都贴到「内容区」的边缘（容器本身带 10px 内边距）
+      return bs.every(b => Math.abs(b.top - bs[0].top) <= 1) &&
+        Math.abs(bs[0].left - (w.left + pl)) <= 1 && Math.abs((w.right - pr) - bs[3].right) <= 1
+    })(),
     input: q('.composer .input')?.getAttribute('placeholder') ?? '',
     send: !!q('.composer .send'),
     model: q('.ag-model-name')?.textContent?.trim() ?? '',
@@ -388,8 +404,13 @@ ok(
     shape.sess && !!shape.sessName &&
     shape.sessActs.includes('新建会话') && shape.sessActs.includes('删除当前会话') &&
     shape.toggle && shape.toggleOn && shape.notePick === '长文' &&
-    shape.stream && shape.chips.length >= 4 &&
-    shape.chips.includes('总结全文') && shape.chips.includes('生成大纲') && shape.chips.includes('起标题') &&
+    shape.stream && shape.chips.length === 4 &&
+    shape.chips.includes('总结全文') && shape.chips.includes('生成大纲') &&
+    shape.chips.includes('润色') && shape.chips.includes('译成英文') &&
+    // 2.2.1：原来那条带 H1 图标的「起标题」撤了 —— 四条刚好一行排满
+    !shape.chips.includes('起标题') && shape.chips.length === 4 &&
+    // 四等分：四个一样宽，整条落在快捷指令那一行里（不再横向滚动）
+    shape.chipEven && shape.chipRowFull &&
     shape.input.includes('Enter 发送') && shape.send &&
     shape.model === 'llama3.2' &&
     shape.emptyTitle === '让 AI 帮你写' && shape.height > 400,

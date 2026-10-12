@@ -25,7 +25,6 @@ import {
   CornerDownLeft,
   Cpu,
   FilePlus2,
-  Heading1,
   Languages,
   ListChecks,
   ListTree,
@@ -319,11 +318,12 @@ function onKey(e: KeyboardEvent) {
   }
 }
 
-/** 快捷指令：点一下填进输入框而不是直接发送 —— 留一次反悔的机会 */
+/** 快捷指令：点一下填进输入框而不是直接发送 —— 留一次反悔的机会。
+    四条刚好一行排满：再多就得滚动或者换行，看着像一堆没整理的按钮。
+    （原来还有一条「起标题」，跟上面那堆挤在一起挑不过来，撤了。） */
 const CHIPS: { label: string; icon: unknown; text: string }[] = [
   { label: '总结全文', icon: Sparkles, text: '把当前这篇笔记总结成要点列表。' },
   { label: '生成大纲', icon: ListTree, text: '给当前这篇笔记整理一份三级大纲。' },
-  { label: '起标题', icon: Heading1, text: '根据内容给这篇笔记起一个正式的标题。' },
   { label: '润色', icon: Wand2, text: '润色当前笔记，使其更通顺、专业，保留原意。' },
   { label: '译成英文', icon: Languages, text: '把当前笔记翻译成英文，保留 Markdown 结构。' },
 ]
@@ -1258,27 +1258,26 @@ const thinkingLive = computed(
   color: var(--n-accent);
 }
 
-/* ══ ⑤ 快捷指令 ══ */
+/* ══ ⑤ 快捷指令 ══
+   四等分铺满一行，不多不少：以前是「能塞几个塞几个 + 横向溢出滚动」，
+   第四条永远半截露在外面，看着像没排完。现在每格一样宽，
+   栏宽再变也是整整齐齐四条。文字过长就地省略，不把格子撑变形。 */
 .chips {
   flex: none;
-  display: flex;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 5px;
   padding: 4px 10px 0;
-  overflow-x: auto;
-  scrollbar-width: none;
-}
-
-.chips::-webkit-scrollbar {
-  display: none;
 }
 
 .chip {
-  flex: none;
+  min-width: 0;
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   gap: 5px;
   height: 24px;
-  padding: 0 9px;
+  padding: 0 6px;
   border: 1px solid var(--n-line);
   border-radius: 999px;
   background: var(--n-surface);
@@ -1288,7 +1287,14 @@ const thinkingLive = computed(
   transition: border-color var(--n-dur) var(--n-ease), color var(--n-dur) var(--n-ease);
 }
 
+.chip span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .chip svg {
+  flex: none;
   fill: none;
   stroke: currentColor;
   color: var(--n-accent);

@@ -8,12 +8,14 @@
  *
  * 用法：
  *   node scripts/release.mjs           # 自动滚版（0.2.0 → 0.3.0）
+ *   node scripts/release.mjs --patch   # 只滚修订号（2.2.0 → 2.2.1），小修小补用这个
  *   node scripts/release.mjs --no-bump # 沿用当前版本，只重新打包
  *   node scripts/release.mjs --dry     # 只打印将要做什么，不执行
  *
  * 版本号规则（minor 递增，patch 归零）：
  *   0.2.0 → 0.3.0 → 0.4.0 …
  *   到 0.9.0 之后进 1.0.0，之后按 1.1.0 / 1.2.0 继续。
+ *   --patch 是小改动的口子：动一行样式、撤一个按钮这种，别把 minor 吹上去。
  */
 import { spawn } from 'node:child_process'
 import fs from 'node:fs'
@@ -25,6 +27,7 @@ const PKG = path.join(ROOT, 'package.json')
 
 const args = process.argv.slice(2)
 const NO_BUMP = args.includes('--no-bump')
+const PATCH = args.includes('--patch')
 const DRY = args.includes('--dry')
 
 const NODE = process.execPath
@@ -37,12 +40,13 @@ function run(cmd, argv, opts = {}) {
   })
 }
 
-/** 0.2.0 → 0.3.0；0.9.0 → 1.0.0；1.2.0 → 1.3.0 */
-function nextVersion(current) {
-  const [major, minor] = current.split('.').map((n) => Number.parseInt(n, 10))
+/** 0.2.0 → 0.3.0；0.9.0 → 1.0.0；1.2.0 → 1.3.0（patch=true 时 2.2.0 → 2.2.1） */
+function nextVersion(current, patch = false) {
+  const [major, minor, p] = current.split('.').map((n) => Number.parseInt(n, 10))
   if (Number.isNaN(major) || Number.isNaN(minor)) {
     throw new Error(`版本号格式无法解析：${current}`)
   }
+  if (patch) return `${major}.${minor}.${(Number.isNaN(p) ? 0 : p) + 1}`
   const nextMajor = minor + 1 >= 10 ? major + 1 : major
   const nextMinor = minor + 1 >= 10 ? 0 : minor + 1
   return `${nextMajor}.${nextMinor}.0`
@@ -52,10 +56,10 @@ function nextVersion(current) {
 const raw = fs.readFileSync(PKG, 'utf-8')
 const pkg = JSON.parse(raw)
 const current = pkg.version
-const target = NO_BUMP ? current : nextVersion(current)
+const target = NO_BUMP ? current : nextVersion(current, PATCH)
 
 console.log(`\n当前版本：${current}`)
-console.log(NO_BUMP ? '按 --no-bump，沿用当前版本' : `新版本：  ${target}`)
+console.log(NO_BUMP ? '按 --no-bump，沿用当前版本' : `新版本：  ${target}${PATCH ? '（--patch 修订号）' : ''}`)
 
 /* ── 2. 清旧包 ── */
 /** 保留目录本身与 win-unpacked，只挪走旧的安装包 / 免安装包 / blockmap */
