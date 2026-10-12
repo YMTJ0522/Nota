@@ -20,7 +20,10 @@
  * 11. 服务商预设下拉不再撑满（宽度 ≤ 240）
  * 12. 代码块选中是完整整行（选区底色与行的 padding box 重合）
  * 13. 大纲 / 引用两个页签都出内容
- * 14. 全程零 JS 异常
+ * 16. AI 面板顶部那两块下拉不再被面板的 overflow 裁掉
+ * 17. 侧栏底部的工作区选择器：切文件夹 / 添加文件夹
+ * 18. 写作模式的行号跟顶栏搜索按钮落在同一条竖线上
+ * 19. 全程零 JS 异常
  */
 import { launch } from './cdp-harness.mjs'
 import { makeInject, makeNotes, makeTree, openNoteExpr, navExpr } from './fake-workspace.mjs'
@@ -43,7 +46,7 @@ await sleep(1600)
 await evaluate(
   `localStorage.clear(); localStorage.setItem('nota-ai', ${JSON.stringify(
     JSON.stringify({ enabled: true, baseUrl: 'http://127.0.0.1:11434/v1', apiKey: '', model: 'llama3.2', temperature: 0.7, systemPrompt: '' }),
-  )})`,
+  )}); localStorage.setItem('nota-roots', ${JSON.stringify(JSON.stringify(['/ws', '/tmp/另一个库']))})`,
 )
 await send('Page.navigate', { url: `http://127.0.0.1:${PORT}/` })
 await sleep(2000)
@@ -603,8 +606,132 @@ ok(
   aiPanel,
 )
 
-/* ══ 14. 零异常 ══ */
-ok('16.全程零 JS 异常', errors.length === 0, errors.slice(0, 4))
+/* ══ 16. 顶部那两块下拉不再被面板裁掉 ══
+   2.2 把三行合成一块 .ag-head 时，顺手写了 overflow:hidden 去收那圈圆角，
+   结果住在这块面板里的「会话」「处理哪一篇」两个下拉被整块剪掉 ——
+   点开只剩一个表头（用户截图报的就是这个）。
+   这里不能只看盒子的尺寸：被裁不影响 getBoundingClientRect，
+   得用 elementFromPoint 打在菜单项中心，看真的能不能落到它自己身上。 */
+const clip = await evaluate(`(async () => {
+  const wait = (ms) => new Promise(r => setTimeout(r, ms))
+  const q = (s) => document.querySelector(s)
+  const visible = (el) => {
+    const r = el.getBoundingClientRect()
+    const hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2)
+    return !!hit && (hit === el || el.contains(hit) || hit.contains(el))
+  }
+  const head = q('.ag-head')
+  const overflow = head ? getComputedStyle(head).overflow : ''
+  q('.ag-sess-pick')?.click()
+  await wait(450)
+  const items = [...(q('.ss-menu')?.querySelectorAll('.n-menu-item') ?? [])]
+  const sess = { items: items.length, shown: items.length > 0 && items.every(visible) }
+  document.body.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }))
+  await wait(300)
+  q('.ag-pick')?.click()
+  await wait(450)
+  const nitems = [...(q('.np-menu')?.querySelectorAll('.n-menu-item') ?? [])]
+  const note = { items: nitems.length, shown: nitems.length > 0 && nitems.every(visible) }
+  document.body.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }))
+  await wait(300)
+  return { overflow, sess, note }
+})()`)
+ok(
+  '16.AI 面板顶部那两块下拉点开是真看得见的（不再被面板的 overflow 裁掉）',
+  !/hidden/.test(clip.overflow ?? 'hidden') && clip.sess.items > 0 && clip.sess.shown && clip.note.shown,
+  clip,
+)
+
+/* ══ 17. 侧栏底部的工作区选择器 ══ */
+const roots = await evaluate(`(async () => {
+  const wait = (ms) => new Promise(r => setTimeout(r, ms))
+  const q = (s) => document.querySelector(s)
+  const btn = q('.foot-pick .fp-btn')
+  const before = q('.fp-name')?.textContent ?? ''
+  btn?.click()
+  await wait(450)
+  const m = q('.fp-menu')
+  const r = m?.getBoundingClientRect()
+  const bt = btn?.getBoundingClientRect()
+  const items = [...(m?.querySelectorAll('.n-menu-item') ?? [])].map(i => ({
+    t: i.querySelector('.n-menu-name')?.textContent ?? '',
+    on: i.classList.contains('on'),
+  }))
+  const inWin = r ? r.top >= 0 && r.bottom <= window.innerHeight && r.left >= 0 && r.right <= window.innerWidth : false
+  // 底栏贴着窗口下沿，菜单必须往上开
+  const opensUp = r && bt ? r.bottom <= bt.top + 1 : false
+  ;[...document.querySelectorAll('.fp-menu .n-menu-item')]
+    .find(i => (i.querySelector('.n-menu-name')?.textContent ?? '') === '另一个库')?.click()
+  await wait(700)
+  return {
+    before, after: q('.fp-name')?.textContent ?? '', items, inWin, opensUp,
+    menuClosed: !q('.fp-menu'),
+    stored: localStorage.getItem('nota-roots') ?? '',
+  }
+})()`)
+ok(
+  '17.侧栏底部能切文件夹：最近打开过的都在下拉里，点一下真的换过去（还有「添加文件夹…」）',
+  roots.before === 'ws' && roots.after === '另一个库' &&
+    roots.items.some(i => i.t === '另一个库') &&
+    roots.items.some(i => i.t === '添加文件夹…') &&
+    roots.items.filter(i => i.on).length === 1 &&
+    roots.inWin && roots.opensUp && roots.menuClosed &&
+    roots.stored.includes('另一个库'),
+  roots,
+)
+
+/* ══ 18. 写作模式的行号紧贴左边框 ══
+   判据不写死像素：行号那一格是右对齐的，量盒子说明不了什么，
+   得量「字形」落在离编辑区左边多远，再跟顶栏那枚搜索按钮里的图标比。
+   以前是 12px + 28px，数字飘到 36px 开外，看着像多出来一栏。 */
+await evaluate(navExpr('所有笔记'))
+await sleep(500)
+await evaluate(openNoteExpr('甲笔记'))
+await sleep(1000)
+const gutter = await evaluate(`(async () => {
+  const wait = (ms) => new Promise(r => setTimeout(r, ms))
+  /* 先滚回顶部：代码视图只渲染视口里的那几行，量到的可能是第 99 行。
+     而且 gutter 的 DOM 顺序不等于视觉顺序（复用节点会打乱），
+     所以按「最靠上的那一格」挑，不按 DOM 第一个。 */
+  window.__notaView?.dispatch({ selection: { anchor: 0 }, scrollIntoView: true })
+  await wait(600)
+  const pane = document.querySelector('.ph')?.parentElement
+  const all = [...document.querySelectorAll('.cm-lineNumbers .cm-gutterElement')]
+    .map(e => ({ e, r: e.getBoundingClientRect() }))
+    .filter(x => x.r.height > 0 && x.r.top > 0)
+    .sort((a, b) => a.r.top - b.r.top)
+  const num = all[0]?.e
+  const icon = document.querySelector('.tb-btn svg, .md-toolbar button svg, .ed-toolbar button svg')
+  const glyph = (el) => {
+    const r = document.createRange()
+    r.selectNodeContents(el)
+    const b = r.getBoundingClientRect()
+    return { l: Math.round(b.left), r: Math.round(b.right), w: Math.round(b.width) }
+  }
+  const p = pane?.getBoundingClientRect()
+  if (!p || !num || !icon) return { none: true, num: !!num, icon: !!icon }
+  const g = glyph(num)
+  const ic = icon.getBoundingClientRect()
+  const panL = Math.round(p.left)
+  return {
+    numText: num.textContent,
+    numGap: g.l - panL,
+    numRightGap: g.r - panL,
+    iconGap: Math.round(ic.left - panL),
+    // 一列数字的右边界：两位数不许比一位数多探出去（格子定宽才对得齐）
+    gutterW: Math.round(document.querySelector('.cm-gutters').getBoundingClientRect().width),
+  }
+})()`)
+ok(
+  '18.写作模式的行号紧贴左边框：字形跟顶栏搜索按钮落在同一条竖线上（差 ≤4px）',
+  !gutter.none &&
+    Math.abs(gutter.numGap - gutter.iconGap) <= 4 &&
+    gutter.gutterW <= 42,
+  gutter,
+)
+
+/* ══ 19. 零异常 ══ */
+ok('19.全程零 JS 异常', errors.length === 0, errors.slice(0, 4))
 
 console.log('\n=== SUMMARY ===')
 const failed = Object.entries(out).filter(([, v]) => !v.pass).map(([k]) => k)

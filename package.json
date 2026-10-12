@@ -1,7 +1,7 @@
 {
   "name": "nota",
   "private": true,
-  "version": "2.2.1",
+  "version": "2.2.2",
   "type": "module",
   "description": "A lightweight local-first Markdown note app.",
   "author": "YMTJ0522",

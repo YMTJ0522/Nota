@@ -705,18 +705,37 @@ const thinkingLive = computed(
   border: 1px solid var(--n-line);
   border-radius: var(--n-r-lg);
   background: var(--n-surface);
-  overflow: hidden;
+  /* 这里**千万不能**用 overflow:hidden 收那圈圆角：
+     「会话」下拉和「处理哪一篇」下拉都住在这块面板里，overflow 一裁，
+     两个下拉就只剩一个表头 —— 点开看着像坏了。圆角改由每行自己兜。 */
 }
 
 .ag-row {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 6px;
   padding: 6px 8px;
 }
 
-.ag-row + .ag-row {
+/* 行间的发丝线：内缩 8px 画，够不到圆角，所以不需要外层裁剪。
+   第一行不画（它上头就是面板自己的边框）。 */
+.ag-row + .ag-row::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 8px;
+  right: 8px;
   border-top: 1px solid color-mix(in oklab, var(--n-line) 55%, transparent);
+}
+
+/* 只有第一行 / 最后一行需要跟面板圆角对齐，避免 hover 底色糊出直角 */
+.ag-row:first-child {
+  border-radius: calc(var(--n-r-lg) - 1px) calc(var(--n-r-lg) - 1px) 0 0;
+}
+
+.ag-row:last-child {
+  border-radius: 0 0 calc(var(--n-r-lg) - 1px) calc(var(--n-r-lg) - 1px);
 }
 
 .ag-row-top {

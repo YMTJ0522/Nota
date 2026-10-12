@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { computed } from 'vue'
+import { Folder } from 'lucide-vue-next'
 import { store } from '@/store'
 
 const features = [
@@ -7,8 +9,21 @@ const features = [
   ['轻', '没有插件市场，没有账号，没有云'],
 ]
 
+const { state } = store
+
+/** 最近打开过的文件夹。首屏就能直接进去，不用每次从盘符开始点 */
+const roots = computed(() => state.recentRoots)
+
+function tail(p: string) {
+  return p.split(/[\\/]/).filter(Boolean).pop() ?? p
+}
+
 function pick() {
   store.openWorkspace()
+}
+
+async function pickRoot(dir: string) {
+  await store.switchWorkspace(dir)
 }
 </script>
 
@@ -31,6 +46,19 @@ function pick() {
 
       <button class="cta" @click="pick">打开一个目录</button>
       <p class="tip">或者按 <kbd>Ctrl</kbd> + <kbd>O</kbd></p>
+
+      <!-- 最近打开过的文件夹。
+           侧栏底部也有同一份列表，但那儿得先开着一个工作区才看得见 ——
+           首屏是最需要它的时候（不想每次都从盘符开始点）。 -->
+      <div v-if="roots.length" class="recent">
+        <span class="recent-label">最近打开</span>
+        <div class="recent-list">
+          <button v-for="d in roots" :key="d" class="recent-item" :title="d" @click="pickRoot(d)">
+            <Folder :size="12" :stroke-width="1.9" />
+            <span>{{ tail(d) }}</span>
+          </button>
+        </div>
+      </div>
 
       <ul class="feats">
         <li v-for="[t, d] in features" :key="t">
@@ -102,9 +130,64 @@ h1 {
 }
 
 .tip {
-  margin: 12px 0 36px;
+  margin: 12px 0 30px;
   font-size: 12px;
   color: var(--n-fg-faint);
+}
+
+/* ── 最近打开 ── */
+.recent {
+  margin: 0 0 30px;
+  text-align: left;
+}
+
+.recent-label {
+  display: block;
+  margin-bottom: 8px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  color: var(--n-fg-faint);
+}
+
+.recent-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.recent-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  height: 28px;
+  padding: 0 10px;
+  border: 1px solid var(--n-line);
+  border-radius: 999px;
+  background: var(--n-surface);
+  font-size: 12px;
+  color: var(--n-fg-dim);
+  transition: border-color var(--n-dur) var(--n-ease), color var(--n-dur) var(--n-ease);
+}
+
+.recent-item svg {
+  flex: none;
+  fill: none;
+  stroke: currentColor;
+  color: var(--n-accent);
+}
+
+.recent-item span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.recent-item:hover {
+  border-color: var(--n-accent);
+  color: var(--n-accent);
 }
 
 kbd {

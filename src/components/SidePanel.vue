@@ -1,9 +1,13 @@
 <script setup lang="ts">
 import { ref, watch, nextTick, computed, onMounted, onBeforeUnmount } from 'vue'
 import {
+  Check,
+  ChevronDown,
   Clock,
   FilePlus2,
   FileText,
+  Folder,
+  FolderOpen,
   FolderPlus,
   Hash,
   Inbox,
@@ -371,11 +375,47 @@ function pickNav(id: NavFilter) {
   store.setNavFilter(state.navFilter === id && id !== 'all' ? 'all' : id)
 }
 
-/** 底部只显示工作区最后一段目录名，完整路径挂在 title 上 */
-const rootTail = computed(() => {
-  const r = state.root ?? ''
-  return r.split(/[\\/]/).filter(Boolean).pop() ?? r
-})
+/** 只显示路径最后一段，完整路径挂在 title 上 */
+function tailOf(p: string) {
+  return p.split(/[\\/]/).filter(Boolean).pop() ?? p
+}
+
+const rootTail = computed(() => (state.root ? tailOf(state.root) : '打开文件夹'))
+
+/* ── 底部那个文件夹选择器 ──
+   换工作区以前只有「打开文件夹…」一条路，每次都从盘符开始点。
+   常用的目录其实就那么两三个，所以把它做成跟「模型选择」同款的下拉：
+   点开是最近打开过的文件夹，最后一条是「添加文件夹…」（走系统选择框）。 */
+const rootMenu = ref(false)
+const rootOptions = computed(() => state.recentRoots)
+
+function toggleRootMenu() {
+  rootMenu.value = !rootMenu.value
+}
+
+/** 换到列表里的某个文件夹 */
+async function pickRoot(dir: string) {
+  rootMenu.value = false
+  const ok = await store.switchWorkspace(dir)
+  if (!ok) toast('这个文件夹打不开了，已从列表里移除')
+}
+
+/** 「添加文件夹…」：走系统目录选择框，选完直接切过去 */
+async function addRoot() {
+  rootMenu.value = false
+  await store.openWorkspace()
+}
+
+/** 就地弹出的菜单一律靠 pointerdown 收起（跟 AI 面板那两处同一个套路） */
+function onDocPointer(e: PointerEvent) {
+  if (!rootMenu.value) return
+  const el = e.target as HTMLElement | null
+  if (el?.closest('.foot-pick')) return
+  rootMenu.value = false
+}
+
+onMounted(() => document.addEventListener('pointerdown', onDocPointer))
+onBeforeUnmount(() => document.removeEventListener('pointerdown', onDocPointer))
 </script>
 
 <template>
@@ -578,11 +618,46 @@ const rootTail = computed(() => {
         </section>
       </div>
 
+      <!-- 底部：左边是工作区选择器（最近打开的文件夹 / 添加文件夹…），
+           右边是设置。以前这里只是一行死文案，换目录只能回系统选择框重头点。 -->
       <div class="foot">
-        <span class="foot-meta">
-          <span class="foot-name" :title="state.root ?? ''">{{ rootTail }}</span>
-          <span class="foot-sub">{{ navCounts.all }} 篇笔记</span>
-        </span>
+        <div class="foot-pick">
+          <button
+            class="fp-btn"
+            :class="{ on: rootMenu }"
+            data-role="root-pick"
+            :title="state.root ?? '还没打开文件夹'"
+            @click="toggleRootMenu"
+          >
+            <FolderOpen v-if="state.root" :size="13" :stroke-width="1.9" />
+            <FolderPlus v-else :size="13" :stroke-width="1.9" />
+            <span class="fp-name">{{ rootTail }}</span>
+            <ChevronDown :size="11" :stroke-width="2" />
+          </button>
+
+          <div v-if="rootMenu" class="n-menu n-menu-inline fp-menu">
+            <div class="n-menu-head"><span>文件夹</span></div>
+            <button
+              v-for="d in rootOptions"
+              :key="d"
+              class="n-menu-item"
+              :class="{ on: d === state.root }"
+              :title="d"
+              @click="pickRoot(d)"
+            >
+              <Folder :size="12" :stroke-width="1.9" />
+              <span class="n-menu-name">{{ tailOf(d) }}</span>
+              <Check v-if="d === state.root" :size="12" :stroke-width="2.2" />
+            </button>
+            <p v-if="rootOptions.length === 0" class="n-menu-hint">还没有打开过文件夹</p>
+            <button class="n-menu-item fp-add" @click="addRoot">
+              <FolderPlus :size="12" :stroke-width="1.9" />
+              <span class="n-menu-name">添加文件夹…</span>
+            </button>
+          </div>
+        </div>
+
+        <span v-if="state.root" class="foot-sub">{{ navCounts.all }} 篇</span>
         <button class="foot-btn" data-tip="设置" @click="settingsOpen = true">
           <Settings :size="16" :stroke-width="1.9" />
         </button>
@@ -1085,24 +1160,72 @@ const rootTail = computed(() => {
   background: color-mix(in oklab, var(--n-sunken) 92%, var(--n-raised));
 }
 
-.foot-meta {
+/* ── 工作区选择器 ──
+   跟「模型选择」同一副长相：一枚按钮 + 向上展开的菜单。
+   按钮要塞进 231px 宽的底栏，所以名字用省略号兜，篇数只留一个「N 篇」。 */
+.foot-pick {
+  position: relative;
   flex: 1;
   min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
 }
 
-.foot-name {
+.fp-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  min-width: 0;
+  height: 28px;
+  padding: 0 6px;
+  border-radius: var(--n-r-sm);
+  color: var(--n-fg-dim);
+  transition: background var(--n-dur) var(--n-ease), color var(--n-dur) var(--n-ease);
+}
+
+.fp-btn svg {
+  flex: none;
+  fill: none;
+  stroke: currentColor;
+}
+
+.fp-btn:hover,
+.fp-btn.on {
+  background: var(--n-raised);
+  color: var(--n-fg);
+}
+
+.fp-name {
+  flex: 1;
+  min-width: 0;
   font-size: 12px;
   font-weight: 500;
-  color: var(--n-fg);
+  text-align: left;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
+/* 菜单往上开：底栏贴着窗口下沿，往下开会被窗口切掉。
+   选择器得写成双类 `.n-menu.fp-menu` —— 单类压不住 menu.css 里的
+   `.n-menu.n-menu-inline { top: calc(100% + 6px) }`，那个 top 会跟这里的
+   bottom 同时生效，把菜单挤成一条（模型下拉就是这么坏过的）。 */
+.n-menu.fp-menu {
+  top: auto;
+  bottom: calc(100% + 6px);
+  left: 0;
+  width: 236px;
+  max-height: 320px;
+  overflow-y: auto;
+}
+
+/* 「添加文件夹…」是动作不是选项，用一条线跟上面的列表分开 */
+.fp-add {
+  margin-top: 4px;
+  border-top: 1px solid color-mix(in oklab, var(--n-line) 70%, transparent);
+}
+
 .foot-sub {
+  flex: none;
   font-size: 10px;
   color: var(--n-fg-faint);
 }

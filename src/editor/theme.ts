@@ -49,8 +49,16 @@ export const notaTheme = EditorView.theme({
   ".cm-line": { padding: "0 18px" },
 
   /* ── 行号 ──
-     scroller 的 paddingInline 已归零，所以左右留白落在这里：
-     左侧 12px 是「编辑区边缘到行号」，右侧 6px 是「行号到正文」。
+     scroller 的 paddingInline 已归零，所以左右留白落在这里。
+
+     左留白定 2px、行号格 20px：加上折叠箭头那 9px 与格内 6px 右留白，
+     数字的**右边界**停在离编辑区左边 25px 上，一位数字的字形落在 18px ——
+     跟顶栏那枚搜索按钮里图标的 16px 基本同一条竖线。以前是 12px + 28px，
+     数字飘到离边 36px 开外，看着像多出来一栏，这就是「行号离边框太远」的来处。
+
+     格子要定宽（20px 刚好装下两位数字 + 右留白）：不定宽的话，
+     笔记从 9 行写到 10 行时格子会自己变宽，整列数字跟着右移两像素，
+     写着写着忽然晃一下。
 
      底色必须是不透明的：gutter 是 sticky 的，正文一旦横向滚动就会从它
      底下经过，透明底会让「文字压着行号」——早期就是这么翻车的。 */
@@ -59,12 +67,12 @@ export const notaTheme = EditorView.theme({
     color: "var(--n-fg-faint)",
     border: "none",
     fontSize: "12px",
-    paddingInlineStart: "12px",
+    paddingInlineStart: "2px",
     paddingInlineEnd: "6px",
   },
   ".cm-lineNumbers .cm-gutterElement": {
     padding: "0 6px 0 0",
-    minWidth: "28px",
+    minWidth: "20px",
   },
   ".cm-activeLineGutter": {
     backgroundColor: "transparent",

@@ -159,6 +159,8 @@ interface State {
   autoSave: boolean
   /** 侧栏是否可见 */
   sidebar: boolean
+  /** 最近打开过的文件夹，最近的在最前。侧栏底部那个下拉读它 */
+  recentRoots: string[]
   /** 当前选中的标签（null = 不筛选，显示全部笔记） */
   activeTag: string | null
   /** 新建文件夹的父目录；非 null 时侧栏弹出一个输入框 */
@@ -290,6 +292,7 @@ const state = reactive<State>({
   lastSavedAt: null,
   autoSave: true,
   sidebar: true,
+  recentRoots: [],
   activeTag: null,
   newFolderIn: null,
   viewMode: 'write',
@@ -447,6 +450,84 @@ async function openWorkspace() {
   state.loading = true
   state.tree = await window.api.readTree(dir)
   state.loading = false
+  rememberRoot(dir)
+}
+
+/* ── 最近打开过的文件夹 ──
+   侧栏底部那个下拉读的就是这一份。
+
+   为什么要有它：以前换文件夹只有「打开文件夹…」一条路，每次都从系统
+   选择框最外层的盘符开始点。常常在用的其实就那么两三个目录，
+   现在它们排在列表里，点一下就过去了。 */
+
+const ROOTS_KEY = 'nota-roots'
+const ROOTS_MAX = 8
+
+/** 记一个目录到列表头部（已经在里面就提到最前），并落盘 */
+function rememberRoot(dir: string) {
+  const next = [dir, ...state.recentRoots.filter((d) => d !== dir)].slice(0, ROOTS_MAX)
+  state.recentRoots = next
+  try {
+    localStorage.setItem(ROOTS_KEY, JSON.stringify(next))
+  } catch {
+    /* 落盘失败不影响这次会话，列表还在内存里 */
+  }
+}
+
+/** 从列表里摘掉一个（目录被删了 / 用户不要了） */
+function forgetRoot(dir: string) {
+  const next = state.recentRoots.filter((d) => d !== dir)
+  state.recentRoots = next
+  try {
+    localStorage.setItem(ROOTS_KEY, JSON.stringify(next))
+  } catch {
+    /* 同上 */
+  }
+}
+
+function loadRoots() {
+  try {
+    const raw = JSON.parse(localStorage.getItem(ROOTS_KEY) ?? '[]') as unknown
+    if (Array.isArray(raw)) {
+      state.recentRoots = raw
+        .filter((d): d is string => typeof d === 'string' && d.length > 0)
+        .slice(0, ROOTS_MAX)
+    }
+  } catch {
+    /* 坏数据就当没有 */
+  }
+}
+
+/**
+ * 换到另一个工作区。返回 false 表示那个文件夹已经打不开了。
+ *
+ * 跟「第一次打开」的区别在于：这时候编辑区里可能正躺着一篇还没保存的笔记，
+ * 而它属于**旧**工作区。所以顺序必须是先落盘、再换根，然后把「当前笔记」
+ * 整个清空 —— 不清的话标题栏、大纲、自动保存都还指着旧根下的那个路径。
+ */
+async function switchWorkspace(dir: string): Promise<boolean> {
+  if (dir === state.root) return true
+  if (dirty.value) await saveNote()
+  state.loading = true
+  let tree: TreeNode[]
+  try {
+    tree = await window.api.readTree(dir)
+  } catch {
+    state.loading = false
+    forgetRoot(dir)
+    return false
+  }
+  state.activePath = null
+  state.draft = ''
+  state.savedDraft = ''
+  state.activeTag = null
+  state.expanded = {}
+  setAiNote(null)
+  state.root = dir
+  state.tree = tree
+  state.loading = false
+  rememberRoot(dir)
+  return true
 }
 
 async function refreshTree() {
@@ -1106,6 +1187,7 @@ function initPrefs() {
   state.columnAuto = localStorage.getItem(COLUMN_AUTO_KEY) !== '0'
   const v = localStorage.getItem('nota-view')
   if (v === 'write' || v === 'split' || v === 'read') state.viewMode = v
+  loadRoots()
   initAccent()
   initAi()
   initPrefs2()
@@ -1628,6 +1710,8 @@ export const store = {
   navTitle,
   allTags,
   openWorkspace,
+  switchWorkspace,
+  forgetRoot,
   refreshTree,
   openNote,
   saveNote,

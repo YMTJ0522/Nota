@@ -16,7 +16,7 @@
  * 这一列可收（宽度还给正文）、可拖（见 SplitHandle），宽度都会记住。
  */
 import { computed, watch } from 'vue'
-import { FileText, ListTree, PanelLeftClose, Paperclip, Plus, Quote, Sparkles, Trash2 } from 'lucide-vue-next'
+import { FileText, ListTree, Paperclip, Quote, Sparkles, Trash2 } from 'lucide-vue-next'
 import { store } from '@/store'
 import type { ColumnView } from '@/store'
 import NoteListView from './NoteListView.vue'
@@ -77,7 +77,11 @@ function tabCount(id: ColumnView) {
 <template>
   <section class="col" :data-view="view" aria-label="资料栏">
     <header class="col-flow">
-      <!-- 笔记这一类：一排页签 + 新建 -->
+      <!-- 笔记这一类：一排页签。
+           右上角以前还挂着两枚按钮 ——「新建笔记 +」和「收起这一栏」。
+           两个都是重复入口：新建在编辑区顶行（跟「导入已有笔记」并排），
+           收起到侧栏顶行（跟「收起侧边栏」并排），那两处哪个视图下都在，
+           这一条就纯属多写一遍。同一件事只留一个地方。 -->
       <template v-if="isNoteTab">
         <button
           v-for="t in NOTE_TABS"
@@ -94,9 +98,6 @@ function tabCount(id: ColumnView) {
           <span v-if="tabCount(t.id)" class="col-tab-n">{{ tabCount(t.id) }}</span>
         </button>
         <span class="col-spacer" />
-        <button class="col-x" data-tip="新建笔记 (Ctrl+N)" title="新建笔记 (Ctrl+N)" @click="store.newNote()">
-          <Plus :size="14" :stroke-width="2.1" />
-        </button>
       </template>
 
       <!-- 另外三种：顶栏就是它的名字 -->
@@ -107,10 +108,6 @@ function tabCount(id: ColumnView) {
         </span>
         <span class="col-spacer" />
       </template>
-
-      <button class="col-x" data-tip="收起这一栏" title="收起这一栏" @click="store.toggleColumn()">
-        <PanelLeftClose :size="14" :stroke-width="1.9" />
-      </button>
     </header>
 
     <div class="col-body">
@@ -216,54 +213,6 @@ function tabCount(id: ColumnView) {
 
 .col-spacer {
   flex: 1;
-}
-
-.col-x {
-  position: relative;
-  flex: none;
-  width: 22px;
-  height: 22px;
-  padding: 0;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: var(--n-r-sm);
-  color: var(--n-fg-faint);
-}
-
-.col-x svg {
-  fill: none;
-  stroke: currentColor;
-}
-
-.col-x:hover {
-  background: var(--n-raised);
-  color: var(--n-fg);
-}
-
-/* 提示：窄栏里往右探会顶到正文，改成往下出 */
-.col-x::after {
-  content: attr(data-tip);
-  position: absolute;
-  right: 0;
-  top: calc(100% + 6px);
-  z-index: 60;
-  padding: 4px 8px;
-  border-radius: 6px;
-  background: var(--n-fg);
-  color: var(--n-bg);
-  font-size: 11px;
-  white-space: nowrap;
-  opacity: 0;
-  transform: translateY(-3px);
-  pointer-events: none;
-  transition: opacity 130ms var(--n-ease), transform 130ms var(--n-ease);
-  box-shadow: var(--n-shadow-md);
-}
-
-.col-x:hover::after {
-  opacity: 1;
-  transform: none;
 }
 
 .col-body {
