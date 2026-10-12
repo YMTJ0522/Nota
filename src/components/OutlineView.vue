@@ -41,6 +41,7 @@ function go(id: string) {
           v-for="h in heads"
           :key="h.id"
           class="ov-item"
+          :class="{ on: h.id === state.activeHeading }"
           :style="{ paddingLeft: 10 + (h.level - 1) * 12 + 'px' }"
           :title="h.text || '未命名标题'"
           @click="go(h.id)"
@@ -78,6 +79,23 @@ function go(id: string) {
 
 .ov-item:hover {
   background: color-mix(in oklab, var(--n-raised) 70%, transparent);
+}
+
+/* 当前读到哪一节：一条细竖线 + 提亮的字。
+   不用实色块盖住整行——大纲是「瞄一眼就知道位置」的东西，
+   块太重会把左边标题序号也吃掉。 */
+.ov-item.on {
+  background: var(--n-accent-soft);
+  box-shadow: inset 2px 0 0 var(--n-accent);
+}
+
+.ov-item.on .ov-lv {
+  color: var(--n-accent);
+}
+
+.ov-item.on .ov-text {
+  color: var(--n-fg);
+  font-weight: 600;
 }
 
 .ov-lv {

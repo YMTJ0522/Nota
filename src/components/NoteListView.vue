@@ -14,8 +14,13 @@
  * 不额外读盘，所以开着这一栏也不会让打开工作区变慢。
  */
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
-import { FilePlus2, Search, Star, X } from 'lucide-vue-next'
+import { FilePlus2, Search, Star, Trash2, X } from 'lucide-vue-next'
 import { store } from '@/store'
+import type { TreeNode } from '@/store'
+import NoteContextMenu, { type NoteExportKind } from '@/components/NoteContextMenu.vue'
+import PromptDialog from '@/components/PromptDialog.vue'
+import FolderPicker from '@/components/FolderPicker.vue'
+import ConfirmDialog from '@/components/ConfirmDialog.vue'
 
 const { state } = store
 
@@ -26,10 +31,7 @@ const box = ref<HTMLInputElement | null>(null)
 
 /** 去工作区前缀，只留「目录 / 子目录」 */
 function folderOf(p: string) {
-  const rel = root.value && p.startsWith(root.value) ? p.slice(root.value.length) : p
-  const parts = rel.replace(/^[\\/]+/, '').split(/[\\/]/)
-  parts.pop()
-  return parts.join(' / ') || '根目录'
+  return store.folderOfPath(p)
 }
 
 /** 今天只给时间，七天内给星期，再往上给日期——越近的信息越细 */
@@ -50,14 +52,151 @@ function open(path: string) {
   void store.openNote(path)
 }
 
+/* ── 删除：两步走 ──
+   点一次垃圾桶只是「把枪上膛」，那一行会变成红色的「确认删除」，
+   再点一次才真的删。笔记进的是应用内回收站，但误删一次仍然要花
+   一分钟去恢复，所以这里宁可多一次点击。
+
+   上膛状态 4 秒后自动解除：放着不管的红色按钮本身就是个隐患。 */
+const confirmPath = ref('')
+let disarmTimer: ReturnType<typeof setTimeout> | null = null
+
+function askRemove(path: string) {
+  confirmPath.value = path
+  if (disarmTimer) clearTimeout(disarmTimer)
+  disarmTimer = setTimeout(() => {
+    confirmPath.value = ''
+  }, 4000)
+}
+
+function cancelRemove() {
+  confirmPath.value = ''
+  if (disarmTimer) clearTimeout(disarmTimer)
+}
+
+async function doRemove(path: string, name: string) {
+  cancelRemove()
+  await store.removeNote(path)
+  toast(`《${name}》已移入回收站`)
+}
+
+/* ── 右键菜单 ── */
+const menu = ref<{ x: number; y: number; path: string; starred: boolean } | null>(null)
+/** 菜单里点了「重命名 / 归类 / 删除」时，要先把路径留下来 */
+const actionPath = ref('')
+const renameOpen = ref(false)
+const moveOpen = ref(false)
+const removeOpen = ref(false)
+
+const actionName = computed(() => store.baseNameOf(actionPath.value))
+
+function onContextMenu(e: MouseEvent, f: TreeNode) {
+  e.preventDefault()
+  cancelRemove()
+  menu.value = { x: e.clientX, y: e.clientY, path: f.path, starred: !!f.starred }
+}
+
+function closeMenu() {
+  menu.value = null
+}
+
+/**
+ * 菜单里那些动作都对准右键点中的那篇。
+ * 顺手把路径交给弹窗类动作（重命名 / 归类 / 删除确认）共用，并把菜单收掉。
+ */
+function takeMenu(): string {
+  const p = menu.value?.path ?? ''
+  actionPath.value = p
+  closeMenu()
+  return p
+}
+
+function onMenuStar() {
+  const p = menu.value?.path
+  closeMenu()
+  if (!p) return
+  void store.toggleStar(p).then((on) => toast(on ? '已收藏' : '已取消收藏'))
+}
+
+function onMenuOpen() {
+  const p = menu.value?.path
+  closeMenu()
+  if (p) void store.openNote(p)
+}
+
+async function copyPath() {
+  const p = takeMenu()
+  try {
+    await navigator.clipboard.writeText(p)
+    toast('路径已复制')
+  } catch {
+    toast('剪贴板不可用')
+  }
+}
+
+async function reveal() {
+  const p = takeMenu()
+  await store.revealNote(p)
+}
+
+async function doExport(kind: NoteExportKind) {
+  const p = takeMenu()
+  const name = store.baseNameOf(p)
+  const out = await store.exportNoteAs(p, kind)
+  if (out) toast(`已导出到 ${out}`)
+  else toast(`导出 ${name} 已取消`)
+}
+
+function toast(text: string) {
+  window.dispatchEvent(new CustomEvent('nota:toast', { detail: text }))
+}
+
+async function commitRename(v: string) {
+  renameOpen.value = false
+  await store.renameNote(actionPath.value, v)
+}
+
+async function commitMove(dir: string) {
+  moveOpen.value = false
+  const from = actionPath.value
+  const next = await store.moveNoteTo(from, dir)
+  if (next !== from) toast('已归类')
+}
+
+async function commitRemove() {
+  removeOpen.value = false
+  await doRemove(actionPath.value, actionName.value)
+}
+
 /** 窄轨那枚放大镜点过来时，把焦点交给这里 */
 function focusSearch() {
   box.value?.focus()
   box.value?.select()
 }
 
-onMounted(() => window.addEventListener('nota:focus-search', focusSearch))
-onBeforeUnmount(() => window.removeEventListener('nota:focus-search', focusSearch))
+/** 点别处 / 按 Esc 都算「我不想删了」 */
+function onDocDown(e: PointerEvent) {
+  if (!confirmPath.value) return
+  const el = e.target as HTMLElement
+  if (!el.closest?.('.nl-item')) cancelRemove()
+}
+
+function onEsc(e: KeyboardEvent) {
+  if (e.key === 'Escape' && confirmPath.value) cancelRemove()
+}
+
+onMounted(() => {
+  window.addEventListener('nota:focus-search', focusSearch)
+  document.addEventListener('pointerdown', onDocDown, true)
+  document.addEventListener('keydown', onEsc, true)
+})
+
+onBeforeUnmount(() => {
+  window.removeEventListener('nota:focus-search', focusSearch)
+  document.removeEventListener('pointerdown', onDocDown, true)
+  document.removeEventListener('keydown', onEsc, true)
+  if (disarmTimer) clearTimeout(disarmTimer)
+})
 </script>
 
 <template>
@@ -100,13 +239,17 @@ onBeforeUnmount(() => window.removeEventListener('nota:focus-search', focusSearc
         {{ state.searchQuery || state.activeTag ? '这里没有匹配的笔记' : '这里还没有 .md 文件' }}
       </div>
       <template v-else>
-        <button
+        <div
           v-for="f in files"
           :key="f.path"
           class="nl-item"
-          :class="{ on: f.path === state.activePath }"
+          :class="{ on: f.path === state.activePath, arming: confirmPath === f.path }"
+          role="button"
+          tabindex="0"
           :title="f.path"
           @click="open(f.path)"
+          @keydown.enter.prevent="open(f.path)"
+          @contextmenu.prevent="onContextMenu($event, f)"
         >
           <span class="nl-name">
             <span class="nl-text">{{ f.name.replace(/\.md$/i, '') }}</span>
@@ -122,9 +265,70 @@ onBeforeUnmount(() => window.removeEventListener('nota:focus-search', focusSearc
             <span v-for="t in f.tags ?? []" :key="t" class="nl-tag">#{{ t }}</span>
             <span v-if="!f.tags?.length" class="nl-tag nl-tag-none">未打标签</span>
           </span>
-        </button>
+
+          <!-- 删除：先上膛，再确认。不删就点别处，它自己会退回去 -->
+          <span class="nl-acts">
+            <template v-if="confirmPath === f.path">
+              <button class="nl-del-yes" @click.stop="doRemove(f.path, f.name.replace(/\.md$/i, ''))">
+                确认删除
+              </button>
+              <button class="nl-del-no" title="取消" @click.stop="cancelRemove">
+                <X :size="12" :stroke-width="2.2" />
+              </button>
+            </template>
+            <button
+              v-else
+              class="nl-del"
+              title="删除笔记（会先进回收站）"
+              @click.stop="askRemove(f.path)"
+            >
+              <Trash2 :size="13" :stroke-width="1.9" />
+            </button>
+          </span>
+        </div>
       </template>
     </div>
+
+    <NoteContextMenu
+      :target="menu"
+      @close="closeMenu"
+      @open="onMenuOpen"
+      @star="onMenuStar"
+      @rename="() => { takeMenu(); renameOpen = true }"
+      @move="() => { takeMenu(); moveOpen = true }"
+      @copy-path="copyPath"
+      @reveal="reveal"
+      @export="doExport"
+      @remove="() => { takeMenu(); removeOpen = true }"
+    />
+
+    <PromptDialog
+      :open="renameOpen"
+      title="重命名"
+      label="标题"
+      :initial="actionName"
+      placeholder="输入新的笔记名"
+      confirm-text="重命名"
+      @confirm="commitRename"
+      @cancel="renameOpen = false"
+    />
+
+    <FolderPicker
+      :open="moveOpen"
+      :note-name="actionName"
+      @pick="commitMove"
+      @close="moveOpen = false"
+    />
+
+    <ConfirmDialog
+      :open="removeOpen"
+      title="删除这篇笔记？"
+      :message="`《${actionName}》会被移入回收站，之后还能恢复。`"
+      confirm-text="确认删除"
+      danger
+      @confirm="commitRemove"
+      @cancel="removeOpen = false"
+    />
   </div>
 </template>
 
@@ -309,16 +513,109 @@ onBeforeUnmount(() => window.removeEventListener('nota:focus-search', focusSearc
   color: var(--n-fg-faint);
 }
 
-/* ── 一条笔记 ── */
+/* ── 一条笔记 ──
+   注意它是 div 而不是 button：卡片里还住着「删除」按钮，
+   button 套 button 是非法结构，点击也会被内层吞掉。 */
 .nl-item {
+  position: relative;
   display: flex;
   flex-direction: column;
   gap: 3px;
   width: 100%;
-  padding: 8px 10px;
+  padding: 8px 34px 8px 10px;
   border-radius: var(--n-r-md);
   text-align: left;
+  cursor: pointer;
   transition: background var(--n-dur) var(--n-ease);
+}
+
+.nl-item:focus-visible {
+  outline: 2px solid var(--n-accent);
+  outline-offset: -2px;
+}
+
+/* 上膛状态：整张卡片泛一层红，跟普通悬停区分开 */
+.nl-item.arming {
+  background: color-mix(in oklab, var(--n-danger) 12%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--n-danger) 42%, transparent);
+}
+
+/* ── 卡片右上角那两个动作 ── */
+.nl-acts {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.nl-del {
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--n-r-sm);
+  color: var(--n-fg-faint);
+  opacity: 0;
+  transition: opacity var(--n-dur) var(--n-ease), background var(--n-dur) var(--n-ease),
+    color var(--n-dur) var(--n-ease);
+}
+
+.nl-del svg {
+  fill: none;
+  stroke: currentColor;
+}
+
+/* 平时藏着，指到这张卡片才出现——列表里不该有一排垃圾桶在抢注意力 */
+.nl-item:hover .nl-del,
+.nl-item:focus-within .nl-del,
+.nl-item.on .nl-del {
+  opacity: 1;
+}
+
+.nl-del:hover {
+  background: color-mix(in oklab, var(--n-danger) 18%, transparent);
+  color: var(--n-danger);
+}
+
+.nl-del-yes {
+  height: 24px;
+  padding: 0 9px;
+  border-radius: var(--n-r-sm);
+  background: var(--n-danger);
+  color: #fff;
+  font-size: 11.5px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.nl-del-yes:hover {
+  filter: brightness(1.08);
+}
+
+.nl-del-no {
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--n-r-sm);
+  background: var(--n-surface);
+  border: 1px solid var(--n-line);
+  color: var(--n-fg-dim);
+}
+
+.nl-del-no svg {
+  fill: none;
+  stroke: currentColor;
+}
+
+.nl-del-no:hover {
+  color: var(--n-fg);
 }
 
 .nl-item + .nl-item {

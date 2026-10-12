@@ -146,6 +146,14 @@
   color: var(--n-fg-faint);
 }
 
+/* 代码块「语言」标签点出来的那份下拉：语言有二十来个，
+   整份铺开会比屏幕还高，所以这里给它一个高度上限，自己滚。 */
+.cm-lang-list {
+  max-height: 264px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
 /* 设置里那种「一行说明 + 一个下拉」用的触发器：长得像输入框，点开是 n-menu */
 .n-select {
   display: inline-flex;

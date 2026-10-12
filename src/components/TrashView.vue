@@ -11,6 +11,7 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { FileText, History as HistoryIcon, RotateCcw, Trash2 } from 'lucide-vue-next'
 import { store } from '@/store'
+import ConfirmDialog from '@/components/ConfirmDialog.vue'
 
 interface TrashItem {
   key: string
@@ -73,6 +74,42 @@ async function restore(t: TrashItem) {
   announce()
 }
 
+/**
+ * 彻底删除 / 清空都要过一道确认。
+ *
+ * 回收站里按下去就是**不可撤销**的（没有第二层兜底），
+ * 所以不能像别处那样「点了就删」——先问一句，用户点头才动手。
+ * 两件事共用同一个弹窗，靠 pending 记住这次要删的是「一条」还是「全部」。
+ */
+const pending = ref<{ kind: 'one'; item: TrashItem } | { kind: 'all' } | null>(null)
+
+function askPurge(t: TrashItem) {
+  pending.value = { kind: 'one', item: t }
+}
+
+function askEmpty() {
+  if (items.value.length === 0) return
+  pending.value = { kind: 'all' }
+}
+
+const confirmTitle = computed(() =>
+  pending.value?.kind === 'all' ? '清空回收站？' : '彻底删除这篇笔记？',
+)
+const confirmMessage = computed(() => {
+  const p = pending.value
+  if (!p) return ''
+  if (p.kind === 'all') return `${items.value.length} 篇被删的笔记会被永久删除，无法恢复。`
+  return `「${p.item.name}」会被永久删除，无法恢复。`
+})
+
+async function doConfirm() {
+  const p = pending.value
+  pending.value = null
+  if (!p) return
+  if (p.kind === 'one') await purge(p.item)
+  else await emptyAll()
+}
+
 async function purge(t: TrashItem) {
   await window.api.trashPurge(root.value, t.key)
   items.value = items.value.filter((x) => x.key !== t.key)
@@ -127,7 +164,7 @@ function timeText(ms: number) {
             <button class="pn-act tv-restore" title="恢复到原位置" @click="restore(t)">
               <RotateCcw :size="12" :stroke-width="2" />
             </button>
-            <button class="pn-act danger" title="彻底删除" @click="purge(t)">
+            <button class="pn-act danger" title="彻底删除" @click="askPurge(t)">
               <Trash2 :size="12" :stroke-width="2" />
             </button>
           </div>
@@ -137,10 +174,20 @@ function timeText(ms: number) {
             <HistoryIcon :size="11" :stroke-width="1.9" />
             清空之后才真的没了
           </span>
-          <button class="pn-btn danger" @click="emptyAll">清空回收站</button>
+          <button class="pn-btn danger" @click="askEmpty">清空回收站</button>
         </div>
       </template>
     </div>
+
+    <ConfirmDialog
+      :open="!!pending"
+      :title="confirmTitle"
+      :message="confirmMessage"
+      confirm-text="永久删除"
+      danger
+      @confirm="doConfirm"
+      @cancel="pending = null"
+    />
   </div>
 </template>
 

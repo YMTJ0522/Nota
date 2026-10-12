@@ -15,7 +15,7 @@
  *
  * 这一列可收（宽度还给正文）、可拖（见 SplitHandle），宽度都会记住。
  */
-import { computed } from 'vue'
+import { computed, watch } from 'vue'
 import { FileText, ListTree, PanelLeftClose, Paperclip, Plus, Quote, Sparkles, Trash2 } from 'lucide-vue-next'
 import { store } from '@/store'
 import type { ColumnView } from '@/store'
@@ -28,12 +28,20 @@ import AiChatPanel from './AiChatPanel.vue'
 
 const { state } = store
 
-/** 笔记这一类里的三种看法 */
-const NOTE_TABS: { id: ColumnView; label: string; icon: unknown }[] = [
-  { id: 'notes', label: '笔记', icon: FileText },
-  { id: 'outline', label: '大纲', icon: ListTree },
-  { id: 'quote', label: '引用', icon: Quote },
-]
+/**
+ * 笔记这一类里的三种看法。
+ *
+ * 大纲那一格可以被设置关掉（原来它指的是「预览区右侧的大纲」，
+ * 那一栏已经没了，开关挪到这一格上）：有人从来不看标题导航，
+ * 少一格省得每次都从它旁边划过去。
+ */
+const NOTE_TABS = computed(() =>
+  [
+    { id: 'notes' as ColumnView, label: '笔记', icon: FileText },
+    { id: 'outline' as ColumnView, label: '大纲', icon: ListTree },
+    { id: 'quote' as ColumnView, label: '引用', icon: Quote },
+  ].filter((t) => t.id !== 'outline' || state.outline),
+)
 
 /** 另外三种：各占一屏，靠侧栏入口切过来 */
 const SOLO: Record<string, { label: string; icon: unknown }> = {
@@ -43,13 +51,22 @@ const SOLO: Record<string, { label: string; icon: unknown }> = {
 }
 
 const view = computed(() => state.columnView)
-const isNoteTab = computed(() => NOTE_TABS.some((t) => t.id === view.value))
+const isNoteTab = computed(() => NOTE_TABS.value.some((t) => t.id === view.value))
 const solo = computed(() => SOLO[view.value] ?? SOLO.notes)
 const noteCount = computed(() => store.visibleFiles.value.length)
 
 function pick(id: ColumnView) {
   store.setColumnView(id)
 }
+
+/** 大纲那一格被关掉时不能停在它上面——那样这一列就成了一块空白 */
+watch(
+  () => state.outline,
+  (on) => {
+    if (!on && state.columnView === 'outline') store.setColumnView('notes')
+  },
+  { immediate: true },
+)
 
 /** 页签上的小数字：只有「笔记」这一格能立刻算出来 */
 function tabCount(id: ColumnView) {

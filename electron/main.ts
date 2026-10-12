@@ -742,34 +742,99 @@ ipcMain.handle('image:pick', async (_e, workspace: string, kind: string = 'image
 })
 
 /* ── 导出 ──
-   三种格式：
+   四种格式：
     - md   ：直接把源文件另存一份，最保真
     - html ：带上内联样式与内容，独立可打开的网页
-    - pdf  ：让渲染进程把预览页打印成 PDF（这里只负责弹保存框 + 写文件）
-   统一走「弹保存框 → 写文件」，返回最终路径（取消返回 null）。 */
-ipcMain.handle('export:save', async (_e, opts: { defaultName: string; kind: string; data: string }) => {
-  if (!win) return null
-  const filters =
-    opts.kind === 'html'
-      ? [{ name: '网页', extensions: ['html'] }]
-      : opts.kind === 'pdf'
-        ? [{ name: 'PDF', extensions: ['pdf'] }]
-        : [{ name: 'Markdown', extensions: ['md'] }]
+    - word ：同一份 HTML 换一层 Word 认的壳，存成 .doc（Word/WPS 直接打开）
+    - pdf  ：拿同一份 HTML 在隐藏窗口里打印成 PDF
+   渲染层负责把 Markdown 渲染成 HTML（它那边有 marked 和高亮），
+   主进程只负责「弹保存框 → 写文件」，PDF 多一步无头打印。 */
+ipcMain.handle(
+  'export:save',
+  async (_e, opts: { defaultName: string; kind: string; data: string }) => {
+    if (!win) return null
+    const filters =
+      opts.kind === 'html'
+        ? [{ name: '网页', extensions: ['html'] }]
+        : opts.kind === 'word'
+          ? [{ name: 'Word 文档', extensions: ['doc'] }]
+          : [{ name: 'Markdown', extensions: ['md'] }]
 
-  const result = await dialog.showSaveDialog(win, {
-    title: '导出',
-    defaultPath: opts.defaultName,
-    filters,
-  })
-  if (result.canceled || !result.filePath) return null
-
-  // pdf 的 data 是 base64（渲染进程已经在那边渲染好了）
-  if (opts.kind === 'pdf') {
-    await fs.writeFile(result.filePath, Buffer.from(opts.data, 'base64'))
-  } else {
+    const result = await dialog.showSaveDialog(win, {
+      title: '导出',
+      defaultPath: opts.defaultName,
+      filters,
+    })
+    if (result.canceled || !result.filePath) return null
     await fs.writeFile(result.filePath, opts.data, 'utf8')
+    return result.filePath
+  },
+)
+
+/**
+ * 导出 PDF：把渲染好的 HTML 放进一个不显示的窗口里，让 Chromium 自己排版打印。
+ *
+ * 为什么不干脆用渲染进程的 printToPDF：那会把整个应用界面（侧栏、工具栏）
+ * 一起打进去。这里是一个只有正文的干净页面，出来的就是一份文档。
+ *
+ * HTML 落到临时文件再 loadFile，而不是塞进 data: URL —— 长笔记的数据
+ * URL 会非常长，Chromium 对它有上限，而且图片的 file:// 相对解析也会乱。
+ */
+ipcMain.handle(
+  'export:pdf',
+  async (_e, opts: { defaultName: string; html: string }): Promise<string | null> => {
+    if (!win) return null
+    const result = await dialog.showSaveDialog(win, {
+      title: '导出 PDF',
+      defaultPath: opts.defaultName,
+      filters: [{ name: 'PDF', extensions: ['pdf'] }],
+    })
+    if (result.canceled || !result.filePath) return null
+
+    const tmp = path.join(app.getPath('temp'), `nota-print-${Date.now()}.html`)
+    await fs.writeFile(tmp, opts.html, 'utf8')
+    const printer = new BrowserWindow({
+      show: false,
+      webPreferences: { contextIsolation: true, nodeIntegration: false },
+    })
+    try {
+      await printer.loadFile(tmp)
+      const buf = await printer.webContents.printToPDF({
+        printBackground: true,
+        pageSize: 'A4',
+        margins: { top: 0.6, bottom: 0.6, left: 0.7, right: 0.7 },
+      })
+      await fs.writeFile(result.filePath, buf)
+    } finally {
+      printer.destroy()
+      await fs.rm(tmp, { force: true })
+    }
+    return result.filePath
+  },
+)
+
+/* ── 归类与定位 ──
+   右键菜单里的两项：把笔记挪到另一个文件夹、在文件管理器里定位它。
+   不用 shell.openPath（那会用默认程序打开笔记），要的是「在文件夹里选中」。 */
+ipcMain.handle('note:reveal', (_e, file: string) => {
+  shell.showItemInFolder(file)
+  return true
+})
+
+ipcMain.handle('note:move', async (_e, file: string, dir: string) => {
+  const base = path.basename(file)
+  let target = path.join(dir, base)
+  if (target === file) return file
+  // 目标里已有同名笔记就往后加序号，跟新建/导入一样，绝不覆盖
+  const stem = base.replace(/\.md$/i, '')
+  let i = 1
+  while (existsSync(target)) {
+    target = path.join(dir, `${stem} ${i}.md`)
+    i++
   }
-  return result.filePath
+  await fs.mkdir(dir, { recursive: true })
+  await fs.rename(file, target)
+  return target
 })
 
 /* ── 版本历史 ──

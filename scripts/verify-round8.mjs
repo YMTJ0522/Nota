@@ -359,10 +359,11 @@ const shape = await evaluate(`(() => {
     agentName: q('.ag-name')?.textContent?.trim() ?? '',
     agentSub: q('.ag-sub')?.textContent?.trim() ?? '',
     cardClose: !!q('.ag-card .ag-x'),
-    // 指令行：这一轮在干嘛 + 两个动作
-    task: !!q('.ag-task'),
-    taskText: q('.ag-task-text')?.textContent?.trim() ?? '',
-    taskActs: el?.querySelectorAll('.ag-task .ag-mini').length ?? 0,
+    // 2.0.0：这一道不再是「指令行」，改成了「会话行」——
+    // 会话名 + 新建 + 删除当前会话，一并搬到了卡片正下方。
+    sess: !!q('.ag-sess'),
+    sessName: q('.ag-sess-name')?.textContent?.trim() ?? '',
+    sessActs: [...(el?.querySelectorAll('.ag-sess .ag-mini') ?? [])].map(b => b.getAttribute('title')),
     // 上下文：开关 + 笔记选择
     toggle: !!q('.ag-switch'),
     toggleOn: q('.ag-switch')?.classList.contains('on') ?? false,
@@ -380,15 +381,16 @@ const shape = await evaluate(`(() => {
   }
 })()`)
 ok(
-  '6.AI 面板按参考图重排：卡片 / 指令行 / 上下文开关与笔记选择 / 消息流 / 快捷指令 / 输入区 / 底部',
+  '6.AI 面板按参考图重排：卡片 / 会话行 / 上下文开关与笔记选择 / 消息流 / 快捷指令 / 输入区 / 模型与发送',
   shape.exists && shape.card && shape.agentName === 'AI 助手' &&
     shape.agentSub.includes('笔记') && shape.cardClose &&
-    shape.task && shape.taskText.includes('还没有下达指令') && shape.taskActs === 2 &&
+    shape.sess && !!shape.sessName &&
+    shape.sessActs.includes('新建会话') && shape.sessActs.includes('删除当前会话') &&
     shape.toggle && shape.toggleOn && shape.notePick === '长文' &&
     shape.stream && shape.chips.length >= 4 &&
     shape.chips.includes('总结全文') && shape.chips.includes('生成大纲') && shape.chips.includes('起标题') &&
     shape.input.includes('Enter 发送') && shape.send &&
-    shape.model === 'llama3.2' && shape.session &&
+    shape.model === 'llama3.2' &&
     shape.emptyTitle === '让 AI 帮你写' && shape.height > 400,
   shape,
 )

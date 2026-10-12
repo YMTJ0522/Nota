@@ -31,7 +31,7 @@ import { languages } from "@codemirror/language-data";
 import { closeBrackets, closeBracketsKeymap } from "@codemirror/autocomplete";
 
 import { toolbarKeymap } from "./toolbar-keymap";
-import { codeLangCompleteExtensions } from "./code-lang-complete";
+import { codeLangChipExtensions } from "./code-lang-chip";
 import { fencedCodeBlockHighlighter } from "./code-languages";
 import { markdownLivePreview } from "./live-preview";
 
@@ -94,7 +94,9 @@ export function baseExtensions(options: {
     }),
     markdownLivePreview,
     fencedCodeBlockHighlighter(),
-    codeLangCompleteExtensions(),
+    // 围栏右上角那枚「语言」标签：写完之后想改语言就点它，
+    // 打字过程中不再弹任何东西（见 code-lang-chip.ts 顶上的说明）
+    codeLangChipExtensions(),
     // 自绘查找条：Ctrl+F 直接交给外层那条输入框
     ...(onFind
       ? [

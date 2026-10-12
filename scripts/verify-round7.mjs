@@ -273,9 +273,12 @@ ok(
   views,
 )
 
-/* ── 2. 三条分隔线都能拖 ──
+/* ── 2. 两条分隔线都能拖 ──
    拖完要满足四件事：宽度真的变了、不会拖出上下限、宽度落盘、双击能复位。
-   顺带反向断言：拖完侧栏/资料栏不该把正文挤没。 */
+   顺带反向断言：拖完侧栏/资料栏不该把正文挤没。
+
+   2.0.0：大纲从「预览区右边那一栏」搬到了中间栏的页签，
+   右侧不再有第三条分隔线，所以这里是两条，并且反过来确认那把手的消失。 */
 const VAR = { sidebar: '--side-w', column: '--col-w', outline: '--outline-w' }
 const HOST = { sidebar: '.panel', column: '.col', outline: '.outline' }
 const DEFAULT_W = { sidebar: 232, column: 296, outline: 176 }
@@ -303,15 +306,14 @@ const drag = (key, dx) => evaluate(`(async () => {
   return { x, dragging: document.body.classList.contains('n-dragging') }
 })()`)
 
-// 大纲的把手只在分栏 + 大纲可见时才存在，先把这两件事打开
+// 过去这一步要先把「显示大纲」打开，把手才存在；现在大纲不住在这一侧了
 await evaluate("(() => { const b=[...document.querySelectorAll('.ph-seg-btn')].find(x=>(x.getAttribute('title')||'').includes('分栏')); b?.click(); return !!b })()")
 await sleep(800)
-await evaluate("(() => { const b=[...document.querySelectorAll('button')].find(x=>(x.getAttribute('title')||'')==='显示大纲'); b?.click(); return !!b })()")
-await sleep(600)
+
+const noOutlineHandle = await evaluate("!document.querySelector('.sh[data-target=\"outline\"]')")
 
 const drags = {}
-// 大纲默认 176、下限 140，拖 40 会直接撞到下限，所以用 20 量「真的跟着指针走」
-for (const [key, dx, clampTo] of [['sidebar', 60, 420], ['column', 60, 560], ['outline', 20, 140]]) {
+for (const [key, dx, clampTo] of [['sidebar', 60, 420], ['column', 60, 560]]) {
   const before = await evaluate(readW(key))
   const moved = await drag(key, dx)
   const after = await evaluate(readW(key))
@@ -334,8 +336,10 @@ const dragOk = (d) => {
 }
 Object.entries(drags).forEach(([k, d]) => { d.key = k })
 ok(
-  '2.三条分隔线都能拖（宽度变 / 落盘 / 夹在上下限内 / 双击复位）',
-  Object.values(drags).every((d) => !d.moved.err && dragOk(d)) &&
+  // 大纲搬进中间栏以后，预览区右边那条可调宽的分隔线也不该再出现
+  '2.两条分隔线都能拖（宽度变 / 落盘 / 夹在上下限内 / 双击复位），右侧不再有大纲的分隔线',
+  noOutlineHandle &&
+    Object.values(drags).every((d) => !d.moved.err && dragOk(d)) &&
     Object.values(drags).every((d) => !d.moved.dragging) &&
     Object.values(drags).every((d) => d.before.real > 0 && d.after.real > 0),
   drags,

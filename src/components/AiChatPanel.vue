@@ -31,7 +31,6 @@ import {
   ListTree,
   Loader2,
   MessageSquare,
-  Pencil,
   Plus,
   RefreshCw,
   Settings,
@@ -293,6 +292,7 @@ async function createSession() {
   box.value?.focus()
 }
 
+
 /* ── 输入 ── */
 function autoGrow() {
   const el = box.value
@@ -382,11 +382,6 @@ async function saveAsNote(content: string) {
   }
 }
 
-function fillAsk() {
-  if (!lastAsk.value) return
-  useChip(lastAsk.value)
-}
-
 function openAiSettings() {
   window.dispatchEvent(new CustomEvent('nota:settings', { detail: 'ai' }))
 }
@@ -419,33 +414,74 @@ const thinkingLive = computed(
       </button>
     </template>
 
-    <!-- ② 指令行：这一轮在干嘛，顺手给两个动作 -->
-    <div class="ag-task">
-      <span class="ag-task-text" :class="{ dim: !lastAsk }" :title="lastAsk">
-        {{ lastAsk || '还没有下达指令' }}
-      </span>
-      <button class="ag-mini" :disabled="!lastAsk" title="把这条指令填回输入框，改完再发" @click="fillAsk">
-        <Pencil :size="12" :stroke-width="1.9" />
+    <!-- ② 会话行：这一栏在跟谁对话 —— 左边选会话，右边新建 / 删掉当前这个。
+         参考图里这一格显示的就是「这次对话在聊什么」，因为会话名就是第一条指令。 -->
+    <div class="ag-sess">
+      <div class="ss-wrap">
+        <button
+          class="ag-sess-pick"
+          :class="{ on: sessMenu, dim: state.chat.length === 0 }"
+          :title="`会话：${activeSessionTitle}`"
+          @click="sessMenu = !sessMenu"
+        >
+          <MessageSquare :size="12" :stroke-width="1.9" />
+          <span class="ag-sess-name">{{ activeSessionTitle }}</span>
+          <ChevronDown :size="11" :stroke-width="2" />
+        </button>
+
+        <div v-if="sessMenu" class="n-menu n-menu-inline ss-menu">
+          <!-- 列表开着的时候，开新会话这一步就在手边，不用先收起列表再去找那一枚 + -->
+          <div class="n-menu-head">
+            <span>会话</span>
+            <span class="n-menu-head-acts">
+              <button class="ag-mini" title="新建会话" @click="createSession">
+                <Plus :size="12" :stroke-width="2.2" />
+              </button>
+            </span>
+          </div>
+          <button
+            v-for="s in sessions"
+            :key="s.id"
+            class="n-menu-item"
+            :class="{ on: s.id === state.activeSessionId }"
+            @click="pickSession(s.id)"
+          >
+            <span class="n-menu-name">{{ s.title }}</span>
+            <span class="n-menu-tail">{{ when(s.updatedAt) }}</span>
+          </button>
+        </div>
+      </div>
+
+      <button class="ag-mini" title="新建会话" @click="createSession">
+        <Plus :size="12" :stroke-width="2.2" />
       </button>
-      <button class="ag-mini danger" title="清空当前会话" @click="store.clearChat()">
+      <button
+        class="ag-mini danger"
+        title="删除当前会话"
+        @click="store.deleteSession(state.activeSessionId)"
+      >
         <Trash2 :size="12" :stroke-width="1.9" />
       </button>
     </div>
 
-    <!-- ③ 上下文：开关决定要不要把正文交出去，下拉决定交哪一篇 -->
+    <!-- ③ 上下文：开关打开＝选中笔记（正文一起交给模型），关掉＝不选笔记、自由聊天 -->
     <div class="ag-note">
       <button
         class="ag-switch"
         :class="{ on: state.aiWithNote }"
         role="switch"
         :aria-checked="state.aiWithNote"
-        :title="state.aiWithNote ? '这一轮会带上笔记正文' : '这一轮只带对话'"
+        :title="state.aiWithNote ? '带笔记：这一轮会把笔记正文一起交给模型' : '自由对话：这一轮只带对话本身'"
         @click="store.setAiWithNote(!state.aiWithNote)"
       >
         <span class="ag-knob" />
       </button>
 
-      <div class="np-wrap">
+      <!-- 关掉开关就没有「选中的笔记」可言，直接说清楚现在是在自由聊天 -->
+      <span v-if="!state.aiWithNote" class="ag-note-label">自由对话</span>
+
+      <!-- 选中笔记的时候才需要挑是哪一篇 -->
+      <div v-else class="np-wrap">
         <button class="ag-pick" :class="{ on: noteMenu }" :title="`工作对象：${noteLabel}`" @click="noteMenu = !noteMenu">
           <span class="ag-pick-name">{{ noteLabel }}</span>
           <ChevronDown :size="11" :stroke-width="2" />
@@ -581,7 +617,7 @@ const thinkingLive = computed(
       </button>
     </div>
 
-    <!-- ⑥ 输入区 -->
+    <!-- ⑥ 输入区：正文在上，模型与发送在同一行的两端（照参考图） -->
     <div class="composer">
       <textarea
         ref="box"
@@ -594,82 +630,48 @@ const thinkingLive = computed(
         @input="autoGrow"
         @keydown="onKey"
       />
-      <button class="send" :class="{ off: !canSend }" :disabled="!canSend" title="发送 (Enter)" @click="send">
-        <ArrowUp :size="15" :stroke-width="2.2" />
-      </button>
-    </div>
+      <div class="cm-row">
+        <div class="m-wrap">
+          <button class="ag-model" :class="{ on: modelMenu }" :title="`当前模型：${modelLabel}`" @click="toggleModel">
+            <Cpu :size="12" :stroke-width="1.9" />
+            <span class="ag-model-name">{{ modelLabel }}</span>
+          </button>
 
-    <!-- ⑦ 底部：模型与会话 -->
-    <div class="ag-foot">
-      <div class="m-wrap">
-        <button class="ag-model" :class="{ on: modelMenu }" :title="`当前模型：${modelLabel}`" @click="toggleModel">
-          <Cpu :size="12" :stroke-width="1.9" />
-          <span class="ag-model-name">{{ modelLabel }}</span>
-        </button>
-
-        <div v-if="modelMenu" class="n-menu n-menu-inline m-menu">
-          <div class="n-menu-head">
-            <span>选择模型</span>
-            <span class="n-menu-head-acts">
-              <button class="ag-mini" :disabled="modelLoading" title="重新拉一遍模型列表" @click="loadModels(true)">
-                <Loader2 v-if="modelLoading" class="spin" :size="12" :stroke-width="2" />
-                <RefreshCw v-else :size="12" :stroke-width="2" />
-              </button>
-            </span>
+          <div v-if="modelMenu" class="n-menu n-menu-inline m-menu">
+            <div class="n-menu-head">
+              <span>选择模型</span>
+              <span class="n-menu-head-acts">
+                <button class="ag-mini" :disabled="modelLoading" title="重新拉一遍模型列表" @click="loadModels(true)">
+                  <Loader2 v-if="modelLoading" class="spin" :size="12" :stroke-width="2" />
+                  <RefreshCw v-else :size="12" :stroke-width="2" />
+                </button>
+              </span>
+            </div>
+            <button
+              v-for="m in modelOptions"
+              :key="m"
+              class="n-menu-item"
+              :class="{ on: m === state.ai.model }"
+              @click="pickModel(m)"
+            >
+              <span class="n-menu-name">{{ m }}</span>
+              <Check v-if="m === state.ai.model" :size="12" :stroke-width="2.2" />
+            </button>
+            <p v-if="serverModels.length === 0" class="n-menu-hint">
+              {{ modelLoading ? '正在读取接口…' : '没读到接口的模型列表，先列出预设' }}
+            </p>
+            <span class="n-menu-sep" />
+            <button class="n-menu-item" @click="openAiSettings">
+              <Settings :size="12" :stroke-width="1.9" />
+              <span class="n-menu-name">模型设置…</span>
+            </button>
           </div>
-          <button
-            v-for="m in modelOptions"
-            :key="m"
-            class="n-menu-item"
-            :class="{ on: m === state.ai.model }"
-            @click="pickModel(m)"
-          >
-            <span class="n-menu-name">{{ m }}</span>
-            <Check v-if="m === state.ai.model" :size="12" :stroke-width="2.2" />
-          </button>
-          <p v-if="serverModels.length === 0" class="n-menu-hint">
-            {{ modelLoading ? '正在读取接口…' : '没读到接口的模型列表，先列出预设' }}
-          </p>
-          <span class="n-menu-sep" />
-          <button class="n-menu-item" @click="openAiSettings">
-            <Settings :size="12" :stroke-width="1.9" />
-            <span class="n-menu-name">模型设置…</span>
-          </button>
         </div>
-      </div>
 
-      <span class="ag-spacer" />
-
-      <div class="ss-wrap">
-        <button class="ag-mini" :class="{ on: sessMenu }" :title="`会话：${activeSessionTitle}`" @click="sessMenu = !sessMenu">
-          <MessageSquare :size="12" :stroke-width="1.9" />
+        <button class="send" :class="{ off: !canSend }" :disabled="!canSend" title="发送 (Enter)" @click="send">
+          <ArrowUp :size="15" :stroke-width="2.2" />
         </button>
-
-        <div v-if="sessMenu" class="n-menu n-menu-inline ss-menu">
-          <div class="n-menu-head">
-            <span>会话</span>
-            <span class="n-menu-head-acts">
-              <button class="ag-mini" title="新建会话" @click="createSession">
-                <Plus :size="12" :stroke-width="2.2" />
-              </button>
-            </span>
-          </div>
-          <button
-            v-for="s in sessions"
-            :key="s.id"
-            class="n-menu-item"
-            :class="{ on: s.id === state.activeSessionId }"
-            @click="pickSession(s.id)"
-          >
-            <span class="n-menu-name">{{ s.title }}</span>
-            <span class="n-menu-tail">{{ when(s.updatedAt) }}</span>
-          </button>
-        </div>
       </div>
-
-      <button class="ag-mini" title="新建会话" @click="createSession">
-        <Plus :size="12" :stroke-width="2.2" />
-      </button>
     </div>
   </div>
 </template>
@@ -757,32 +759,64 @@ const thinkingLive = computed(
   color: var(--n-fg);
 }
 
-/* ══ ② 指令行 ══ */
-.ag-task {
+/* ══ ② 会话行 ══
+   左边那一格是会话选择器（会话名就是第一条指令，所以看着像「这次在聊什么」），
+   右边两枚：新建会话、删掉当前会话。 */
+.ag-sess {
   flex: none;
   display: flex;
   align-items: center;
   gap: 2px;
   margin: 6px 8px 0;
-  padding: 0 4px 0 10px;
+  padding: 0 4px 0 4px;
   height: 32px;
   border: 1px solid var(--n-line);
   border-radius: var(--n-r-lg);
   background: var(--n-surface);
 }
 
-.ag-task-text {
+.ss-wrap {
   flex: 1;
   min-width: 0;
+}
+
+.ag-sess-pick {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  height: 26px;
+  padding: 0 6px;
+  border-radius: var(--n-r-md);
   font-size: 11.5px;
   color: var(--n-fg-dim);
+  transition: background var(--n-dur) var(--n-ease), color var(--n-dur) var(--n-ease);
+}
+
+.ag-sess-pick svg {
+  flex: none;
+  fill: none;
+  stroke: currentColor;
+}
+
+.ag-sess-pick:hover,
+.ag-sess-pick.on {
+  background: var(--n-raised);
+  color: var(--n-fg);
+}
+
+.ag-sess-pick.dim .ag-sess-name {
+  color: var(--n-fg-faint);
+}
+
+.ag-sess-name {
+  flex: 1;
+  min-width: 0;
+  text-align: left;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-}
-
-.ag-task-text.dim {
-  color: var(--n-fg-faint);
+  font-weight: 500;
 }
 
 /* ══ ③ 上下文开关 + 笔记选择 ══ */
@@ -792,6 +826,16 @@ const thinkingLive = computed(
   align-items: center;
   gap: 8px;
   margin: 6px 8px 0;
+}
+
+.ag-note-label {
+  flex: none;
+  font-size: 11.5px;
+  color: var(--n-fg-dim);
+}
+
+.ag-note-label.on {
+  color: var(--n-accent);
 }
 
 .ag-switch {
@@ -1240,44 +1284,52 @@ const thinkingLive = computed(
   color: var(--n-fg);
 }
 
-/* ══ ⑥ 输入区 ══ */
+/* ══ ⑥ 输入区 ══
+   一个带边框的盒子：上面写话，下面一行左边是当前模型、右边是发送。
+   参考图就是这样 —— 模型不必另占一行，跟发送同在一行的两端更紧凑。 */
 .composer {
   flex: none;
-  position: relative;
-  margin: 8px 10px 0;
+  margin: 8px 10px 10px;
+  border: 1px solid var(--n-line);
+  border-radius: var(--n-r-lg);
+  background: var(--n-surface);
+  transition: border-color var(--n-dur) var(--n-ease);
+}
+
+.composer:focus-within {
+  border-color: var(--n-accent);
 }
 
 .input {
   display: block;
   width: 100%;
-  min-height: 62px;
+  min-height: 54px;
   max-height: 180px;
-  padding: 10px 40px 10px 11px;
-  border: 1px solid var(--n-line);
+  padding: 9px 11px 2px;
+  border: none;
   border-radius: var(--n-r-lg);
-  background: var(--n-surface);
+  background: none;
   color: var(--n-fg);
   font-family: inherit;
   font-size: 12.5px;
   line-height: 1.7;
   resize: none;
   outline: none;
-  transition: border-color var(--n-dur) var(--n-ease);
 }
 
 .input::placeholder {
   color: var(--n-fg-faint);
 }
 
-.input:focus {
-  border-color: var(--n-accent);
+.cm-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 7px 7px;
 }
 
-/* 发送键落在输入框里右下角，像参考图那样 */
 .send {
-  position: absolute;
-  right: 7px;
-  bottom: 7px;
+  flex: none;
   width: 28px;
   height: 28px;
   display: inline-flex;
@@ -1296,19 +1348,6 @@ const thinkingLive = computed(
 
 .send.off {
   opacity: 0.34;
-}
-
-/* ══ ⑦ 底部 ══ */
-.ag-foot {
-  flex: none;
-  display: flex;
-  align-items: center;
-  gap: 2px;
-  padding: 7px 10px 8px;
-}
-
-.ag-spacer {
-  flex: 1;
 }
 
 .ag-model {
@@ -1376,21 +1415,24 @@ const thinkingLive = computed(
 }
 
 /* 弹出的菜单：往上开，别被底边裁掉 */
-.m-menu,
-.ss-menu {
+/* 模型菜单在输入区里（贴着底部），所以往上开，不然会被底边裁掉 */
+.m-menu {
   bottom: calc(100% + 6px);
   top: auto;
+  left: 0;
   width: 236px;
   max-height: 320px;
   overflow-y: auto;
 }
 
-.m-menu {
-  left: 0;
-}
-
+/* 会话菜单在面板顶上，往下开 */
 .ss-menu {
-  right: 0;
+  top: calc(100% + 6px);
+  left: 0;
+  width: 100%;
+  min-width: 236px;
+  max-height: 320px;
+  overflow-y: auto;
 }
 
 .ss-menu .n-menu-item .n-menu-name {

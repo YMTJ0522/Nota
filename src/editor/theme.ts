@@ -379,6 +379,48 @@ export const notaTheme = EditorView.theme({
   /* 首末行补一点纵向留白，整块看起来才是个独立的段落 */
   ".cm-md-codeblock-open": { paddingTop: "7px" },
   ".cm-md-codeblock-close": { paddingBottom: "7px" },
+
+  /* ── 代码块的「语言」标签 ──
+     外层零高度，只当定位基准：它不能占文档流，否则会多出一行空白、
+     也会把行号和围栏的对应关系顶歪。真正的可见物是里面那枚绝对定位的小按钮，
+     浮在代码块右上角——离内容远，不会和正文、行号抢位置。 */
+  ".cm-code-lang": {
+    height: "0",
+    position: "relative",
+  },
+  ".cm-code-lang-btn": {
+    position: "absolute",
+    top: "5px",
+    right: "14px",
+    display: "inline-flex",
+    alignItems: "center",
+    gap: "2px",
+    height: "18px",
+    padding: "0 5px",
+    borderRadius: "4px",
+    border: "1px solid var(--n-line)",
+    backgroundColor: "color-mix(in oklab, var(--n-bg) 82%, transparent)",
+    fontFamily: "var(--n-font-ui)",
+    fontSize: "10.5px",
+    lineHeight: "1",
+    color: "var(--n-fg-dim)",
+    cursor: "pointer",
+    /* 默认压到快看不见：它是「想改才去点」的东西，不该常驻抢戏 */
+    opacity: "0.45",
+    transition: "opacity 120ms var(--n-ease), color 120ms var(--n-ease)",
+  },
+  ".cm-code-lang-btn svg": {
+    flex: "none",
+    fill: "none",
+    stroke: "currentColor",
+  },
+  ".cm-code-lang-btn:hover": {
+    opacity: "1",
+    color: "var(--n-accent)",
+    borderColor: "var(--n-accent)",
+  },
+  /* 已经指定过语言的那块稍微实一点——有信息量才值得看得见 */
+  ".cm-code-lang-btn.has-lang": { opacity: "0.7" },
 });
 
 /**

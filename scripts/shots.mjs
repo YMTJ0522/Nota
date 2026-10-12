@@ -267,33 +267,39 @@ const setTheme = async (label) => {
 }
 await setTheme('浅色')
 
-/* ③ AI 聊天页（含会话管理：多开两条，列表里有得比） */
+/* ③ AI 编写页（含会话管理：多开两条，列表里有得比）
+   2.0.0 起会话不在左侧常驻列表里了，收进顶部那一枚下拉：
+   先在第一条会话里聊一轮 → 新建第二条再聊一轮 → 从下拉切回第一条，
+   这样图里既有两条会话，又能看到带代码块的那种回答。 */
 await evaluate("(() => { const b=[...document.querySelectorAll('.panel .nav-item')].find(x=>(x.querySelector('.nav-label')?.textContent??'').trim()==='AI 编写'); b?.click(); return true })()")
 await sleep(700)
-// 先在第一条会话里聊一轮
-await evaluate(`(async () => {
-  const box = document.querySelector('.chat .composer .input')
-  box.focus(); box.value = '帮我看看这段文字有没有可以精简的地方'
+const ask = (text) => `(() => {
+  const box = document.querySelector('.ag .composer .input')
+  if (!box) return false
+  box.focus(); box.value = ${JSON.stringify(text)}
   box.dispatchEvent(new Event('input', { bubbles: true }))
-  await new Promise(r => setTimeout(r, 200))
-  document.querySelector('.chat .composer .send')?.click()
-  await new Promise(r => setTimeout(r, 1600))
   return true
-})()`)
-// 再新建一条会话，这样左侧列表里能看到两条、且当前项高亮
-await evaluate("document.querySelector('.chat .rail-add')?.click()")
+})()`
+await evaluate(ask('帮我看看这段文字有没有可以精简的地方'))
+await sleep(200)
+await evaluate("document.querySelector('.ag .composer .send')?.click()")
+await sleep(1600)
+await evaluate("document.querySelector('.ag .ag-sess .ag-mini[title=\"新建会话\"]')?.click()")
 await sleep(500)
+await evaluate(ask('给这段笔记起三个标题'))
+await sleep(200)
+await evaluate("document.querySelector('.ag .composer .send')?.click()")
+await sleep(1600)
+// 切回最早那条：列表最后一项就是它
 await evaluate(`(async () => {
-  const box = document.querySelector('.chat .composer .input')
-  box.focus(); box.value = '给这段笔记起三个标题'
-  box.dispatchEvent(new Event('input', { bubbles: true }))
-  await new Promise(r => setTimeout(r, 200))
-  document.querySelector('.chat .composer .send')?.click()
-  await new Promise(r => setTimeout(r, 1600))
-  return true
+  document.querySelector('.ag .ag-sess-pick')?.click()
+  await new Promise(r => setTimeout(r, 350))
+  const list = [...document.querySelectorAll('.ag .ss-menu .n-menu-item')]
+  list[list.length - 1]?.click()
+  await new Promise(r => setTimeout(r, 400))
+  document.body.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }))
+  return list.length
 })()`)
-// 再切回第一条会话：这样图里既有两条会话的列表，又能看到带代码块的那种回答
-await evaluate("(() => { const list=[...document.querySelectorAll('.chat .rail .sess')]; list[list.length-1]?.click(); return list.length })()")
 await sleep(1200)
 await shot('screenshot-ai.png')
 

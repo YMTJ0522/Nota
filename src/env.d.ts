@@ -15,6 +15,8 @@ interface NoteApi {
   createFolder(parent: string, name: string): Promise<string>
   deleteNote(file: string): Promise<boolean>
   renameNote(file: string, newName: string): Promise<string>
+  moveNote(file: string, dir: string): Promise<string>
+  revealNote(file: string): Promise<boolean>
   importNotes(root: string, dir: string): Promise<{ name: string; path: string }[]>
   pickImage(
     workspace: string,
@@ -22,6 +24,7 @@ interface NoteApi {
   ): Promise<{ rel: string; alt: string; copied: boolean; isVideo: boolean } | null>
   resolveMedia(base: string, rel: string): Promise<string | null>
   exportSave(opts: { defaultName: string; kind: string; data: string }): Promise<string | null>
+  exportPdf(opts: { defaultName: string; html: string }): Promise<string | null>
   historySave(workspace: string, file: string, content: string): Promise<string | null>
   historyList(
     workspace: string,

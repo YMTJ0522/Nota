@@ -11,9 +11,7 @@ import {
   Eye,
   Check,
   Loader2,
-  ListTree,
   PanelLeft,
-  PanelRightClose,
   ChevronDown,
   ChevronUp,
   Search,
@@ -45,8 +43,6 @@ import Toolbar from '@/components/Toolbar.vue'
 import NotePickerDialog from '@/components/NotePickerDialog.vue'
 import SlashMenu from '@/components/SlashMenu.vue'
 import EditorActions from '@/components/EditorActions.vue'
-import EditorOutline from '@/components/EditorOutline.vue'
-import SplitHandle from '@/components/SplitHandle.vue'
 import WindowControls from '@/components/WindowControls.vue'
 import {
   toolbarInline,
@@ -81,8 +77,6 @@ const previewRef = ref<HTMLDivElement | null>(null)
 /** 视图模式放在 store 里，切换后重启应用也保持 */
 const mode = computed(() => state.viewMode)
 const html = ref('')
-/** 预览渲染出的标题列表，交给右侧大纲 */
-const headings = ref<HeadingItem[]>([])
 const slash = ref<SlashMenuRenderState | null>(null)
 
 /** 编辑区是否可见 / 预览区是否可见，由模式派生 */
@@ -118,6 +112,9 @@ watch(
   () => [state.activePath, state.draft] as const,
   ([p, raw]) => {
     state.headings = p ? outlineFromSource(raw) : []
+    // 标题结构一变，高亮回到第一个标题，再看滚动到哪再说
+    state.activeHeading = state.headings[0]?.id ?? null
+    requestAnimationFrame(markActiveHeading)
   },
   { immediate: true },
 )
@@ -213,7 +210,6 @@ async function render() {
   const media = await resolveMediaInHtml(lit)
   const enhanced = enhancePreview(media)
   html.value = enhanced.html
-  headings.value = enhanced.headings
   // 异步填料的两种「重资产」：mermaid 画图、katex 排公式
   await nextTick()
   const pane = previewRef.value
@@ -362,7 +358,52 @@ function syncFromPreview() {
   v.dispatch({ effects: EditorView.scrollIntoView(pos, { y: 'start' }) })
 }
 
+/**
+ * 当前读到哪一节：给中间那一列的「大纲」高亮用。
+ *
+ * 两条来源，谁在就信谁：
+ *  - 有预览（分栏 / 阅读）时按预览里标题元素的真实位置算，最准，
+ *    setext 那种写在下一行的标题也能对上；
+ *  - 纯写作模式没有预览，就按编辑区视口里靠顶那一行的行号往前找最近的标题。
+ *    这条路读的是源码行号，所以标题一改大纲立刻跟着动，不用等 180ms 的渲染防抖。
+ */
+function markActiveHeading() {
+  const heads = state.headings
+  if (!heads.length) {
+    state.activeHeading = null
+    return
+  }
+
+  const p = previewRef.value
+  if (p) {
+    const top = p.scrollTop + 64
+    let cur: string | null = heads[0]?.id ?? null
+    for (const h of heads) {
+      const el = p.querySelector<HTMLElement>(`#${CSS.escape(h.id)}`)
+      if (!el) continue
+      if (el.offsetTop <= top) cur = h.id
+      else break
+    }
+    state.activeHeading = cur
+    return
+  }
+
+  const v = view
+  if (!v) return
+  const scroller = v.scrollDOM
+  const block = v.lineBlockAtHeight(scroller.scrollTop + scroller.clientHeight * 0.2)
+  // line 是 0 起算的源码行号，CM 的行号从 1 起
+  const line = v.state.doc.lineAt(block.from).number - 1
+  let cur: string | null = heads[0]?.id ?? null
+  for (const h of heads) {
+    if (h.line == null || h.line > line) break
+    cur = h.id
+  }
+  state.activeHeading = cur
+}
+
 const onEditorScroll = () => {
+  markActiveHeading()
   const v = view
   if (!v) return
   const top = v.scrollDOM.scrollTop
@@ -377,6 +418,7 @@ const onEditorScroll = () => {
 }
 
 const onPreviewScroll = () => {
+  markActiveHeading()
   const p = previewRef.value
   if (!p) return
   if (performance.now() < echo.preview) {
@@ -829,9 +871,7 @@ onBeforeUnmount(() => {
   window.removeEventListener('nota:heading', onHeadingRequest)
 })
 
-// 切笔记：activePath 变化时把 draft 灌进 CM。
-// draft 的赋值发生在 openNote 的 await 之后，所以同时监听 draft，
-// 只要 CM 里的内容和 draft 不一致就同步（用户输入路径由 syncing 挡住）。
+// 切笔记：重排预览，并把这一篇的内容交给编辑器
 watch(
   () => state.activePath,
   async () => {
@@ -840,6 +880,25 @@ watch(
     pushDoc(state.draft)
     view?.focus()
   }
+)
+
+/**
+ * draft 是内容的唯一真相：它一变就把编辑器对齐过去。
+ *
+ * 只盯 activePath 是不够的——openNote 是「先读盘再赋值」，读盘那一下是异步的，
+ * 只在 activePath 变化时灌内容，灌进去的可能是上一篇还没换掉的旧 draft，
+ * 于是编辑器里装的永远是上一篇（前一篇是空的新笔记时，看起来就是「笔记消失了」）。
+ * 这里补一条兜底：不管 draft 是谁在什么时候改的（切笔记、导入、AI 写入、
+ * 历史回溯、收藏打的 frontmatter），只要和编辑器不一致就同步一次。
+ *
+ * 用户自己打字那条路径不会打架：CM 先把 draft 写成自己那份，
+ * 于是这里读到的就是编辑器里已有的内容，pushDoc 直接跳过（syncing 也只是双保险）。
+ */
+watch(
+  () => state.draft,
+  (text) => {
+    pushDoc(text)
+  },
 )
 
 // 阅读模式：销毁编辑器省内存；回到编辑/分栏再重建。
@@ -855,6 +914,9 @@ watch(mode, async (m) => {
       createEditor()
       pushDoc(state.draft)
     }
+    // 阅读模式下编辑区整块是隐藏的，重建后让 CM 立刻量一次尺寸，
+    // 不量它会沿用旧的视口高度，首屏可能只画出半屏甚至一片空白
+    view?.requestMeasure()
     await render()
   }
 })
@@ -909,18 +971,6 @@ defineExpose({ getView: () => view })
 
         <!-- 导入 / 导出 / 版本历史 -->
         <EditorActions />
-
-        <!-- 大纲开关：只在有预览的时候才有意义 -->
-        <button
-          v-if="showPreview"
-          class="ph-icon"
-          :class="{ on: state.outline }"
-          :title="state.outline ? '隐藏大纲' : '显示大纲'"
-          @click="store.toggleOutline()"
-        >
-          <PanelRightClose v-if="state.outline" :size="14" :stroke-width="1.9" />
-          <ListTree v-else :size="14" :stroke-width="1.9" />
-        </button>
 
         <!-- 视图切换：编辑 / 分栏 / 预览 -->
         <div class="ph-seg" role="radiogroup" aria-label="视图模式">
@@ -1021,13 +1071,7 @@ defineExpose({ getView: () => view })
           class="preview md-body"
           v-html="html"
         />
-        <!-- 大纲的宽度也能拖：最右边这一栏同样得能腾地方 -->
-        <SplitHandle v-if="state.outline" target="outline" :sign="-1" label="拖动调整大纲宽度" />
-        <EditorOutline
-          v-if="state.outline"
-          :headings="headings"
-          :scroller="previewRef"
-        />
+        <!-- 大纲已经挪到中间那一列的「大纲」页签里，右边不再重复出一份 -->
       </div>
 
       <NotePickerDialog

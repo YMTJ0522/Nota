@@ -292,31 +292,41 @@ ok(
   math,
 )
 
-/* ── 5. 大纲 ── */
-const outline = await evaluate(`(() => {
-  const n = document.querySelector('.outline')
-  if (!n) return { exists: false }
+/* ── 5. 大纲 ──
+   2.0.0 起大纲不住预览区右侧了（那边已拆掉），改住在中间那一列的「大纲」页签。
+   好处是纯写作模式下也能用——那份数据是从源码提的，不等预览渲染。 */
+const outline = await evaluate(`(async () => {
+  const wait = (ms) => new Promise(r => setTimeout(r, ms))
+  const tab = document.querySelector('.col-tab[data-view="outline"]')
+  if (!tab) return { exists: false, reason: '中间栏没有大纲页签' }
+  tab.click()
+  await wait: 0
+  const n = document.querySelector('.ov')
   return {
-    exists: true,
-    items: n.querySelectorAll('.outline-item').length,
-    first: n.querySelector('.outline-item')?.textContent?.trim() ?? '',
-    hasActive: !!n.querySelector('.outline-item.on'),
+    exists: !!n,
+    items: n?.querySelectorAll('.ov-item').length ?? 0,
+    first: n?.querySelector('.ov-item')?.textContent?.trim() ?? '',
+    hasActive: !!n?.querySelector('.ov-item.on'),
   }
-})()`)
-ok('5.右侧大纲', outline.exists && outline.items >= 15, outline)
+})()`.replace('await wait: 0', 'await wait(600)'))
+ok('5.大纲住在中间栏页签里', outline.exists && outline.items >= 15, outline)
 
 /* ── 6. 点大纲带动预览滚动 ── */
 const jump = await evaluate(`(async () => {
+  const wait = (ms) => new Promise(r => setTimeout(r, ms))
   const p = document.querySelector('.preview')
-  const items = [...document.querySelectorAll('.outline-item')]
+  const items = [...document.querySelectorAll('.ov .ov-item')]
   const target = items[items.length - 2]
-  const before = p.scrollTop
+  const before = p?.scrollTop ?? 0
   target?.click()
-  await new Promise(r => setTimeout(r, 1000))
-  const onItem = document.querySelector('.outline-item.on')
+  await wait(1200)
+  const onItem = document.querySelector('.ov-item.on')
+  // 量完切回笔记页签，后面的用例假设中间栏停在这一页
+  document.querySelector('.col-tab[data-view="notes"]')?.click()
+  await wait(400)
   return {
-    before,
-    after: Math.round(p.scrollTop),
+    before: Math.round(before),
+    after: Math.round(p?.scrollTop ?? 0),
     label: target?.textContent?.trim() ?? '',
     activeLabel: onItem?.textContent?.trim() ?? '',
   }

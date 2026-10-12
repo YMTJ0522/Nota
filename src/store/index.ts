@@ -1,5 +1,7 @@
 import { reactive, computed } from 'vue'
 import type { HeadingItem } from '@/editor/preview-rich'
+import { stripFrontMatter } from '@/editor/preview-rich'
+import { getMarked, highlightFences } from '@/editor/markdown'
 
 /* ─────────────────────────────────────────────
    数据模型：字段名自己定，与任何外部项目无关
@@ -208,6 +210,8 @@ interface State {
   /** 当前笔记的标题结构。由编辑区在渲染预览时写进来，
       中间那一列的「大纲」视图直接读它，不重复解析一遍 Markdown */
   headings: HeadingItem[]
+  /** 当前读到哪一节。滚动由编辑区量，大纲那一侧只负责高亮这一条 */
+  activeHeading: string | null
 }
 
 /** AI 对话消息。role 只有 user / assistant 两种——system 单独放在配置里 */
@@ -300,6 +304,7 @@ const state = reactive<State>({
   aiNote: null,
   aiWithNote: true,
   headings: [],
+  activeHeading: null,
 })
 
 /** 「最近编辑」的时间窗：7 天内有改动的算最近 */
@@ -433,14 +438,32 @@ async function refreshTree() {
   state.tree = await window.api.readTree(state.root)
 }
 
+/**
+ * 「正在换笔记」的窗口期。
+ *
+ * 这一小段时间里 activePath 和 draft 必须一起换，中间不能被任何一次
+ * 自动保存插进来 —— 否则会出现「新路径 + 旧内容」的组合，把上一篇的
+ * 正文写进这一篇（导入笔记后新笔记被清空、内容跑到别的笔记里，就是这么来的）。
+ */
+let opening = false
+
 async function openNote(path: string) {
+  // 先把当前这篇的改动落盘；这一步用的是旧的 activePath，是对的
   if (dirty.value) await saveNote()
-  state.activePath = path
-  const raw = await window.api.readNote(path)
-  state.draft = raw
-  state.savedDraft = raw
+  opening = true
+  try {
+    // 先读盘再改 state：等待期间界面上仍是上一篇，不会闪一下空白
+    const raw = await window.api.readNote(path)
+    state.activePath = path
+    state.draft = raw
+    state.savedDraft = raw
+  } finally {
+    opening = false
+  }
 }
+
 async function saveNote(opts: { silent?: boolean } = {}) {
+  if (opening) return
   if (!state.activePath || !dirty.value) return
   const path = state.activePath
   const content = state.draft
@@ -459,8 +482,17 @@ async function saveNote(opts: { silent?: boolean } = {}) {
   }
 }
 
+/**
+ * 新建笔记。没指定目录时落在「当前笔记所在的那个文件夹」——
+ * 原来取的是树里第一个目录，正在某个文件夹里写笔记时新建，
+ * 结果跑到别的目录去了，看着像放错了地方。
+ */
 async function newNote(dir?: string) {
-  const target = dir ?? (state.tree.find((n) => n.type === 'dir')?.path ?? state.root)
+  const target =
+    dir ??
+    (state.activePath
+      ? state.activePath.replace(/[\\/][^\\/]*$/, '')
+      : (state.tree.find((n) => n.type === 'dir')?.path ?? state.root))
   if (!target) return
   const path = await window.api.createNote(target, '未命名笔记')
   await refreshTree()
@@ -481,9 +513,90 @@ async function removeNote(path: string) {
 async function renameNote(path: string, newName: string) {
   const next = await window.api.renameNote(path, newName)
   if (state.activePath === path) state.activePath = next
+  if (state.aiNote === path) setAiNote(next)
   state.renaming = null
   await refreshTree()
 }
+
+/* ── 右键菜单里那几件事 ──
+   都在这一层做，而不是散在组件里：改的是同一份 state（activePath /
+   aiNote / draft），散出去写就会出现「文件挪了，面板还指着老路径」。 */
+
+/** 路径 → 不带扩展名的名字 */
+function baseNameOf(p: string) {
+  const parts = p.split(/[\\/]/)
+  return (parts[parts.length - 1] ?? '').replace(/\.md$/i, '') || '未命名笔记'
+}
+
+/** 路径 → 它所在的文件夹（去工作区前缀） */
+function folderOfPath(p: string) {
+  const root = state.root ?? ''
+  const rel = root && p.startsWith(root) ? p.slice(root.length) : p
+  const parts = rel.replace(/^[\\/]+/, '').split(/[\\/]/)
+  parts.pop()
+  return parts.join(' / ') || '根目录'
+}
+
+/** 收藏状态写在 frontmatter 的 star 里，所以「收藏」＝改这篇笔记本身 */
+function withStar(doc: string, on: boolean): string {
+  const starLine = /^star(red)?\s*:\s*.*$/gim
+  const fm = doc.match(/^---\r?\n([\s\S]*?)\r?\n---[ \t]*\r?\n?/)
+  if (!fm) return on ? `---\nstar: true\n---\n\n${doc}` : doc
+  const head = fm[1].replace(starLine, '').replace(/\n{2,}/g, '\n').replace(/\s+$/, '')
+  const next = on ? `${head}\nstar: true` : head
+  const tail = doc.slice(fm[0].length)
+  return next.trim() ? `---\n${next}\n---\n${tail}` : (on ? `---\nstar: true\n---\n${tail}` : tail)
+}
+
+async function toggleStar(path: string, on?: boolean) {
+  const node = allFiles.value.find((f) => f.path === path)
+  const next = on ?? !node?.starred
+  // 是当前打开的那篇就改草稿而不是直接写盘：编辑器里可能还有没落盘的改动，
+  // 直接写文件会在 600ms 后被自动保存原样覆盖回去
+  const raw = path === state.activePath ? state.draft : await window.api.readNote(path)
+  const text = withStar(raw ?? '', next)
+  if (path === state.activePath) {
+    state.draft = text
+    state.savedDraft = text
+  }
+  await window.api.writeNote(path, text)
+  await refreshTree()
+  return next
+}
+
+/** 归类：把笔记挪到另一个文件夹。内容不动，只换位置 */
+async function moveNoteTo(path: string, dir: string) {
+  const next = await window.api.moveNote(path, dir)
+  if (next === path) return path
+  if (state.activePath === path) {
+    // 内容没变，路径变了：先把脏标记对齐，再换路径，
+    // 免得自动保存以为有改动、把正文写到老路径上去
+    state.savedDraft = state.draft
+    state.activePath = next
+  }
+  if (state.aiNote === path) setAiNote(next)
+  await refreshTree()
+  return next
+}
+
+async function revealNote(path: string) {
+  await window.api.revealNote(path)
+}
+
+/** 「归类」对话框里的候选：工作区根 + 所有子目录，带层级前缀便于区分同名目录 */
+const folderOptions = computed(() => {
+  const out: { name: string; path: string }[] = []
+  if (state.root) out.push({ name: '工作区根目录', path: state.root })
+  const walk = (nodes: TreeNode[], prefix: string) => {
+    for (const n of nodes) {
+      if (n.type !== 'dir') continue
+      out.push({ name: prefix + n.name, path: n.path })
+      if (n.children) walk(n.children, `${prefix}${n.name} / `)
+    }
+  }
+  walk(state.tree, '')
+  return out
+})
 
 function toggleDir(path: string) {
   state.expanded[path] = !state.expanded[path]
@@ -523,18 +636,155 @@ function showNoteList() {
 }
 
 /* ── 导出 ──
-   三种格式的产物都从 draft（当前编辑内容）派生，不是从磁盘读——
-   这样「刚写完还没保存就导出」也能拿到最新内容。 */
+   四种格式共用同一条管线：Markdown 先渲染成 HTML（marked + 代码高亮，
+   和预览同一套），再按目标格式套壳 —— HTML 直接存，Word 换一层 Word
+   认的壳存 .doc，PDF 交给主进程在隐藏窗口里打印。
+
+   内容一律从「当前草稿」或磁盘取：是正在写的那篇就用草稿，这样
+   「刚写完还没保存就导出」也能拿到最新内容。 */
+export type ExportKind = 'md' | 'html' | 'pdf' | 'word'
+
+/**
+ * 把正文里的相对媒体路径换成 file:// 绝对路径。
+ *
+ * 预览里那些图靠 nota-media:// 协议显示，那是应用内部的东西，导出后
+ * 打开就全是裂图。换成绝对路径后，导出的文件在本机放哪儿都还能看到图。
+ */
+function absolutizeMedia(html: string): string {
+  const root = state.root
+  if (!root) return html
+  return html.replace(
+    /(<(?:img|video|source)\b[^>]*?\bsrc=")([^"]+)(")/g,
+    (whole, head: string, src: string, tail: string) => {
+      if (/^(https?:|data:|file:|blob:|nota-media:)/i.test(src)) return whole
+      const abs = `${root.replace(/[\\/]+$/, '')}/${src.replace(/^[\\/]+/, '')}`
+      return `${head}file:///${encodeURI(abs.replace(/\\/g, '/'))}${tail}`
+    },
+  )
+}
+
+/** 导出用的排版：够把 Markdown 摊开成一份像样的文档，不追求和预览 1:1 */
+const EXPORT_CSS = `
+:root { color-scheme: light dark; }
+body { max-width: 760px; margin: 44px auto; padding: 0 22px;
+  font: 16px/1.75 -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+  color: #24231f; background: #fff; -webkit-font-smoothing: antialiased; }
+h1,h2,h3,h4,h5,h6 { line-height: 1.35; margin: 1.6em 0 .6em; font-weight: 650; letter-spacing: -0.01em; }
+h1 { font-size: 1.9em; } h2 { font-size: 1.45em; } h3 { font-size: 1.2em; }
+p, ul, ol, blockquote, pre, table { margin: .9em 0; }
+ul, ol { padding-left: 1.5em; }
+a { color: #2f6f52; text-underline-offset: 2px; }
+code { font-family: ui-monospace, Consolas, "Sarasa Mono SC", monospace; font-size: .92em;
+  background: #f1efe9; padding: .12em .34em; border-radius: 4px; }
+pre { background: #f1efe9; padding: 14px 16px; border-radius: 10px; overflow-x: auto; }
+pre code { background: none; padding: 0; }
+.pv-line { display: block; min-height: 1.5em; }
+blockquote { border-left: 3px solid #3f7d5f; margin-left: 0; padding: .3em 0 .3em 14px;
+  background: #eef4f0; color: #55534e; border-radius: 0 8px 8px 0; }
+mark { background: #f6e3a8; padding: 0 2px; border-radius: 3px; }
+img, video { max-width: 100%; border-radius: 8px; }
+hr { border: none; border-top: 1px solid #dedbd4; margin: 2em 0; }
+table { border-collapse: collapse; width: 100%; }
+th, td { border: 1px solid #dedbd4; padding: 6px 10px; text-align: left; }
+th { background: #f7f6f3; font-weight: 600; }
+.cm-hl-keyword { color: #8a4e30 } .cm-hl-string { color: #2d7a56 }
+.cm-hl-number { color: #b56a16 } .cm-hl-func { color: #3d5f8f }
+.cm-hl-type { color: #6a548f } .cm-hl-prop { color: #5c6848 }
+.cm-hl-operator { color: #8a4e30 } .cm-hl-punct { color: #6b6862 }
+.cm-hl-var { color: #6b6862 } .cm-hl-comment { color: #8d8a83; font-style: italic }
+.pdf-break { page-break-before: always; }
+@media (prefers-color-scheme: dark) {
+  body { color: #e8e5df; background: #1a1a18; }
+  a { color: #86c4a4; }
+  code, pre { background: #191a1e; }
+  blockquote { background: #20241f; color: #b3b0a8; }
+  mark { background: #5c4f24; color: #f0ece2; }
+  hr, th, td { border-color: #34342f; }
+  th { background: #22221e; }
+  .cm-hl-keyword { color: #e0a57a } .cm-hl-string { color: #86c4a4 }
+  .cm-hl-number { color: #e0b36a } .cm-hl-func { color: #8fb0dd }
+  .cm-hl-type { color: #b7a3dd } .cm-hl-prop { color: #b3c49a }
+  .cm-hl-operator { color: #e0a57a } .cm-hl-punct { color: #a5a29a }
+  .cm-hl-var { color: #a5a29a } .cm-hl-comment { color: #8a8780 }
+}`
+
+/** Markdown → 正文 HTML（和预览同一套解析与高亮） */
+async function renderExportBody(md: string): Promise<string> {
+  const { marked } = await getMarked()
+  const raw = marked.parse(stripFrontMatter(md), { async: false }) as string
+  return absolutizeMedia(await highlightFences(raw))
+}
+
+function escapeHtmlText(s: string) {
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+}
+
+function htmlDocument(title: string, body: string) {
+  return `<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>${escapeHtmlText(title)}</title>
+<style>${EXPORT_CSS}</style>
+</head>
+<body>
+${body}
+</body>
+</html>`
+}
+
+/**
+ * Word 只认自己那套命名空间。给它一份带 `w:WordDocument` 声明的 HTML、
+ * 存成 .doc，Word / WPS 打开就是一篇正常文档（标题、列表、表格都在）。
+ * 不去拼 OOXML：那需要 ZIP 打包，为一个导出把体积和复杂度都抬上去不值。
+ */
+function wordDocument(title: string, body: string) {
+  return `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word" xmlns="http://www.w3.org/TR/REC-html40">
+<head>
+<meta charset="utf-8">
+<title>${escapeHtmlText(title)}</title>
+<!--[if gte mso 9]><xml><w:WordDocument><w:View>Print</w:View><w:Zoom>100</w:Zoom></w:WordDocument></xml><![endif]-->
+<style>
+@page { size: A4; margin: 2cm; }
+${EXPORT_CSS}
+</style>
+</head>
+<body>
+${body}
+</body>
+</html>`
+}
+
+/**
+ * 导出某一篇笔记。
+ *
+ * @param path 目标笔记（右键菜单可以对准任意一篇，不只是打开的那篇）
+ */
+async function exportNoteAs(path: string, kind: ExportKind): Promise<string | null> {
+  const name = baseNameOf(path)
+  const md = path === state.activePath ? state.draft : ((await window.api.readNote(path)) ?? '')
+  if (kind === 'md') {
+    return window.api.exportSave({ defaultName: `${name}.md`, kind, data: md })
+  }
+  const body = await renderExportBody(md)
+  if (kind === 'pdf') {
+    return window.api.exportPdf({ defaultName: `${name}.pdf`, html: htmlDocument(name, body) })
+  }
+  if (kind === 'word') {
+    return window.api.exportSave({
+      defaultName: `${name}.doc`,
+      kind,
+      data: wordDocument(name, body),
+    })
+  }
+  return window.api.exportSave({ defaultName: `${name}.html`, kind, data: htmlDocument(name, body) })
+}
+
+/** 顶栏那个导出下拉用的入口：对准当前打开的那篇 */
 async function exportNote(kind: 'md' | 'html') {
   if (!state.activePath) return null
-  const name = activeName.value || '未命名笔记'
-  const data =
-    kind === 'md' ? state.draft : buildStandaloneHtml(name, state.draft)
-  return window.api.exportSave({
-    defaultName: `${name}.${kind}`,
-    kind,
-    data,
-  })
+  return exportNoteAs(state.activePath, kind)
 }
 
 /**
@@ -559,47 +809,6 @@ async function importNotes(): Promise<{ name: string; path: string }[]> {
     if (last?.path) await openNote(last.path)
   }
   return added
-}
-
-/**
- * 把 Markdown 包成一份自带样式的独立 HTML。
- *
- * 已解析好的预览 HTML（含代码高亮 class）由调用方传入会更准，
- * 但这里刻意只依赖 draft：导出是脱离应用的动作，不该要求预览先渲染过。
- * 所以用一个极简的转换——足够让 md 在浏览器里可读，不追求和预览 1:1。
- */
-function buildStandaloneHtml(title: string, md: string) {
-  const body = md
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-  return `<!doctype html>
-<html lang="zh-CN">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>${title.replace(/</g, '&lt;')}</title>
-<style>
-  :root { color-scheme: light dark; }
-  body { max-width: 720px; margin: 48px auto; padding: 0 20px;
-    font: 15px/1.75 -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
-    color: #24231f; background: #fff; }
-  pre { background: #f5f4f1; padding: 12px 16px; border-radius: 8px; overflow-x: auto; }
-  code { font-family: ui-monospace, Consolas, monospace; }
-  blockquote { border-left: 3px solid #3f7d5f; margin: 1em 0; padding: .4em 0 .4em 14px;
-    background: #eef4f0; color: #55534e; }
-  img { max-width: 100%; border-radius: 8px; }
-  @media (prefers-color-scheme: dark) {
-    body { color: #e8e5df; background: #1a1a18; }
-    pre { background: #24241f; }
-    blockquote { background: #20241f; color: #b3b0a8; }
-  }
-</style>
-</head>
-<body>
-<pre style="white-space:pre-wrap;background:none;padding:0">${body}</pre>
-</body>
-</html>`
 }
 
 /** 侧栏显隐 */
@@ -1200,9 +1409,17 @@ function setAiNote(path: string | null) {
   else localStorage.removeItem(AI_NOTE_KEY)
 }
 
-/** 要不要把笔记正文交给模型 */
+/**
+ * 开关 = 「这一轮要不要带上笔记」。
+ *
+ * 语义按用户的说法：**打开＝选中笔记，关掉＝不选中（自由聊天）**。
+ * 所以打开那一刻如果还没挑过笔记，自动把当前这篇认下来——
+ * 否则会出现「开关明明开着，旁边的笔记却写着未选中」的自相矛盾状态，
+ * 看上去像是开关没生效。
+ */
 function setAiWithNote(v: boolean) {
   state.aiWithNote = v
+  if (v && !state.aiNote && state.activePath) setAiNote(state.activePath)
   localStorage.setItem(AI_WITH_NOTE_KEY, v ? '1' : '0')
 }
 
@@ -1232,6 +1449,12 @@ export const store = {
   newNote,
   removeNote,
   renameNote,
+  toggleStar,
+  moveNoteTo,
+  revealNote,
+  folderOptions,
+  baseNameOf,
+  folderOfPath,
   toggleDir,
   startNewFolder,
   commitNewFolder,
@@ -1243,6 +1466,7 @@ export const store = {
   initTheme,
   autoExpand,
   exportNote,
+  exportNoteAs,
   importNotes,
   toggleSidebar,
   setColumnView,

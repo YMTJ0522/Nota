@@ -17,6 +17,10 @@ contextBridge.exposeInMainWorld('api', {
   deleteNote: (file: string): Promise<boolean> => ipcRenderer.invoke('note:delete', file),
   renameNote: (file: string, newName: string): Promise<string> =>
     ipcRenderer.invoke('note:rename', file, newName),
+  /* 归到另一个文件夹 / 在文件管理器里定位 */
+  moveNote: (file: string, dir: string): Promise<string> =>
+    ipcRenderer.invoke('note:move', file, dir),
+  revealNote: (file: string): Promise<boolean> => ipcRenderer.invoke('note:reveal', file),
   /* 导入：把工作区外面的 .md 复制进来，返回真正写成功的那些 */
   importNotes: (root: string, dir: string): Promise<{ name: string; path: string }[]> =>
     ipcRenderer.invoke('note:import', root, dir),
@@ -32,6 +36,9 @@ contextBridge.exposeInMainWorld('api', {
   /* 导出：弹保存框并写文件，返回最终路径 */
   exportSave: (opts: { defaultName: string; kind: string; data: string }): Promise<string | null> =>
     ipcRenderer.invoke('export:save', opts),
+  /* 导出 PDF：主进程拿渲染好的 HTML 在隐藏窗口里打印 */
+  exportPdf: (opts: { defaultName: string; html: string }): Promise<string | null> =>
+    ipcRenderer.invoke('export:pdf', opts),
 
   /* 版本历史 */
   historySave: (workspace: string, file: string, content: string): Promise<string | null> =>

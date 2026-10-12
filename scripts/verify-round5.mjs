@@ -283,7 +283,9 @@ ok(
    铺满整屏时它把要改的正文挡住了 —— 而它的用法本来就是「边看边改」。
    所以挪进中间那一列：左边聊，右边正文还看得见。
    1.9.0 起这一栏按参考图重排：卡片 → 指令行 → 上下文开关与笔记选择 →
-   消息流 → 快捷指令 → 输入区 → 底部模型与会话。 */
+   消息流 → 快捷指令 → 输入区 → 底部模型与会话。
+   2.0.0 又把卡片底下的「指令行」换成了「会话行」（会话名 + 新建 + 删除），
+   底部那一行并入输入框（模型在左下、发送在右下）。 */
 const chat = await evaluate(`(async () => {
   await new Promise(r => setTimeout(r, 500))
   const el = document.querySelector('.col[data-view="ai"] .ag')
@@ -294,6 +296,7 @@ const chat = await evaluate(`(async () => {
     agentName: el?.querySelector('.ag-name')?.textContent?.trim() ?? '',
     cardSub: el?.querySelector('.ag-sub')?.textContent?.trim() ?? '',
     task: !!el?.querySelector('.ag-task'),
+    sess: !!el?.querySelector('.ag-sess'),
     noteSwitch: !!el?.querySelector('.ag-switch'),
     notePick: !!el?.querySelector('.ag-pick'),
     chips: el?.querySelectorAll('.chip').length ?? 0,
@@ -309,7 +312,8 @@ ok(
   '3.AI 编写在资料栏里（agent 卡片 + 上下文开关 + 输入区），正文仍可见',
   chat.exists && chat.inColumn && chat.card && chat.agentName === 'AI 助手' &&
     chat.cardSub.includes('笔记') &&
-    chat.task && chat.noteSwitch && chat.notePick && chat.chips >= 3 &&
+    // 2.0.0：那一道「指令行」改成了「会话行」（会话名 + 新建 + 删除都在这行上）
+    chat.sess && chat.noteSwitch && chat.notePick && chat.chips >= 3 &&
     chat.hasComposer && chat.hasSend && chat.hasModel &&
     chat.width > 200 && chat.width < 700 && chat.editorAlive,
   chat,
@@ -649,16 +653,19 @@ const sess = await evaluate(`(async () => {
   nav?.click()
   await wait(500)
 
-  // 1.9.0：会话不再占一栏常驻，收到底部那一枚按钮里
+  // 2.0.0：会话菜单跟着会话行一起搬到顶部去了（原本在底部那一枚按钮里）
   const openMenu = async () => {
-    const btn = document.querySelector('.ag .ss-wrap .ag-mini')
-    if (!btn?.classList.contains('on')) btn?.click()
+    const btn = document.querySelector('.ag .ag-sess-pick')
+    btn?.click()
     await wait(320)
     return document.querySelector('.ag .ss-menu')
   }
+  // 必须是 pointerdown：这些就地菜单是在 pointerdown 上收起的（见组件的 onDocPointer），
+  // 发 click / mousedown 都关不掉，那样菜单会一直开着，
+  // 下一次「打开」反而把它点了关 → 后面读到的全是空的
   const closeMenu = async () => {
-    document.body.click()
-    await wait(200)
+    document.body.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }))
+    await wait(220)
   }
   const names = () => [...document.querySelectorAll('.ag .ss-menu .n-menu-name')]
     .map(e => e.textContent.trim())
@@ -670,8 +677,8 @@ const sess = await evaluate(`(async () => {
   // 新建：菜单顶栏那个 +
   menu?.querySelector('.n-menu-head-acts .ag-mini')?.click()
   await wait(450)
-  // 底部那枚按钮的 title 里写着当前会话名
-  const titleAfterNew = document.querySelector('.ag .ss-wrap .ag-mini')?.getAttribute('title') ?? ''
+  // 会话名写在标题那一枚下拉的标题区里
+  const titleAfterNew = document.querySelector('.ag .ag-sess-name')?.textContent?.trim() ?? ''
   const emptyRows = document.querySelectorAll('.ag .stream .row').length
 
   await openMenu()
@@ -689,6 +696,8 @@ const sess = await evaluate(`(async () => {
   await openMenu()
   const titleAfterAsk = names().join('|')
   await closeMenu()
+  // 观测用：菜单里的名字读不到的时候，至少知道标题行写的是什么
+  const rowAfterAsk = document.querySelector('.ag .ag-sess-name')?.textContent?.trim() ?? ''
 
   // 我的消息靠右、AI 靠左（现在是竖向排列，靠的是对齐方式）
   const userRow = document.querySelector('.ag .stream .row.user')
@@ -713,10 +722,11 @@ const sess = await evaluate(`(async () => {
     savedCount: (saved.sessions || []).length,
     savedActive: saved.active,
     savedMsgs: (saved.sessions || []).reduce((n, s) => n + (s.messages || []).length, 0),
+    rowAfterAsk, menuAfterAsk: !!document.querySelector('.ag .ss-menu'),
   }
 })()`)
 ok(
-  '15.会话管理：底部下拉里新建 / 自动起名 / 左右分明 / 落盘',
+  '15.会话管理：顶部会话行里新建 / 自动起名 / 左右分明 / 落盘',
   sess.menuIsDropdown && sess.after === sess.before + 1 && sess.activeFirst &&
     sess.titleAfterNew.includes('新对话') && sess.emptyRows === 0 &&
     sess.titleAfterAsk.includes('这是一句用来当标题的提问') &&
