@@ -318,7 +318,8 @@ const a2 = await evaluate(cmDoc())
 await evaluate(open('空的'))
 await sleep(1000)
 const emptyBefore = await evaluate(cmDoc())
-await evaluate("[...document.querySelectorAll('.ea-btn')][0]?.click()")
+// 2.2：导入从中间栏的头部 / 空态撤走，跟「新建」并排住进编辑区顶行；按 title 认，别按下标
+await evaluate("document.querySelector('.ea-btn[title=\"导入已有笔记\"]')?.click()")
 await sleep(1400)
 const afterImport = await evaluate(`(() => ({
   doc: ${cmDoc()},
@@ -439,7 +440,9 @@ const ai = await evaluate(`(async () => {
   const wait = (ms) => new Promise(r => setTimeout(r, ms))
   const el = document.querySelector('.col[data-view="ai"] .ag')
   const q = (s) => el?.querySelector(s) ?? null
-  const order = [...(el?.children ?? [])].map(c => c.className)
+  // 2.2：设定区合成一块面板（.ag-head），三行分别还是卡 / 会话 / 上下文
+  const head = q('.ag-head')
+  const rows = [...(head?.children ?? [])].map(c => c.className)
   const sess = q('.ag-sess')
   const acts = [...(sess?.querySelectorAll('.ag-mini') ?? [])].map(b => b.getAttribute('title'))
   // 开关默认打开＝选中笔记：右边跟的是笔记选择
@@ -464,8 +467,8 @@ const ai = await evaluate(`(async () => {
   plus?.click()
   await wait(400)
   return {
-    firstChild: order[0],
-    secondChild: order[1],
+    headOk: !!head,
+    rows,
     sessName: q('.ag-sess-name')?.textContent?.trim() ?? '',
     acts,
     onState, offState,
@@ -476,7 +479,8 @@ const ai = await evaluate(`(async () => {
 })()`)
 ok(
   '9.AI 面板：会话行在卡片下面（新建 / 删除都在这一行），开关打开＝选中笔记',
-  ai.secondChild?.includes('ag-sess') && ai.acts.includes('新建会话') && ai.trashTitle &&
+  ai.headOk && ai.rows[0]?.includes('ag-row-top') && ai.rows[1]?.includes('ag-sess') &&
+    ai.rows[2]?.includes('ag-note') && ai.acts.includes('新建会话') && ai.trashTitle &&
     ai.onState.on === true && ai.onState.pick && !ai.onState.free &&
     ai.offState.on === false && !ai.offState.pick && ai.offState.free === '自由对话' &&
     !ai.foot,

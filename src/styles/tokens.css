@@ -38,6 +38,9 @@
   --n-info-soft: #e4eef5;
   --n-ok: #3f7d52;
   --n-ok-soft: #e5f1e8;
+  /* 紫：留给「重要 / 疑问」这两类提示块，跟蓝绿红琥珀都拉开距离 */
+  --n-violet: #6a5a9c;
+  --n-violet-soft: #eeebf7;
 
   /* 编辑器专用 */
   /* 选中色。
@@ -171,6 +174,8 @@
   --n-info-soft: #22313c;
   --n-ok: #7fc196;
   --n-ok-soft: #22332a;
+  --n-violet: #a99adf;
+  --n-violet-soft: #2a2740;
 
   --n-selection: color-mix(in oklab, var(--n-accent) 52%, var(--n-bg));
   --n-selection-fg: #f4f7f3;

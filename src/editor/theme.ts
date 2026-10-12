@@ -366,15 +366,29 @@ export const notaTheme = EditorView.theme({
   /* ── 代码块：整块一层薄底，不加边框 ──
      参考项目就是这么处理的：代码块靠底色与等宽字体区分，不画框。
      画框会和文档里大量的引用块、Callout、表格抢视觉重量。
-     .cm-md-codeblock 由 code-languages.ts 给块内每一行打上。 */
+     .cm-md-codeblock 由 code-languages.ts 给块内每一行打上。
+
+     底色为什么走 ::before 而不是直接写 background：
+     .cm-line 的 background 覆盖的是 padding box（左右各 18px 内边距），
+     而 CodeMirror 的选区层按**文本内容盒**画矩形，两者正好差 18px。
+     于是选中代码块时，底色会在选区两侧各露出一条细边，看起来就是
+     「选中不满整行、有一点缝」。::before 自己按内容盒的宽度画、
+     并且压到选区层下面（z-index: -1，最近的层叠上下文是 .cm-scroller），
+     两者边界就完全重合了。 */
   ".cm-md-codeblock": {
-    backgroundColor: "color-mix(in oklab, var(--n-surface) 70%, transparent)",
+    position: "relative",
     fontFamily: "var(--n-font-mono)",
     fontSize: "0.92em",
     lineHeight: "1.6",
-    /* 负向外扩，让底色盖住 .cm-line 的左右内边距，代码块才不会比正文窄一圈 */
-    marginInline: "-6px",
-    paddingInline: "6px",
+  },
+  ".cm-md-codeblock::before": {
+    content: '""',
+    position: "absolute",
+    /* 左右各让出 .cm-line 的内边距，和文本列、选区矩形对齐 */
+    inset: "0 18px",
+    zIndex: "-1",
+    backgroundColor: "color-mix(in oklab, var(--n-surface) 70%, transparent)",
+    pointerEvents: "none",
   },
   /* 首末行补一点纵向留白，整块看起来才是个独立的段落 */
   ".cm-md-codeblock-open": { paddingTop: "7px" },

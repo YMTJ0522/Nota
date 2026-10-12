@@ -168,12 +168,15 @@
 
 /* ── 富块：Callout / 折叠 / 分栏 / Mermaid ──
    这些结构由 preview-rich.ts 在 marked 产出之后补出来。 */
+/* 每个类型只改一个 --c（见下面 data-type 那一段），
+   左边线、底色、头部、图标全由它派生 —— 以后换色只动一行。 */
 .md-body .pv-callout {
+  --c: var(--n-accent);
   margin: 1em 0;
-  border: 1px solid var(--n-block-line);
-  border-left: 3px solid var(--n-accent);
+  border: 1px solid color-mix(in oklab, var(--c) 22%, var(--n-block-line));
+  border-left: 3px solid var(--c);
   border-radius: var(--n-r-md);
-  background: var(--n-block-bg);
+  background: color-mix(in oklab, var(--c) 7%, var(--n-bg));
   overflow: hidden;
 }
 .md-body .pv-callout-head {
@@ -181,12 +184,27 @@
   align-items: center;
   gap: 7px;
   padding: 7px 12px;
-  background: var(--n-block-head);
+  background: color-mix(in oklab, var(--c) 12%, var(--n-bg));
   font-size: 0.86em;
   font-weight: 600;
 }
+.md-body .pv-callout-title {
+  color: color-mix(in oklab, var(--c) 65%, var(--n-fg));
+}
+/* 图标装进一颗淡色圆片：比裸着一个字符更像「一块牌子」，
+   颜色又是纯 --c，所以类型之间一眼能分开。 */
 .md-body .pv-callout-icon {
-  color: var(--n-accent);
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 17px;
+  height: 17px;
+  border-radius: 50%;
+  background: color-mix(in oklab, var(--c) 18%, transparent);
+  color: var(--c);
+  font-size: 10px;
+  line-height: 1;
 }
 .md-body .pv-callout-body {
   padding: 4px 12px;
@@ -204,45 +222,31 @@
   font-weight: 600;
   color: var(--n-fg-dim);
 }
+/* ── 按类型定色 ──
+   蓝＝说明类，绿＝正向类，琥珀＝需要留意，紫＝重要/疑问，红＝危险，灰＝引用。
+   五种颜色在浅色与深色下都各自取过对比，不是同一组值硬套两套主题。 */
 .md-body .pv-callout[data-type='note'],
 .md-body .pv-callout[data-type='info'] {
-  border-left-color: var(--n-info);
-  background: var(--n-info-soft);
-}
-.md-body .pv-callout[data-type='note'] .pv-callout-icon,
-.md-body .pv-callout[data-type='info'] .pv-callout-icon {
-  color: var(--n-info);
+  --c: var(--n-info);
 }
 .md-body .pv-callout[data-type='tip'],
 .md-body .pv-callout[data-type='success'],
 .md-body .pv-callout[data-type='example'] {
-  border-left-color: var(--n-ok);
-  background: var(--n-ok-soft);
-}
-.md-body .pv-callout[data-type='tip'] .pv-callout-icon,
-.md-body .pv-callout[data-type='success'] .pv-callout-icon,
-.md-body .pv-callout[data-type='example'] .pv-callout-icon {
-  color: var(--n-ok);
+  --c: var(--n-ok);
 }
 .md-body .pv-callout[data-type='warning'],
-.md-body .pv-callout[data-type='caution'],
+.md-body .pv-callout[data-type='caution'] {
+  --c: var(--n-warn);
+}
 .md-body .pv-callout[data-type='important'],
 .md-body .pv-callout[data-type='question'] {
-  border-left-color: var(--n-warn);
-  background: var(--n-warn-soft);
-}
-.md-body .pv-callout[data-type='warning'] .pv-callout-icon,
-.md-body .pv-callout[data-type='caution'] .pv-callout-icon,
-.md-body .pv-callout[data-type='important'] .pv-callout-icon,
-.md-body .pv-callout[data-type='question'] .pv-callout-icon {
-  color: var(--n-warn);
+  --c: var(--n-violet);
 }
 .md-body .pv-callout[data-type='danger'] {
-  border-left-color: var(--n-danger);
-  background: var(--n-danger-soft);
+  --c: var(--n-danger);
 }
-.md-body .pv-callout[data-type='danger'] .pv-callout-icon {
-  color: var(--n-danger);
+.md-body .pv-callout[data-type='quote'] {
+  --c: var(--n-fg-dim);
 }
 
 .md-body .pv-details {

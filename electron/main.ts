@@ -112,8 +112,51 @@ interface AiRequest {
 }
 type ChatMessage = { role: string; content: string }
 
-function aiEndpoint(baseUrl: string) {
-  return baseUrl.trim().replace(/\/+$/, '') + '/chat/completions'
+/**
+ * 归一化接口地址。
+ *
+ * 用户从服务商文档里粘过来的东西五花八门：末尾多个斜杠、把
+ * `/chat/completions` 也一起复制进来。这里统一削掉，只留 base。
+ * （设置页的说明写着「末尾不要带 /chat/completions」，但真粘了
+ * 也该能用，不然「测试连接」会一直失败而看不出为什么。）
+ */
+function aiBase(baseUrl: string) {
+  return baseUrl
+    .trim()
+    .replace(/\/+$/, '')
+    .replace(/\/chat\/completions$/i, '')
+    .replace(/\/+$/, '')
+}
+
+/**
+ * 本地模型的地址候选。
+ *
+ * Ollama 默认只监听 127.0.0.1，而 Windows 上 `localhost` 会先解析到
+ * IPv6 的 ::1 —— 于是同一个地址「有时候连得上、有时候连不上」。
+ * 预设里已经写死 127.0.0.1，但用户手改回 localhost 时也要能兜住：
+ * 两个写法互为备选，逐个试。
+ */
+function hostCandidates(base: string): string[] {
+  const out = [base]
+  try {
+    const u = new URL(base)
+    const alt = u.hostname === 'localhost' ? '127.0.0.1' : u.hostname === '127.0.0.1' ? 'localhost' : ''
+    if (alt) {
+      const v = new URL(base)
+      v.hostname = alt
+      out.push(v.toString().replace(/\/+$/, ''))
+    }
+  } catch {
+    /* 地址还没写全，交给 fetch 去报错 */
+  }
+  return out
+}
+
+/** /models 的候选路径：有的服务（Ollama）只在 /v1 下提供 OpenAI 兼容接口 */
+function modelsPaths(base: string): string[] {
+  const paths = [base + '/models']
+  if (!/\/v\d+$/i.test(base)) paths.push(base + '/v1/models')
+  return paths
 }
 
 function aiHeaders(apiKey: string): Record<string, string> {
@@ -125,13 +168,16 @@ function aiHeaders(apiKey: string): Record<string, string> {
 /** 本地模型可能几十秒才吐第一个字，超时给得宽一点 */
 const AI_TIMEOUT_MS = 120_000
 
-function aiError(e: unknown): string {
+/** 测试连接只拉一次列表，不该等两分钟 */
+const AI_TEST_TIMEOUT_MS = 15_000
+
+function aiError(e: unknown, timeoutMs = AI_TIMEOUT_MS): string {
   const err = e as { name?: string; message?: string }
-  if (err?.name === 'AbortError') return `请求超时（超过 ${AI_TIMEOUT_MS / 1000} 秒）`
+  if (err?.name === 'AbortError') return `请求超时（超过 ${Math.round(timeoutMs / 1000)} 秒）`
   const msg = err?.message ?? String(e)
   // 连接不上是最常见的情况，把最可能的病因直接说出来
-  if (/ECONNREFUSED|fetch failed|net::ERR_CONNECTION_REFUSED/i.test(msg)) {
-    return '连不上目标地址。确认服务已启动、地址和端口没写错。'
+  if (/ECONNREFUSED|fetch failed|net::ERR_CONNECTION_REFUSED|ERR_NAME_NOT_RESOLVED/i.test(msg)) {
+    return '连不上目标地址。确认服务已启动、地址和端口没写错（本地模型用 127.0.0.1 更稳）。'
   }
   return msg
 }
@@ -167,17 +213,32 @@ ipcMain.handle(
       const body: ChatMessage[] = cfg.system.trim()
         ? [{ role: 'system', content: cfg.system.trim() }, ...messages]
         : messages
-      const res = await net.fetch(aiEndpoint(cfg.baseUrl), {
-        method: 'POST',
-        headers: aiHeaders(cfg.apiKey),
-        body: JSON.stringify({
-          model: cfg.model,
-          messages: body,
-          temperature: cfg.temperature,
-          stream: true,
-        }),
-        signal: controller.signal,
+      const payload = JSON.stringify({
+        model: cfg.model,
+        messages: body,
+        temperature: cfg.temperature,
+        stream: true,
       })
+      /* 同一份请求按候选地址依次发：localhost / 127.0.0.1 哪一个通就用哪个。
+         只对「连不上」重试——服务器已经回话了（哪怕回的是 4xx）就不再换地址，
+         否则同一次提问会被送两遍。 */
+      const urls = hostCandidates(aiBase(cfg.baseUrl)).map((b) => b + '/chat/completions')
+      let res: Response | null = null
+      let lastErr: unknown = null
+      for (const url of urls) {
+        try {
+          res = await net.fetch(url, {
+            method: 'POST',
+            headers: aiHeaders(cfg.apiKey),
+            body: payload,
+            signal: controller.signal,
+          })
+          break
+        } catch (e) {
+          lastErr = e
+        }
+      }
+      if (!res) throw lastErr ?? new Error('fetch failed')
       if (!res.ok) {
         const detail = await res.text().catch(() => '')
         return { ok: false, error: `HTTP ${res.status} ${detail.slice(0, 200)}` }
@@ -253,34 +314,60 @@ ipcMain.handle(
   },
 )
 
-/** 测试连接：拉一次 /models，顺带把可用模型列出来方便直接挑 */
+/**
+ * 测试连接：拉一次 /models，顺带把可用模型列出来方便直接挑。
+ *
+ * 不能只试一个地址就下结论 —— 用户报的「有时候测不成功」就是这个：
+ * 预设/手写地址、带不带 /v1、localhost 与 127.0.0.1，任何一种组合都可能
+ * 只差一点点。这里把候选按「最可能对」的顺序逐个试，任何一个成功就算过，
+ * 全失败才报最后一个错误（并把试过的地址一并说出来，好排查）。
+ */
 ipcMain.handle(
   'ai:test',
   async (
     _e,
     cfg: AiRequest,
   ): Promise<{ ok: boolean; models?: string[]; error?: string }> => {
-    const controller = new AbortController()
-    const timer = setTimeout(() => controller.abort(), 15_000)
-    try {
-      const base = cfg.baseUrl.trim().replace(/\/+$/, '')
-      const res = await net.fetch(base + '/models', {
-        method: 'GET',
-        headers: aiHeaders(cfg.apiKey),
-        signal: controller.signal,
-      })
-      if (!res.ok) {
-        const detail = await res.text().catch(() => '')
-        return { ok: false, error: `HTTP ${res.status} ${detail.slice(0, 160)}` }
+    const base = aiBase(cfg.baseUrl)
+    if (!base) return { ok: false, error: '请先填接口地址' }
+
+    const targets: string[] = []
+    for (const host of hostCandidates(base)) {
+      for (const p of modelsPaths(host)) {
+        if (!targets.includes(p)) targets.push(p)
       }
-      const data = (await res.json()) as { data?: { id?: string }[] }
-      const models = (data?.data ?? []).map((m) => m.id ?? '').filter(Boolean)
-      return { ok: true, models }
-    } catch (e) {
-      return { ok: false, error: aiError(e) }
-    } finally {
-      clearTimeout(timer)
     }
+
+    let lastError = ''
+    for (const url of targets) {
+      const controller = new AbortController()
+      const timer = setTimeout(() => controller.abort(), AI_TEST_TIMEOUT_MS)
+      try {
+        const res = await net.fetch(url, {
+          method: 'GET',
+          headers: aiHeaders(cfg.apiKey),
+          signal: controller.signal,
+        })
+        if (!res.ok) {
+          const detail = await res.text().catch(() => '')
+          // 404 通常只是这个路径不对，继续试下一个候选
+          lastError = `HTTP ${res.status} ${detail.slice(0, 160)}`
+          continue
+        }
+        const data = (await res.json()) as { data?: { id?: string }[]; models?: { name?: string }[] }
+        const models = [
+          ...(data?.data ?? []).map((m) => m.id ?? ''),
+          // 有的服务回的是 models: [{name}]（Ollama 的原生 /api/tags 就是这样）
+          ...(data?.models ?? []).map((m) => m.name ?? ''),
+        ].filter(Boolean)
+        return { ok: true, models: [...new Set(models)] }
+      } catch (e) {
+        lastError = aiError(e, AI_TEST_TIMEOUT_MS)
+      } finally {
+        clearTimeout(timer)
+      }
+    }
+    return { ok: false, error: `${lastError || '连接失败'}（试过：${targets.join('、')}）` }
   },
 )
 
@@ -556,14 +643,18 @@ ipcMain.handle('note:delete', async (_e, file: string) => {
     await shell.trashItem(file)
     return true
   }
+  /* 目录也走同一条路：侧栏的文件夹现在能右键删除，删掉的是一整个目录，
+     里面可能有几十篇笔记，所以同样进应用内回收站而不是直接抹掉。
+     存的时候按类型换后缀（.md / .dir），恢复时才知道该按哪种还原。 */
+  const isDir = await fs.stat(file).then((s) => s.isDirectory(), () => false)
   const rel = path.relative(root, file).replace(/\\/g, '/')
   const key = trashKey(rel)
   const dir = trashDirOf(root)
   await fs.mkdir(dir, { recursive: true })
-  await fs.rename(file, path.join(dir, `${key}.md`))
+  await fs.rename(file, path.join(dir, `${key}.${isDir ? 'dir' : 'md'}`))
   await fs.writeFile(
     path.join(dir, `${key}.json`),
-    JSON.stringify({ rel, name: path.basename(file), deletedAt: Date.now() }),
+    JSON.stringify({ rel, name: path.basename(file), deletedAt: Date.now(), isDir }),
     'utf8',
   )
   return true
@@ -576,6 +667,13 @@ interface TrashItem {
   name: string
   deletedAt: number
   size: number
+  /** 这一条是文件夹（里面可能还有笔记） */
+  isDir?: boolean
+}
+
+/** 回收站里这一条实际存在哪个文件名下 */
+function trashStoreName(key: string, isDir?: boolean) {
+  return `${key}.${isDir ? 'dir' : 'md'}`
 }
 
 ipcMain.handle('trash:list', async (_e, root: string): Promise<TrashItem[]> => {
@@ -592,11 +690,18 @@ ipcMain.handle('trash:list', async (_e, root: string): Promise<TrashItem[]> => {
     const key = f.slice(0, -5)
     try {
       const meta = JSON.parse(await fs.readFile(path.join(dir, f), 'utf8'))
-      const size = await fs.stat(path.join(dir, `${key}.md`)).then(
-        (s) => s.size,
+      const size = await fs.stat(path.join(dir, trashStoreName(key, meta.isDir))).then(
+        (s) => (s.isDirectory() ? 0 : s.size),
         () => 0,
       )
-      out.push({ key, rel: meta.rel, name: meta.name, deletedAt: meta.deletedAt, size })
+      out.push({
+        key,
+        rel: meta.rel,
+        name: meta.name,
+        deletedAt: meta.deletedAt,
+        size,
+        isDir: !!meta.isDir,
+      })
     } catch {
       /* 元信息坏了就跳过这一条，别让整页挂掉 */
     }
@@ -609,7 +714,7 @@ ipcMain.handle('trash:restore', async (_e, root: string, key: string) => {
   const meta = JSON.parse(await fs.readFile(path.join(dir, `${key}.json`), 'utf8'))
   const target = path.join(root, meta.rel)
   await fs.mkdir(path.dirname(target), { recursive: true })
-  await fs.rename(path.join(dir, `${key}.md`), target)
+  await fs.rename(path.join(dir, trashStoreName(key, meta.isDir)), target)
   await fs.rm(path.join(dir, `${key}.json`), { force: true })
   return target
 })
@@ -617,6 +722,7 @@ ipcMain.handle('trash:restore', async (_e, root: string, key: string) => {
 ipcMain.handle('trash:purge', async (_e, root: string, key: string) => {
   const dir = trashDirOf(root)
   await fs.rm(path.join(dir, `${key}.md`), { force: true })
+  await fs.rm(path.join(dir, `${key}.dir`), { recursive: true, force: true })
   await fs.rm(path.join(dir, `${key}.json`), { force: true })
   return true
 })
@@ -670,10 +776,88 @@ ipcMain.handle('attach:delete', async (_e, root: string, rel: string) => {
   return true
 })
 
+/**
+ * 往附件库里导入任意文件。
+ *
+ * 和 image:pick 的区别：那个是「挑一张插进光标处」，这里是「往库里收一批」，
+ * 所以允许多选、也不限图片视频 —— 压缩包、PDF、Word、音频、随便什么都能收，
+ * 挑的时候再决定插不插。附件库本来就该是工作区的素材抽屉，不是图片夹。
+ *
+ * 一律复制进来而不是记原路径：笔记引用的是相对路径，素材跟着工作区走，
+ * 换机器、打包备份都不会变成一堆裂链。
+ */
+const IMPORT_FILTERS = [
+  {
+    name: '图片与视频',
+    extensions: [
+      'png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'bmp', 'avif',
+      'mp4', 'webm', 'mov', 'm4v', 'ogv', 'mkv', 'avi',
+    ],
+  },
+  { name: '压缩包', extensions: ['zip', 'rar', '7z', 'tar', 'gz', 'bz2', 'xz', 'tgz'] },
+  {
+    name: '文档',
+    extensions: ['pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx', 'txt', 'md', 'csv', 'json'],
+  },
+  { name: '音频', extensions: ['mp3', 'wav', 'flac', 'm4a', 'ogg', 'aac'] },
+  { name: '所有文件', extensions: ['*'] },
+]
+
+ipcMain.handle(
+  'attach:import',
+  async (
+    _e,
+    root: string,
+  ): Promise<{ rel: string; name: string; size: number; mtime: number; isVideo: boolean }[]> => {
+    if (!win || !root) return []
+    const result = await dialog.showOpenDialog(win, {
+      title: '导入附件到工作区',
+      properties: ['openFile', 'multiSelections'],
+      filters: IMPORT_FILTERS,
+    })
+    if (result.canceled || result.filePaths.length === 0) return []
+
+    const dir = path.join(root, ATTACH_DIR)
+    await fs.mkdir(dir, { recursive: true })
+    const out: { rel: string; name: string; size: number; mtime: number; isVideo: boolean }[] = []
+
+    for (const source of result.filePaths) {
+      try {
+        const ext = path.extname(source).toLowerCase()
+        const base = path.basename(source, path.extname(source)).replace(/[\\/:*?"<>|]/g, '-')
+        // 同名就往后编号，绝不覆盖已有的那一份
+        let fileName = `${base}${ext}`
+        let target = path.join(dir, fileName)
+        let i = 1
+        while (existsSync(target)) {
+          fileName = `${base} ${i}${ext}`
+          target = path.join(dir, fileName)
+          i++
+        }
+        await fs.copyFile(source, target)
+        const st = await fs.stat(target)
+        out.push({
+          rel: `${ATTACH_DIR}/${fileName}`.replace(/\\/g, '/'),
+          name: fileName,
+          size: st.size,
+          mtime: st.mtimeMs,
+          isVideo: /\.(mp4|webm|mov|m4v|ogv|mkv|avi)$/i.test(ext),
+        })
+      } catch {
+        /* 单个文件复制失败不影响其余的 */
+      }
+    }
+    return out
+  },
+)
+
 // 重命名
 ipcMain.handle('note:rename', async (_e, file: string, newName: string) => {
   const safe = newName.replace(/[\\/:*?"<>|]/g, '-').trim() || '未命名'
-  const target = path.join(path.dirname(file), `${safe}.md`)
+  /* 目录不能补 .md：侧栏文件夹也可以重命名了，给它加扩展名会变成
+     「设计.md」这种看起来像笔记、实际是文件夹的东西。 */
+  const isDir = await fs.stat(file).then((s) => s.isDirectory(), () => false)
+  const target = path.join(path.dirname(file), isDir ? safe : `${safe}.md`)
   if (target === file) return file
   await fs.rename(file, target)
   return target

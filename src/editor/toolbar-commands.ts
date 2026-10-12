@@ -23,6 +23,8 @@ import {
 } from "./markdown-commands";
 import {
   ADVANCED_CODE_INFO,
+  CALLOUT_TYPES,
+  CHART_TEMPLATES,
   DETAILS_CLOSE,
   DETAILS_OPEN,
   HORIZONTAL_RULE_CURSOR_OFFSET,
@@ -119,8 +121,34 @@ export function toolbarFootnote(view: EditorView) {
   dispatchResult(view, insertFootnoteCommand(doc(view), selection(view)));
 }
 
-export function toolbarCallout(view: EditorView) {
-  dispatchResult(view, insertCalloutCommand(doc(view), selection(view)));
+/** 下拉里选了哪种提示块就插哪种；没传就是默认的 NOTE */
+export function toolbarCallout(view: EditorView, type?: string) {
+  dispatchResult(view, insertCalloutCommand(doc(view), selection(view), type ?? "NOTE"));
+}
+
+/** 工具栏要画那排色点，得知道有哪些类型（顺序与配色由 snippets 定） */
+export function calloutTypes() {
+  return CALLOUT_TYPES;
+}
+
+/** 插一张图表的模板。传 id 找模板，找不到就退回空壳，绝不插出坏语法。 */
+export function toolbarChart(view: EditorView, id: string) {
+  const tpl = CHART_TEMPLATES.find((t) => t.label === id);
+  dispatchResult(
+    view,
+    insertWrappedBlockCommand(
+      doc(view),
+      selection(view),
+      "```mermaid",
+      "```",
+      tpl ? tpl.code : MERMAID_FALLBACK,
+    ),
+  );
+}
+
+/** 图表下拉要列出的模板 */
+export function chartTemplates() {
+  return CHART_TEMPLATES;
 }
 
 export function toolbarDetails(view: EditorView) {

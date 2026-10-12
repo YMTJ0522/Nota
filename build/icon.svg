@@ -1,45 +1,47 @@
 <svg width="512" height="512" viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg">
   <defs>
-    <!-- 底板：墨绿微渐变，左上略亮 -->
-    <linearGradient id="bg" x1="0" y1="0" x2="0.35" y2="1">
-      <stop offset="0" stop-color="#4a7d64"/>
-      <stop offset="1" stop-color="#2f5240"/>
+    <!-- 底板：青瓷绿，左上受光、右下压深。
+         斜向渐变比竖直渐变更像「一块有厚度的材料」，不会看成纯色方块。 -->
+    <linearGradient id="bg" x1="0.05" y1="0" x2="0.95" y2="1">
+      <stop offset="0" stop-color="#4f8a6d"/>
+      <stop offset="0.55" stop-color="#3a6b53"/>
+      <stop offset="1" stop-color="#274b39"/>
     </linearGradient>
 
-    <!-- 纸面：极淡暖白 -->
-    <linearGradient id="paper" x1="0" y1="0" x2="0.2" y2="1">
-      <stop offset="0" stop-color="#fffefc"/>
-      <stop offset="1" stop-color="#f2efe9"/>
+    <!-- 纸面：暖白，顶部亮、底部略沉 -->
+    <linearGradient id="paper" x1="0" y1="0" x2="0.25" y2="1">
+      <stop offset="0" stop-color="#fffefb"/>
+      <stop offset="1" stop-color="#ece8e0"/>
     </linearGradient>
 
-    <!-- 折角内侧 -->
+    <!-- 折过来的那一角是纸的背面，要比正面暗一档 -->
     <linearGradient id="fold" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0" stop-color="#e2ebe4"/>
-      <stop offset="1" stop-color="#c6d4ca"/>
+      <stop offset="0" stop-color="#dcd6cb"/>
+      <stop offset="1" stop-color="#c0b9ac"/>
     </linearGradient>
 
-    <filter id="paperShadow" x="-30%" y="-20%" width="160%" height="150%">
-      <feDropShadow dx="0" dy="8" stdDeviation="12" flood-color="#1b3326" flood-opacity="0.32"/>
+    <filter id="pageShadow" x="-30%" y="-20%" width="160%" height="150%">
+      <feDropShadow dx="0" dy="10" stdDeviation="14" flood-color="#16301f" flood-opacity="0.34"/>
     </filter>
   </defs>
 
   <!-- 圆角底板 -->
-  <rect x="8" y="8" width="496" height="496" rx="116" fill="url(#bg)"/>
+  <rect x="0" y="0" width="512" height="512" rx="118" fill="url(#bg)"/>
 
-  <!-- 纸面：尽量放大，只留约 15% 的底板呼吸位 -->
-  <g filter="url(#paperShadow)">
-    <path d="M136 64h150l100 100v244a36 36 0 0 1-36 36H136a36 36 0 0 1-36-36V100a36 36 0 0 1 36-36z"
+  <!-- 纸面：右上角折下一角。
+       折角是这块图标唯一「不像别人」的地方 —— 去掉它，
+       剩下的就只是又一个通用的文档方块。
+       折角开到 76px（约纸宽的三成），16px 下才看得出是个角而不是毛刺。 -->
+  <g filter="url(#pageShadow)">
+    <path d="M160 96 H308 L384 172 V384 A32 32 0 0 1 352 416 H160 A32 32 0 0 1 128 384 V128 A32 32 0 0 1 160 96 Z"
           fill="url(#paper)"/>
   </g>
+  <path d="M308 96 L384 172 L308 172 Z" fill="url(#fold)"/>
 
-  <!-- 折角 -->
-  <path d="M286 64l100 100h-72a28 28 0 0 1-28-28z" fill="url(#fold)"/>
-
-  <!-- 文字行：只留两条，够粗、够长，16px 下仍能看出是"文字" -->
-  <rect x="150" y="224" width="216" height="30" rx="15" fill="#8fae9d"/>
-  <rect x="150" y="288" width="146" height="30" rx="15" fill="#c3d3c9"/>
-
-  <!-- 强调色：左下角一枚小方块，替代原先外凸的书签。
-       完全落在纸面内，小尺寸下只是一个点，不会变成毛刺。 -->
-  <rect x="150" y="360" width="54" height="14" rx="7" fill="#d98a4e"/>
+  <!-- 文字行：三行，一行比一行短，最后一行换成强调色。
+       递减的长度让纸面有方向感（从上往下读）；
+       琥珀色那一行是「刚写下的那一笔」，也是整块唯一的暖色。 -->
+  <rect x="168" y="236" width="176" height="28" rx="14" fill="#8fae9d"/>
+  <rect x="168" y="300" width="132" height="28" rx="14" fill="#c7d5cb"/>
+  <rect x="168" y="364" width="76" height="28" rx="14" fill="#d98a4e"/>
 </svg>

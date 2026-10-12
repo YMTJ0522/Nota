@@ -292,7 +292,8 @@ const chat = await evaluate(`(async () => {
   return {
     exists: !!el,
     inColumn: el?.closest('.col')?.getAttribute('data-view') === 'ai',
-    card: !!el?.querySelector('.ag-card'),
+    // 2.2：卡片 + 会话行 + 上下文行合成一块 .ag-head（三行共用一条边框，不再是三只各自带框的盒子）
+    card: !!el?.querySelector('.ag-head .ag-row-top'),
     agentName: el?.querySelector('.ag-name')?.textContent?.trim() ?? '',
     cardSub: el?.querySelector('.ag-sub')?.textContent?.trim() ?? '',
     task: !!el?.querySelector('.ag-task'),
@@ -309,7 +310,7 @@ const chat = await evaluate(`(async () => {
   }
 })()`)
 ok(
-  '3.AI 编写在资料栏里（agent 卡片 + 上下文开关 + 输入区），正文仍可见',
+  '3.AI 编写在资料栏里（顶部设定面板 + 会话行 + 上下文开关 + 输入区），正文仍可见',
   chat.exists && chat.inColumn && chat.card && chat.agentName === 'AI 助手' &&
     chat.cardSub.includes('笔记') &&
     // 2.0.0：那一道「指令行」改成了「会话行」（会话名 + 新建 + 删除都在这行上）

@@ -281,7 +281,11 @@ ok(
    右侧不再有第三条分隔线，所以这里是两条，并且反过来确认那把手的消失。 */
 const VAR = { sidebar: '--side-w', column: '--col-w', outline: '--outline-w' }
 const HOST = { sidebar: '.panel', column: '.col', outline: '.outline' }
-const DEFAULT_W = { sidebar: 232, column: 296, outline: 176 }
+const DEFAULT_W = { sidebar: 232, column: null, outline: 176 }
+// 2.2：中间那一列双击复位是「回到自适应」而不是回到某个写死的宽度 ——
+// 期望值按当前窗口算：窗口的 22%，最多 340，同时至少给正文留 520
+const winW = await evaluate('window.innerWidth')
+const AUTO_COL = Math.max(220, Math.min(560, Math.round(Math.min(winW * 0.22, 340, winW - 520))))
 const readW = (key) => `(() => {
   const css = (n) => getComputedStyle(document.querySelector('.body')).getPropertyValue(n).trim()
   return {
@@ -332,7 +336,9 @@ const dragOk = (d) => {
   return Math.abs(grow - want) <= 2 &&
     parseInt(d.after.cssVar) === parseInt(d.after.stored) &&
     parseInt(d.clamped.cssVar) === d.clampTo &&
-    parseInt(d.reset.cssVar) === DEFAULT_W[d.key]
+    parseInt(d.reset.cssVar) === (d.key === 'column' ? AUTO_COL : DEFAULT_W[d.key]) &&
+    // 复位后落盘的宽度跟界面上一致（下次手拖从这个宽度起步）
+    parseInt(d.reset.stored) === parseInt(d.reset.cssVar)
 }
 Object.entries(drags).forEach(([k, d]) => { d.key = k })
 ok(

@@ -33,7 +33,9 @@ interface NoteApi {
   historyRead(snapshot: string): Promise<string | null>
   trashList(
     root: string,
-  ): Promise<{ key: string; rel: string; name: string; deletedAt: number; size: number }[]>
+  ): Promise<
+    { key: string; rel: string; name: string; deletedAt: number; size: number; isDir?: boolean }[]
+  >
   trashRestore(root: string, key: string): Promise<string>
   trashPurge(root: string, key: string): Promise<boolean>
   trashEmpty(root: string): Promise<boolean>
@@ -41,6 +43,10 @@ interface NoteApi {
     root: string,
   ): Promise<{ rel: string; name: string; size: number; mtime: number; isVideo: boolean }[]>
   attachDelete(root: string, rel: string): Promise<boolean>
+  /** 批量导入任意文件（图片/视频/压缩包/文档…）到 attachments/ */
+  attachImport(
+    root: string,
+  ): Promise<{ rel: string; name: string; size: number; mtime: number; isVideo: boolean }[]>
   aiChat(
     cfg: { baseUrl: string; model: string; apiKey: string; system: string; temperature: number },
     messages: { role: string; content: string }[],

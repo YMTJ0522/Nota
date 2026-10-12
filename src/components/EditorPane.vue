@@ -11,7 +11,8 @@ import {
   Eye,
   Check,
   Loader2,
-  PanelLeft,
+  Moon,
+  Sun,
   ChevronDown,
   ChevronUp,
   Search,
@@ -934,6 +935,11 @@ watch(
   },
 )
 
+/** 深浅色一键切换：窗口按钮旁边那一枚，不打开设置也能换 */
+function toggleTheme() {
+  store.setTheme(state.theme === 'light' ? 'dark' : 'light')
+}
+
 /** 工具栏调用入口：把 EditorView 暴露给子组件 */
 defineExpose({ getView: () => view })
 </script>
@@ -1009,16 +1015,17 @@ defineExpose({ getView: () => view })
           </button>
         </div>
 
-        <!-- 中间那一列的开关。顶部按区域划分之后，那条全局标题栏没了，
-             这两枚开关也就各回各家：侧栏那枚在侧栏顶行，这枚在这里。 -->
+        <!-- 深浅色切换：紧贴窗口按钮，是「窗口级」的开关，
+             跟视图切换那种「这篇文档怎么看」不是一类东西。
+             1.9 之前它在旧的全局标题栏里，2.0 重划顶部时弄丢了，这里补回来。 -->
         <button
           class="ph-icon"
-          data-role="column-toggle"
-          :class="{ on: state.column }"
-          :title="state.column ? '收起资料栏' : '展开资料栏'"
-          @click="store.toggleColumn()"
+          data-role="theme-toggle"
+          :title="state.theme === 'light' ? '切到深色' : '切到浅色'"
+          @click="toggleTheme"
         >
-          <PanelLeft :size="14" :stroke-width="1.9" />
+          <Moon v-if="state.theme === 'light'" :size="14" :stroke-width="1.9" />
+          <Sun v-else :size="14" :stroke-width="1.9" />
         </button>
       </div>
 
@@ -1397,6 +1404,7 @@ defineExpose({ getView: () => view })
   flex: none;
 }
 .fb-btn {
+  padding: 0;
   display: inline-flex;
   align-items: center;
   justify-content: center;

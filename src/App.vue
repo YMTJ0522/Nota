@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, onBeforeUnmount, watch } from 'vue'
+import { onMounted, onBeforeUnmount, ref, computed, watch } from 'vue'
 import { store } from '@/store'
 import SidePanel from '@/components/SidePanel.vue'
 import SideColumn from '@/components/SideColumn.vue'
@@ -21,11 +21,20 @@ function onLibrary(e: Event) {
   store.setColumnView(which === 'trash' ? 'trash' : 'attach')
 }
 
-/** 各栏宽度由 SplitHandle 拖着改，这里只负责把它们写到 CSS 变量上 */
+/** 窗口宽度：中间那一列的「自适应」要跟着它走，所以得是个响应式的值。
+    用 ResizeObserver 而不是 resize 事件 —— 窗口最大化、系统缩放、
+    拖分隔线之外的各种尺寸变化都能收到。 */
+const winW = ref(window.innerWidth)
+let ro: ResizeObserver | null = null
+
+/** 各栏宽度由 SplitHandle 拖着改，这里只负责把它们写到 CSS 变量上。
+    中间那一列没被人拖过时走「自适应」：窗口宽它就宽，但始终给编辑区留够地方。 */
+const colW = computed(() => store.effectiveColumnWidth(winW.value))
+
 function widthVars() {
   return {
     '--side-w': `${state.sidebarWidth}px`,
-    '--col-w': `${state.columnWidth}px`,
+    '--col-w': `${colW.value}px`,
     '--outline-w': `${state.outlineWidth}px`,
   }
 }
@@ -64,11 +73,16 @@ onMounted(() => {
   store.initPrefs()
   window.addEventListener('keydown', onKey)
   window.addEventListener('nota:library', onLibrary)
+  ro = new ResizeObserver(() => {
+    winW.value = window.innerWidth
+  })
+  ro.observe(document.documentElement)
 })
 
 onBeforeUnmount(() => {
   window.removeEventListener('keydown', onKey)
   window.removeEventListener('nota:library', onLibrary)
+  ro?.disconnect()
 })
 </script>
 

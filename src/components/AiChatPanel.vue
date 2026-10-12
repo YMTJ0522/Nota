@@ -394,124 +394,133 @@ const thinkingLive = computed(
 
 <template>
   <div class="ag">
-    <!-- ① 这张卡片回答「它在为谁干活」：盯哪一篇、要不要带正文、可以关掉 -->
-    <div v-if="cardOpen" class="ag-card">
-      <span class="ag-avatar"><Bot :size="15" :stroke-width="1.9" /></span>
-      <span class="ag-id">
-        <span class="ag-name">AI 助手</span>
-        <span class="ag-sub">{{ cardSub }}</span>
-      </span>
-      <button class="ag-x" title="收起上方设定" @click="cardOpen = false">
-        <X :size="13" :stroke-width="2.2" />
-      </button>
-    </div>
-
-    <template v-else>
-      <button class="ag-stub" @click="cardOpen = true">
-        <Bot :size="12" :stroke-width="1.9" />
-        <span>AI 助手设定</span>
-        <ChevronRight :size="11" :stroke-width="2" />
-      </button>
-    </template>
-
-    <!-- ② 会话行：这一栏在跟谁对话 —— 左边选会话，右边新建 / 删掉当前这个。
-         参考图里这一格显示的就是「这次对话在聊什么」，因为会话名就是第一条指令。 -->
-    <div class="ag-sess">
-      <div class="ss-wrap">
-        <button
-          class="ag-sess-pick"
-          :class="{ on: sessMenu, dim: state.chat.length === 0 }"
-          :title="`会话：${activeSessionTitle}`"
-          @click="sessMenu = !sessMenu"
-        >
-          <MessageSquare :size="12" :stroke-width="1.9" />
-          <span class="ag-sess-name">{{ activeSessionTitle }}</span>
-          <ChevronDown :size="11" :stroke-width="2" />
+    <!-- ① 设定区。
+         以前这里是三只各自带边框的盒子（助手卡 / 会话行 / 上下文行），
+         并排一摞看起来像三个不相干的控件，边框还在同一个区域里画了三遍。
+         现在它们是**一块**面板里的三行，行与行之间只有一条发丝线：
+         回答的还是同样三件事 —— 谁在干活、这次在聊什么、拿哪一篇当素材。 -->
+    <div v-if="cardOpen" class="ag-head">
+      <div class="ag-row ag-row-top">
+        <span class="ag-avatar"><Bot :size="15" :stroke-width="1.9" /></span>
+        <span class="ag-id">
+          <span class="ag-name">AI 助手</span>
+          <span class="ag-sub">{{ cardSub }}</span>
+        </span>
+        <button class="ag-x" title="收起上方设定" @click="cardOpen = false">
+          <X :size="13" :stroke-width="2.2" />
         </button>
+      </div>
 
-        <div v-if="sessMenu" class="n-menu n-menu-inline ss-menu">
-          <!-- 列表开着的时候，开新会话这一步就在手边，不用先收起列表再去找那一枚 + -->
-          <div class="n-menu-head">
-            <span>会话</span>
-            <span class="n-menu-head-acts">
-              <button class="ag-mini" title="新建会话" @click="createSession">
-                <Plus :size="12" :stroke-width="2.2" />
-              </button>
-            </span>
+      <!-- ② 会话行：这一栏在跟谁对话 —— 左边选会话，右边新建 / 删掉当前这个。
+           参考图里这一格显示的就是「这次对话在聊什么」，因为会话名就是第一条指令。 -->
+      <div class="ag-row ag-sess">
+        <div class="ss-wrap">
+          <button
+            class="ag-sess-pick"
+            :class="{ on: sessMenu, dim: state.chat.length === 0 }"
+            :title="`会话：${activeSessionTitle}`"
+            @click="sessMenu = !sessMenu"
+          >
+            <MessageSquare :size="12" :stroke-width="1.9" />
+            <span class="ag-sess-name">{{ activeSessionTitle }}</span>
+            <ChevronDown :size="11" :stroke-width="2" />
+          </button>
+
+          <div v-if="sessMenu" class="n-menu n-menu-inline ss-menu">
+            <!-- 列表开着的时候，开新会话这一步就在手边，不用先收起列表再去找那一枚 + -->
+            <div class="n-menu-head">
+              <span>会话</span>
+              <span class="n-menu-head-acts">
+                <button class="ag-mini" title="新建会话" @click="createSession">
+                  <Plus :size="12" :stroke-width="2.2" />
+                </button>
+              </span>
+            </div>
+            <button
+              v-for="s in sessions"
+              :key="s.id"
+              class="n-menu-item"
+              :class="{ on: s.id === state.activeSessionId }"
+              @click="pickSession(s.id)"
+            >
+              <span class="n-menu-name">{{ s.title }}</span>
+              <span class="n-menu-tail">{{ when(s.updatedAt) }}</span>
+            </button>
           </div>
-          <button
-            v-for="s in sessions"
-            :key="s.id"
-            class="n-menu-item"
-            :class="{ on: s.id === state.activeSessionId }"
-            @click="pickSession(s.id)"
-          >
-            <span class="n-menu-name">{{ s.title }}</span>
-            <span class="n-menu-tail">{{ when(s.updatedAt) }}</span>
-          </button>
         </div>
+
+        <button class="ag-mini" title="新建会话" @click="createSession">
+          <Plus :size="12" :stroke-width="2.2" />
+        </button>
+        <button
+          class="ag-mini danger"
+          title="删除当前会话"
+          @click="store.deleteSession(state.activeSessionId)"
+        >
+          <Trash2 :size="12" :stroke-width="1.9" />
+        </button>
       </div>
 
-      <button class="ag-mini" title="新建会话" @click="createSession">
-        <Plus :size="12" :stroke-width="2.2" />
-      </button>
-      <button
-        class="ag-mini danger"
-        title="删除当前会话"
-        @click="store.deleteSession(state.activeSessionId)"
-      >
-        <Trash2 :size="12" :stroke-width="1.9" />
-      </button>
-    </div>
-
-    <!-- ③ 上下文：开关打开＝选中笔记（正文一起交给模型），关掉＝不选笔记、自由聊天 -->
-    <div class="ag-note">
-      <button
-        class="ag-switch"
-        :class="{ on: state.aiWithNote }"
-        role="switch"
-        :aria-checked="state.aiWithNote"
-        :title="state.aiWithNote ? '带笔记：这一轮会把笔记正文一起交给模型' : '自由对话：这一轮只带对话本身'"
-        @click="store.setAiWithNote(!state.aiWithNote)"
-      >
-        <span class="ag-knob" />
-      </button>
-
-      <!-- 关掉开关就没有「选中的笔记」可言，直接说清楚现在是在自由聊天 -->
-      <span v-if="!state.aiWithNote" class="ag-note-label">自由对话</span>
-
-      <!-- 选中笔记的时候才需要挑是哪一篇 -->
-      <div v-else class="np-wrap">
-        <button class="ag-pick" :class="{ on: noteMenu }" :title="`工作对象：${noteLabel}`" @click="noteMenu = !noteMenu">
-          <span class="ag-pick-name">{{ noteLabel }}</span>
-          <ChevronDown :size="11" :stroke-width="2" />
+      <!-- ③ 上下文：开关打开＝选中笔记（正文一起交给模型），关掉＝不选笔记、自由聊天 -->
+      <div class="ag-row ag-note">
+        <button
+          class="ag-switch"
+          :class="{ on: state.aiWithNote }"
+          role="switch"
+          :aria-checked="state.aiWithNote"
+          :title="state.aiWithNote ? '带笔记：这一轮会把笔记正文一起交给模型' : '自由对话：这一轮只带对话本身'"
+          @click="store.setAiWithNote(!state.aiWithNote)"
+        >
+          <span class="ag-knob" />
         </button>
 
-        <div v-if="noteMenu" class="n-menu n-menu-inline np-menu">
-          <div class="n-menu-head"><span>让 AI 处理哪一篇</span></div>
+        <!-- 关掉开关就没有「选中的笔记」可言，直接说清楚现在是在自由聊天 -->
+        <span v-if="!state.aiWithNote" class="ag-note-label">自由对话</span>
+
+        <!-- 选中笔记的时候才需要挑是哪一篇 -->
+        <div v-else class="np-wrap">
           <button
-            v-if="state.aiNote"
-            class="n-menu-item"
-            :class="{ on: !state.aiNote }"
-            @click="pickNote(null)"
+            class="ag-pick"
+            :class="{ on: noteMenu }"
+            :title="`工作对象：${noteLabel}`"
+            @click="noteMenu = !noteMenu"
           >
-            <span class="n-menu-name">跟随当前打开的笔记</span>
+            <span class="ag-pick-name">{{ noteLabel }}</span>
+            <ChevronDown :size="11" :stroke-width="2" />
           </button>
-          <button
-            v-for="f in noteOptions"
-            :key="f.path"
-            class="n-menu-item"
-            :class="{ on: (state.aiNote ?? state.activePath) === f.path }"
-            :title="f.path"
-            @click="pickNote(f.path)"
-          >
-            <span class="n-menu-name">{{ f.name.replace(/\.md$/i, '') }}</span>
-            <Check v-if="(state.aiNote ?? state.activePath) === f.path" :size="12" :stroke-width="2.2" />
-          </button>
-          <p v-if="noteOptions.length === 0" class="n-menu-hint">工作区里还没有笔记</p>
+
+          <div v-if="noteMenu" class="n-menu n-menu-inline np-menu">
+            <div class="n-menu-head"><span>让 AI 处理哪一篇</span></div>
+            <button
+              v-if="state.aiNote"
+              class="n-menu-item"
+              :class="{ on: !state.aiNote }"
+              @click="pickNote(null)"
+            >
+              <span class="n-menu-name">跟随当前打开的笔记</span>
+            </button>
+            <button
+              v-for="f in noteOptions"
+              :key="f.path"
+              class="n-menu-item"
+              :class="{ on: (state.aiNote ?? state.activePath) === f.path }"
+              :title="f.path"
+              @click="pickNote(f.path)"
+            >
+              <span class="n-menu-name">{{ f.name.replace(/\.md$/i, '') }}</span>
+              <Check v-if="(state.aiNote ?? state.activePath) === f.path" :size="12" :stroke-width="2.2" />
+            </button>
+            <p v-if="noteOptions.length === 0" class="n-menu-hint">工作区里还没有笔记</p>
+          </div>
         </div>
       </div>
     </div>
+
+    <button v-else class="ag-stub" @click="cardOpen = true">
+      <Bot :size="12" :stroke-width="1.9" />
+      <span>AI 助手设定</span>
+      <ChevronRight :size="11" :stroke-width="2" />
+    </button>
 
     <!-- ④ 消息流 -->
     <div ref="scroller" class="stream" @scroll.passive="onScroll">
@@ -686,20 +695,37 @@ const thinkingLive = computed(
   background: var(--n-bg);
 }
 
-/* ══ ① AI 助手卡片 ══ */
-.ag-card {
+/* ══ ① 设定区：一块面板，三行 ══
+   为什么不是三块各自带边框的盒子：三道边框意味着三个独立的「抽屉」，
+   而这三行说的是同一件事的不同侧面（谁、哪次对话、拿哪篇当素材）。
+   合到一块之后，横向的边线只画在最外圈，行与行之间只留一条发丝线。 */
+.ag-head {
   flex: none;
-  display: flex;
-  align-items: center;
-  gap: 9px;
   margin: 8px 8px 0;
-  padding: 9px 9px 9px 10px;
   border: 1px solid var(--n-line);
   border-radius: var(--n-r-lg);
   background: var(--n-surface);
+  overflow: hidden;
+}
+
+.ag-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+}
+
+.ag-row + .ag-row {
+  border-top: 1px solid color-mix(in oklab, var(--n-line) 55%, transparent);
+}
+
+.ag-row-top {
+  gap: 9px;
+  padding: 8px 8px 8px 10px;
 }
 
 .ag-avatar {
+  padding: 0;
   flex: none;
   width: 28px;
   height: 28px;
@@ -739,6 +765,7 @@ const thinkingLive = computed(
 }
 
 .ag-x {
+  padding: 0;
   flex: none;
   width: 22px;
   height: 22px;
@@ -763,16 +790,7 @@ const thinkingLive = computed(
    左边那一格是会话选择器（会话名就是第一条指令，所以看着像「这次在聊什么」），
    右边两枚：新建会话、删掉当前会话。 */
 .ag-sess {
-  flex: none;
-  display: flex;
-  align-items: center;
   gap: 2px;
-  margin: 6px 8px 0;
-  padding: 0 4px 0 4px;
-  height: 32px;
-  border: 1px solid var(--n-line);
-  border-radius: var(--n-r-lg);
-  background: var(--n-surface);
 }
 
 .ss-wrap {
@@ -821,11 +839,7 @@ const thinkingLive = computed(
 
 /* ══ ③ 上下文开关 + 笔记选择 ══ */
 .ag-note {
-  flex: none;
-  display: flex;
-  align-items: center;
   gap: 8px;
-  margin: 6px 8px 0;
 }
 
 .ag-note-label {
@@ -1223,6 +1237,7 @@ const thinkingLive = computed(
 }
 
 .act {
+  padding: 0;
   width: 24px;
   height: 24px;
   display: inline-flex;
@@ -1289,7 +1304,10 @@ const thinkingLive = computed(
    参考图就是这样 —— 模型不必另占一行，跟发送同在一行的两端更紧凑。 */
 .composer {
   flex: none;
-  margin: 8px 10px 10px;
+  /* 中间这一列默认是自适应的，窗口拉宽时输入框跟着变成一条长带子很难看，
+     所以给它一个舒服的最大宽度并居中 —— 内容居中、栏还是满的。 */
+  width: min(100% - 20px, 560px);
+  margin: 8px auto 10px;
   border: 1px solid var(--n-line);
   border-radius: var(--n-r-lg);
   background: var(--n-surface);
@@ -1329,6 +1347,7 @@ const thinkingLive = computed(
 }
 
 .send {
+  padding: 0;
   flex: none;
   width: 28px;
   height: 28px;
@@ -1384,6 +1403,7 @@ const thinkingLive = computed(
 }
 
 .ag-mini {
+  padding: 0;
   flex: none;
   width: 22px;
   height: 22px;
@@ -1414,11 +1434,14 @@ const thinkingLive = computed(
   opacity: 0.4;
 }
 
-/* 弹出的菜单：往上开，别被底边裁掉 */
-/* 模型菜单在输入区里（贴着底部），所以往上开，不然会被底边裁掉 */
-.m-menu {
-  bottom: calc(100% + 6px);
+/* 模型菜单在输入区里（贴着面板底边），所以往上开。
+   这里必须写全 .n-menu.m-menu —— menu.css 里那条
+   `.n-menu.n-menu-inline { top: calc(100% + 6px) }` 是两个类，
+   只用 `.m-menu` 一个类压不住它，结果 top 和 bottom 同时生效，
+   菜单被挤成 12px 高（就是「下拉不显示」的真身）。 */
+.n-menu.m-menu {
   top: auto;
+  bottom: calc(100% + 6px);
   left: 0;
   width: 236px;
   max-height: 320px;

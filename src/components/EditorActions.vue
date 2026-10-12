@@ -1,17 +1,23 @@
 <script setup lang="ts">
 /**
- * 编辑区顶栏右侧的三个文件动作。
+ * 编辑区顶栏右侧的文件动作。
  *
  * 原来是「更多操作」一个下拉里塞了导出 Markdown / 导出 HTML / 版本历史——
  * 点两下才够得着，而且三件事的性质根本不同。现在拆开：
- *   导入（把外面的 .md 收进工作区） · 导出（另存为 md / html） · 版本历史
+ *   新建 · 导入（把外面的 .md 收进工作区） · 导出（另存为 md / html） · 版本历史
  * 各自一个按钮，导出保留下拉是因为它确实有两种格式要选。
+ *
+ * 「新建」和「导入」这两件事以前挂在中间栏的列表头上（列表头还有一条空态提示，
+ * 两枚大按钮占掉半屏）。那两枚按钮跟「这个列表里有什么」并不相干，
+ * 而且空态一出现界面就跳一下。现在统一挪到这一行最左边：
+ * 顶栏是全窗口最稳定的位置，笔记多与少、有没有打开笔记，它们都在原地。
  */
 import { ref, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import {
   /* 图标统一取自 Lucide（ISC），和工具栏同源 */
   Download,
   FileCode2,
+  FilePlus2,
   FileText,
   History,
   Loader2,
@@ -119,10 +125,15 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="ea">
+    <!-- 新建：和导入左右相邻，一进一出 -->
+    <button class="ea-btn" title="新建笔记 (Ctrl+N)" :disabled="!state.root" @click="state.root && store.newNote()">
+      <FilePlus2 :size="14" :stroke-width="1.9" />
+    </button>
+
     <!-- 导入：和导出左右相邻，一进一出 -->
     <button
       class="ea-btn"
-      title="导入 Markdown 文件到工作区"
+      title="导入已有笔记"
       :disabled="!state.root || importing"
       @click="doImport"
     >

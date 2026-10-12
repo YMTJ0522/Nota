@@ -25,6 +25,8 @@ import {
   Table,
   Sigma,
   Blocks,
+  LineChart,
+  MessageSquareWarning,
   ChevronDown,
 } from 'lucide-vue-next'
 import {
@@ -39,6 +41,9 @@ import {
   toolbarBlockId,
   toolbarFootnote,
   toolbarCallout,
+  calloutTypes,
+  toolbarChart,
+  chartTemplates,
   toolbarDetails,
   toolbarTabs,
   toolbarMermaid,
@@ -90,10 +95,17 @@ type MenuId =
   | 'image'
   | 'note'
   | 'code'
+  | 'chart'
   | 'math'
   | 'block'
+  | 'callout'
   | 'table'
   | null
+
+/** 顺序即工具栏从左到右的顺序，方向键切换也按它 */
+const MENU_ORDER: Exclude<MenuId, null>[] = [
+  'heading', 'reference', 'image', 'note', 'code', 'chart', 'table', 'math', 'block', 'callout',
+]
 
 const openMenu = ref<MenuId>(null)
 
@@ -224,14 +236,11 @@ function onEsc(e: KeyboardEvent) {
 function onArrow(e: KeyboardEvent) {
   if (!openMenu.value) return
   if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return
-  const ids: Exclude<MenuId, null>[] = [
-    'heading', 'reference', 'image', 'note', 'code', 'table', 'math', 'block',
-  ]
-  const at = ids.indexOf(openMenu.value)
+  const at = MENU_ORDER.indexOf(openMenu.value)
   if (at < 0) return
   e.preventDefault()
   const step = e.key === 'ArrowRight' ? 1 : -1
-  openMenu.value = ids[(at + step + ids.length) % ids.length]
+  openMenu.value = MENU_ORDER[(at + step + MENU_ORDER.length) % MENU_ORDER.length]
 }
 
 /** 窗口尺寸或工具栏滚动变化时，菜单要跟着锚点重新摆位，
@@ -269,6 +278,10 @@ const headingItems = [
 
 /** 标题下拉按钮上曾显示当前档位（H1 徽标），但换上 Lucide 的 Heading 图标后
     两者语义重复，挤在一起反而看不清，已去掉徽标只留图标。 */
+
+/* ── 提示块与图表：菜单内容来自 snippets，配色/语法只在那边维护一份 ── */
+const calloutList = calloutTypes()
+const chartList = chartTemplates()
 
 /* ── 图片 / 视频：本地上传走原生文件选择 ── */
 async function uploadMedia(kind: 'image' | 'video' | 'any') {
@@ -529,7 +542,37 @@ function insertTable(rows: number, cols: number) {
           </button>
           <span class="tb-sep-h n-menu-sep" />
           <button class="tb-item n-menu-item" @click="pick((v) => toolbarMermaid(v))">
-            <span>Mermaid 图表</span>
+            <span>空白 Mermaid 图表</span><span class="kbd">```</span>
+          </button>
+        </div>
+      </Teleport>
+    </div>
+
+    <!-- 7. 图表：折线/柱状/饼/流程/时序… 一整排现成模板 -->
+    <div :ref="wrapRef('chart')" class="tb-group tb-menu-wrap">
+      <button
+        class="tb-btn"
+        :class="{ on: openMenu === 'chart' }"
+        title="插入图表"
+        @click="toggle('chart')"
+      >
+        <LineChart :size="ICON" :stroke-width="STROKE" />
+        <ChevronDown class="caret" :size="10" :stroke-width="2" />
+      </button>
+      <Teleport to="body">
+        <div
+          v-if="openMenu === 'chart'"
+          :ref="menuRef('chart')"
+          class="tb-menu tb-menu--float tb-scroll-menu n-menu"
+          :style="menuStyle"
+        >
+          <button
+            v-for="t in chartList"
+            :key="t.label"
+            class="tb-item n-menu-item"
+            @click="pick((v) => toolbarChart(v, t.label))"
+          >
+            <span>{{ t.label }}</span><span class="tag">{{ t.hint }}</span>
           </button>
         </div>
       </Teleport>
@@ -617,9 +660,6 @@ function insertTable(rows: number, cols: number) {
           class="tb-menu tb-menu--float n-menu"
           :style="menuStyle"
         >
-          <button class="tb-item n-menu-item" @click="pick((v) => toolbarCallout(v))">
-            <span>Callout 提示块</span>
-          </button>
           <button class="tb-item n-menu-item" @click="pick((v) => toolbarDetails(v))">
             <span>折叠详情块</span>
           </button>
@@ -629,6 +669,40 @@ function insertTable(rows: number, cols: number) {
           <span class="tb-sep-h n-menu-sep" />
           <button class="tb-item n-menu-item" @click="pick((v) => toolbarHorizontalRule(v))">
             <span>分割线</span>
+          </button>
+        </div>
+      </Teleport>
+    </div>
+
+    <!-- 8. 提示块：十一种类型各带一颗色点，配色与预览里完全一致 -->
+    <div :ref="wrapRef('callout')" class="tb-group tb-menu-wrap">
+      <button
+        class="tb-btn"
+        :class="{ on: openMenu === 'callout' }"
+        title="提示块"
+        @click="toggle('callout')"
+      >
+        <MessageSquareWarning :size="ICON" :stroke-width="STROKE" />
+        <ChevronDown class="caret" :size="10" :stroke-width="2" />
+      </button>
+      <Teleport to="body">
+        <div
+          v-if="openMenu === 'callout'"
+          :ref="menuRef('callout')"
+          class="tb-menu tb-menu--float tb-scroll-menu n-menu"
+          :style="menuStyle"
+        >
+          <button
+            v-for="c in calloutList"
+            :key="c.key"
+            class="tb-item n-menu-item"
+            @click="pick((v) => toolbarCallout(v, c.key))"
+          >
+            <span class="tb-dot-row">
+              <i class="tb-dot" :style="{ background: c.color }" />
+              {{ c.label }}
+            </span>
+            <span class="kbd">[!{{ c.key }}]</span>
           </button>
         </div>
       </Teleport>
@@ -750,6 +824,29 @@ function insertTable(rows: number, cols: number) {
 /* 说明：原来靠 .tb-menu-wrap--end 做右边缘避让，
    现在改由 placeMenu() 在算坐标时判断（左对齐会超出窗口就翻成右对齐），
    这个类已不再需要。 */
+
+/* 项目多的菜单（图表 11 项、提示块 11 项）不能一路排到屏幕外，
+   限高之后自己滚，比把菜单拉成一长条更可控。 */
+.tb-scroll-menu {
+  max-height: min(340px, calc(100vh - 64px));
+  overflow-y: auto;
+}
+
+/* ── 提示块菜单里的那颗色点 ──
+   颜色由 snippets 里的 CSS 变量给，跟预览里卡片的左边线是同一个值，
+   所以在下拉里挑的颜色就是插下去之后看到的颜色。 */
+.tb-dot-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.tb-dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
 
 /* ── 表格九宫格 ──
    宽度由格子决定，不能被 .tb-menu 的 max-width 压扁。 */

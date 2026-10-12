@@ -191,6 +191,7 @@ async function refresh() {
 }
 
 .qv-btn {
+  padding: 0;
   width: 22px;
   height: 22px;
   display: inline-flex;

@@ -10,6 +10,8 @@ import {
   Paperclip,
   PanelLeftClose,
   PanelLeftOpen,
+  PanelRightClose,
+  PanelRightOpen,
   Plus,
   Search,
   Settings,
@@ -19,9 +21,15 @@ import {
   X,
 } from 'lucide-vue-next'
 import { isSettingsSection, store } from '@/store'
-import type { NavFilter, SettingsSection } from '@/store'
+import type { NavFilter, SettingsSection, TreeNode } from '@/store'
 import TreeNodeItem from './TreeNodeItem.vue'
 import SettingsDialog from '@/components/SettingsDialog.vue'
+import NoteContextMenu, { type NoteExportKind } from '@/components/NoteContextMenu.vue'
+import FolderContextMenu from '@/components/FolderContextMenu.vue'
+import TagContextMenu from '@/components/TagContextMenu.vue'
+import PromptDialog from '@/components/PromptDialog.vue'
+import FolderPicker from '@/components/FolderPicker.vue'
+import ConfirmDialog from '@/components/ConfirmDialog.vue'
 
 const { state } = store
 
@@ -152,6 +160,190 @@ function commitTag(e: Event) {
   window.dispatchEvent(new CustomEvent('nota:tag', { detail: name }))
 }
 
+/* ── 目录树 / 标签的右键菜单 ──
+   菜单本身只弹一份，位置与对象由这里记着。TreeNodeItem 是递归组件，
+   「在哪儿右键了哪一个」由它逐层 emit 上来。 */
+
+type TreeMenu = { x: number; y: number; node: TreeNode }
+const treeMenu = ref<TreeMenu | null>(null)
+const tagMenu = ref<{ x: number; y: number; name: string; count: number; active: boolean } | null>(
+  null,
+)
+
+/** 菜单里点了需要弹窗的那些动作时，先把对象留下来 */
+const actionNode = ref<TreeNode | null>(null)
+const renameOpen = ref(false)
+const moveOpen = ref(false)
+const removeOpen = ref(false)
+const noteRemoveOpen = ref(false)
+const tagRenameOpen = ref(false)
+const tagRemoveOpen = ref(false)
+const tagRenameFrom = ref('')
+
+const actionName = computed(() =>
+  actionNode.value ? store.baseNameOf(actionNode.value.path) : '',
+)
+const actionIsDir = computed(() => actionNode.value?.type === 'dir')
+
+function onTreeMenu(p: TreeMenu) {
+  treeMenu.value = p
+}
+
+function onTagMenu(e: MouseEvent, t: { name: string; count: number }) {
+  e.preventDefault()
+  tagMenu.value = {
+    x: e.clientX,
+    y: e.clientY,
+    name: t.name,
+    count: t.count,
+    active: state.activeTag === t.name,
+  }
+}
+
+/** 取走菜单指着的那个节点，并把菜单收掉 */
+function takeNode(): TreeNode | null {
+  const n = treeMenu.value?.node ?? null
+  actionNode.value = n
+  treeMenu.value = null
+  return n
+}
+
+function toast(text: string) {
+  window.dispatchEvent(new CustomEvent('nota:toast', { detail: text }))
+}
+
+/* ── 文件：打开 / 收藏 / 重命名 / 归类 / 复制路径 / 定位 / 导出 / 删除 ── */
+function onMenuOpen() {
+  const n = takeNode()
+  if (n) void store.openNote(n.path)
+}
+
+function onMenuStar() {
+  const n = takeNode()
+  if (!n) return
+  void store.toggleStar(n.path).then((on) => toast(on ? '已收藏' : '已取消收藏'))
+}
+
+async function onMenuCopyPath() {
+  const n = takeNode()
+  if (!n) return
+  try {
+    await navigator.clipboard.writeText(n.path)
+    toast('路径已复制')
+  } catch {
+    toast('剪贴板不可用')
+  }
+}
+
+async function onMenuReveal() {
+  const n = takeNode()
+  if (n) await store.revealNote(n.path)
+}
+
+async function onMenuExport(kind: NoteExportKind) {
+  const n = takeNode()
+  if (!n) return
+  const out = await store.exportNoteAs(n.path, kind)
+  toast(out ? `已导出到 ${out}` : '导出已取消')
+}
+
+/* ── 文件夹：新建笔记 / 新建子文件夹 / 重命名 / 删除 ── */
+function onFolderNewNote() {
+  const n = takeNode()
+  if (!n) return
+  void store.newNote(n.path)
+}
+
+function onFolderNewSub() {
+  const n = takeNode()
+  if (!n) return
+  // 先展开，否则输入框出现在收起的目录里等于没出现
+  state.expanded[n.path] = true
+  store.startNewFolder(n.path)
+}
+
+function onRenameCommit(v: string) {
+  renameOpen.value = false
+  const n = actionNode.value
+  if (!n || !v.trim()) return
+  void store.renameNote(n.path, v.trim()).then(() => refreshTreeSoon())
+}
+
+function onMoveCommit(dir: string) {
+  moveOpen.value = false
+  const n = actionNode.value
+  if (!n) return
+  void store.moveNoteTo(n.path, dir).then((next) => {
+    if (next !== n.path) toast('已归类')
+  })
+}
+
+/** 删文件夹：连里面的笔记一起进回收站，所以弹窗里把话说清楚 */
+async function onRemoveConfirm() {
+  removeOpen.value = false
+  noteRemoveOpen.value = false
+  const n = actionNode.value
+  if (!n) return
+  await store.removeNote(n.path)
+  toast(n.type === 'dir' ? `文件夹「${n.name}」已移入回收站` : `《${store.baseNameOf(n.path)}》已移入回收站`)
+}
+
+/** 重命名/删除之后目录树要重读一次，否则侧栏还写着旧名字 */
+function refreshTreeSoon() {
+  window.setTimeout(() => void store.refreshTree(), 120)
+}
+
+/* ── 标签 ── */
+function onTagFilter() {
+  const t = tagMenu.value
+  tagMenu.value = null
+  if (t) store.setActiveTag(t.active ? null : t.name)
+}
+
+async function onTagCopy() {
+  const t = tagMenu.value
+  tagMenu.value = null
+  if (!t) return
+  try {
+    await navigator.clipboard.writeText(`#${t.name}`)
+    toast('标签名已复制')
+  } catch {
+    toast('剪贴板不可用')
+  }
+}
+
+function onTagRename() {
+  const t = tagMenu.value
+  tagMenu.value = null
+  if (!t) return
+  tagRenameFrom.value = t.name
+  tagRenameOpen.value = true
+}
+
+function onTagRemove() {
+  const t = tagMenu.value
+  tagMenu.value = null
+  if (!t) return
+  tagRenameFrom.value = t.name
+  tagRemoveOpen.value = true
+}
+
+async function commitTagRename(v: string) {
+  tagRenameOpen.value = false
+  const from = tagRenameFrom.value
+  const to = v.trim().replace(/^#+/, '')
+  if (!to || to === from) return
+  const n = await store.retagNotes(from, to)
+  toast(n ? `已把 ${n} 篇笔记上的 #${from} 改成 #${to}` : `没有笔记用到 #${from}`)
+}
+
+async function commitTagRemove() {
+  tagRemoveOpen.value = false
+  const from = tagRenameFrom.value
+  const n = await store.retagNotes(from, null)
+  toast(n ? `已从 ${n} 篇笔记上移除 #${from}` : `没有笔记用到 #${from}`)
+}
+
 /** 工具栏 AI 菜单的「模型设置…」：打开对话框并停在 AI 分区 */
 function onSettingsRequest(e: Event) {
   const id = (e as CustomEvent<string>).detail
@@ -191,24 +383,46 @@ const rootTail = computed(() => {
     <!-- ══ 展开态 ══ -->
     <template v-if="state.sidebar">
       <header class="head">
+        <!-- 标：和 build/icon.svg 同一个造型（折角纸页 + 三行字），
+             这里按界面里的尺寸做成描边版，最后一笔用品牌琥珀色收尾 -->
         <span class="logo" aria-hidden="true">
-          <svg viewBox="0 0 24 24" width="17" height="17" fill="none">
-            <rect x="3" y="2.5" width="18" height="19" rx="4" fill="currentColor" opacity="0.14" />
+          <svg viewBox="0 0 32 32" width="18" height="18" fill="none">
             <path
-              d="M7.5 2.5h9a4 4 0 0 1 4 4v11a4 4 0 0 1-4 4h-9a4 4 0 0 1-4-4v-11a4 4 0 0 1 4-4z"
+              d="M10 4.4h8.8L24 9.6v14.9a3.1 3.1 0 0 1-3.1 3.1H10a3.1 3.1 0 0 1-3.1-3.1V7.5A3.1 3.1 0 0 1 10 4.4Z"
               stroke="currentColor"
-              stroke-width="1.5"
+              stroke-width="1.9"
+              stroke-linejoin="round"
             />
-            <path d="M8 8h8M8 12h8M8 16h5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" />
+            <path
+              d="M18.8 4.4v5.2H24"
+              stroke="currentColor"
+              stroke-width="1.9"
+              stroke-linejoin="round"
+            />
+            <path
+              d="M10.6 17.4h8.6M10.6 21.2h4.6"
+              stroke="currentColor"
+              stroke-width="1.9"
+              stroke-linecap="round"
+            />
+            <path d="M17.6 21.2h3.2" stroke="#d98a4e" stroke-width="1.9" stroke-linecap="round" />
           </svg>
         </span>
         <span class="head-title">资料库</span>
+        <!-- 两枚收起按钮：先收中间那一栏（资料栏），再收自己。
+             它们放一起是有道理的 —— 「哪一块要腾地方」是一个连续的判断题，
+             两枚开关挨着，视线不用在窗口两端来回跳。
+             2.1 之前「收起资料栏」孤零零地待在编辑区顶栏最右边，
+             跟窗口按钮挤在一起，既不像「视图」也不像「窗口」。 -->
         <span class="head-actions">
-          <button class="mini" data-tip="新建笔记 (Ctrl+N)" @click="store.newNote()">
-            <FilePlus2 :size="15" :stroke-width="1.9" />
-          </button>
-          <button class="mini" data-tip="新建文件夹" @click="store.startNewFolder()">
-            <FolderPlus :size="15" :stroke-width="1.9" />
+          <button
+            class="mini"
+            data-role="column-toggle"
+            :data-tip="state.column ? '收起资料栏' : '展开资料栏'"
+            @click="store.toggleColumn()"
+          >
+            <PanelRightClose v-if="state.column" :size="15" :stroke-width="1.9" />
+            <PanelRightOpen v-else :size="15" :stroke-width="1.9" />
           </button>
           <button
             class="mini"
@@ -283,7 +497,7 @@ const rootTail = computed(() => {
               {{ state.activeTag ? `# ${state.activeTag}` : state.navFilter === 'all' ? '文件夹' : '笔记' }}
             </span>
             <button class="sec-add" data-tip="新建文件夹" @click="store.startNewFolder()">
-              <FolderPlus :size="13" :stroke-width="1.9" />
+              <FolderPlus :size="15" :stroke-width="1.9" />
             </button>
           </div>
 
@@ -303,7 +517,12 @@ const rootTail = computed(() => {
             {{ state.searchQuery ? '没有匹配的笔记' : '这里还没有 .md 文件' }}
           </div>
           <ul v-else class="tree">
-            <TreeNodeItem v-for="n in visible" :key="n.path" :node="n" />
+            <TreeNodeItem
+              v-for="n in visible"
+              :key="n.path"
+              :node="n"
+              @menu="onTreeMenu"
+            />
           </ul>
         </section>
 
@@ -321,10 +540,10 @@ const rootTail = computed(() => {
               data-tip="清除筛选"
               @click="store.setActiveTag(null)"
             >
-              <X :size="12" :stroke-width="2.2" />
+              <X :size="14" :stroke-width="2.2" />
             </button>
             <button class="sec-add" data-tip="新建标签" @click="startNewTag">
-              <Plus :size="13" :stroke-width="2.2" />
+              <Plus :size="15" :stroke-width="2.2" />
             </button>
           </div>
 
@@ -349,6 +568,7 @@ const rootTail = computed(() => {
               class="tag"
               :class="{ on: state.activeTag === t.name }"
               @click="store.setActiveTag(t.name)"
+              @contextmenu.prevent="onTagMenu($event, t)"
             >
               <Hash :size="10" :stroke-width="2.2" />
               {{ t.name }}
@@ -374,6 +594,17 @@ const rootTail = computed(() => {
       <div class="rail-head">
         <button class="rail-btn" data-tip="展开侧边栏 (Ctrl+\)" @click="store.toggleSidebar()">
           <PanelLeftOpen :size="16" :stroke-width="1.9" />
+        </button>
+        <!-- 窄轨态也得留着资料栏开关：侧栏收起来之后，
+             这一枚是唯一还在原地的「哪一块要腾地方」的入口 -->
+        <button
+          class="rail-btn"
+          data-role="column-toggle"
+          :data-tip="state.column ? '收起资料栏' : '展开资料栏'"
+          @click="store.toggleColumn()"
+        >
+          <PanelRightClose v-if="state.column" :size="16" :stroke-width="1.9" />
+          <PanelRightOpen v-else :size="16" :stroke-width="1.9" />
         </button>
       </div>
       <div class="rail-group">
@@ -415,6 +646,136 @@ const rootTail = computed(() => {
         </button>
       </div>
     </template>
+
+    <!-- 目录树的右键菜单：文件与文件夹两套，同一时刻只会弹一个 -->
+    <NoteContextMenu
+      v-if="treeMenu && treeMenu.node.type !== 'dir'"
+      :target="{
+        x: treeMenu.x,
+        y: treeMenu.y,
+        path: treeMenu.node.path,
+        starred: !!treeMenu.node.starred,
+      }"
+      @close="treeMenu = null"
+      @open="onMenuOpen"
+      @star="onMenuStar"
+      @rename="
+        () => {
+          takeNode()
+          renameOpen = true
+        }
+      "
+      @move="
+        () => {
+          takeNode()
+          moveOpen = true
+        }
+      "
+      @copy-path="onMenuCopyPath"
+      @reveal="onMenuReveal"
+      @export="onMenuExport"
+      @remove="
+        () => {
+          takeNode()
+          noteRemoveOpen = true
+        }
+      "
+    />
+
+    <FolderContextMenu
+      v-if="treeMenu && treeMenu.node.type === 'dir'"
+      :target="{
+        x: treeMenu.x,
+        y: treeMenu.y,
+        path: treeMenu.node.path,
+        name: treeMenu.node.name,
+      }"
+      @close="treeMenu = null"
+      @new-note="onFolderNewNote"
+      @new-folder="onFolderNewSub"
+      @rename="
+        () => {
+          takeNode()
+          renameOpen = true
+        }
+      "
+      @copy-path="onMenuCopyPath"
+      @reveal="onMenuReveal"
+      @remove="
+        () => {
+          takeNode()
+          removeOpen = true
+        }
+      "
+    />
+
+    <TagContextMenu
+      :target="tagMenu"
+      @close="tagMenu = null"
+      @filter="onTagFilter"
+      @copy="onTagCopy"
+      @rename="onTagRename"
+      @remove="onTagRemove"
+    />
+
+    <PromptDialog
+      :open="renameOpen"
+      :title="actionIsDir ? '重命名文件夹' : '重命名'"
+      :label="actionIsDir ? '文件夹名' : '标题'"
+      :initial="actionIsDir ? actionNode?.name ?? '' : actionName"
+      placeholder="输入新的名字"
+      confirm-text="重命名"
+      @confirm="onRenameCommit"
+      @cancel="renameOpen = false"
+    />
+
+    <FolderPicker
+      :open="moveOpen"
+      :note-name="actionName"
+      @pick="onMoveCommit"
+      @close="moveOpen = false"
+    />
+
+    <ConfirmDialog
+      :open="removeOpen"
+      title="删除这个文件夹？"
+      :message="`「${actionNode?.name ?? ''}」连同里面的笔记会一起移入回收站，之后还能在那里恢复。`"
+      confirm-text="删除文件夹"
+      danger
+      @confirm="onRemoveConfirm"
+      @cancel="removeOpen = false"
+    />
+
+    <ConfirmDialog
+      :open="noteRemoveOpen"
+      title="删除这篇笔记？"
+      :message="`《${actionName}》会被移入回收站，之后还能恢复。`"
+      confirm-text="确认删除"
+      danger
+      @confirm="onRemoveConfirm"
+      @cancel="noteRemoveOpen = false"
+    />
+
+    <PromptDialog
+      :open="tagRenameOpen"
+      title="重命名标签"
+      label="新名字"
+      :initial="tagRenameFrom"
+      placeholder="输入新的标签名"
+      confirm-text="重命名"
+      @confirm="commitTagRename"
+      @cancel="tagRenameOpen = false"
+    />
+
+    <ConfirmDialog
+      :open="tagRemoveOpen"
+      title="删除这个标签？"
+      :message="`会从所有带着 #${tagRenameFrom} 的笔记里把它去掉。笔记本身不动。`"
+      confirm-text="删除标签"
+      danger
+      @confirm="commitTagRemove"
+      @cancel="tagRemoveOpen = false"
+    />
 
     <SettingsDialog :open="settingsOpen" :section="settingsSection" @close="settingsOpen = false" />
   </aside>
@@ -481,6 +842,7 @@ const rootTail = computed(() => {
 }
 
 .mini {
+  padding: 0;
   width: 26px;
   height: 26px;
   display: inline-flex;
@@ -594,8 +956,10 @@ const rootTail = computed(() => {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  height: 20px;
-  padding: 0 4px 0 8px;
+  gap: 4px;
+  /* 跟着加号一起长高，不然 26px 的按钮会顶出这一行 */
+  height: 26px;
+  padding: 0 2px 0 8px;
 }
 
 .sec-title {
@@ -605,22 +969,24 @@ const rootTail = computed(() => {
   color: color-mix(in oklab, var(--n-fg-faint) 86%, transparent);
 }
 
+/* 分区上的加号。
+   尺寸对着顶栏那颗「收起」来（26×26、图标 15），并且常显——
+   以前是 20×20 加 13px 图标、还要鼠标划过才肯出来，
+   结果就是「想建文件夹的时候找不到那个按钮」。 */
 .sec-add {
-  width: 20px;
-  height: 20px;
+  padding: 0;
+  width: 26px;
+  height: 26px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  border-radius: 5px;
+  border-radius: var(--n-r-sm);
   color: var(--n-fg-faint);
-  opacity: 0;
-  transition: opacity var(--n-dur) var(--n-ease), background var(--n-dur) var(--n-ease),
-    color var(--n-dur) var(--n-ease);
+  transition: background var(--n-dur) var(--n-ease), color var(--n-dur) var(--n-ease);
 }
 
-.sec-head:hover .sec-add,
-.sec-add:focus-visible {
-  opacity: 1;
+.sec-head:hover .sec-add {
+  color: var(--n-fg-dim);
 }
 
 .sec-add svg {
@@ -742,6 +1108,7 @@ const rootTail = computed(() => {
 }
 
 .foot-btn {
+  padding: 0;
   flex: none;
   width: 28px;
   height: 28px;
@@ -803,6 +1170,7 @@ const rootTail = computed(() => {
 }
 
 .rail-btn {
+  padding: 0;
   position: relative;
   width: 32px;
   height: 32px;

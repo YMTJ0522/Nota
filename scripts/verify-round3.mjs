@@ -417,7 +417,8 @@ ok(
 
 /* ── 8. 折叠成窄轨 + 悬停提示 ── */
 const rail = await evaluate(`(async () => {
-  document.querySelector('.head-actions .mini[data-tip*="收起"]')?.click()
+  // 2.2：侧栏顶行现在是两枚并排的开关（先资料栏、后侧边栏），按 role 认才不会点错
+  document.querySelector('.head-actions .mini[data-role="sidebar-toggle"]')?.click()
   await new Promise(r => setTimeout(r, 500))
   const p = document.querySelector('.panel')
   const btns = [...p.querySelectorAll('.rail-btn')]
@@ -460,8 +461,8 @@ const settings = await evaluate(`(async () => {
   const about = [...document.querySelectorAll('.st-nav-item')].find(b => b.textContent.includes('关于'))
   about?.click()
   await new Promise(r => setTimeout(r, 250))
-  // 关于页改成产品卡后版本号挪进了 .st-hero-ver
-  out.ver = document.querySelector('.st-hero-ver')?.textContent?.trim() ?? ''
+  // 关于页 2.1 重做后版本号住在 .ab-hero-ver（旧的 .st-hero-ver 已删）
+  out.ver = document.querySelector('.ab-hero-ver')?.textContent?.trim() ?? ''
   document.querySelector('.st-x')?.click()
   return out
 })()`)

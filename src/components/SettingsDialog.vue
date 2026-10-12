@@ -8,12 +8,15 @@
  */
 import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue'
 import {
+  Blocks,
   Check,
   ChevronDown,
   Columns2,
   Eye,
   EyeOff,
-  FileText,
+  FileCode2,
+  HardDrive,
+  History,
   Info,
   KeyRound,
   Link2,
@@ -82,6 +85,25 @@ const envText = computed(() => {
   return env.value.arch ? `${p} · ${env.value.arch}` : p || '—'
 })
 
+/** 关于页的四张特性卡。只写真有的东西 —— 这一页是「这软件能干什么」的清单，
+    写上去的每一条都得是在这个版本里点得到的。 */
+const ABOUT_FEATURES: { title: string; desc: string; icon: unknown }[] = [
+  { title: '纯 Markdown', desc: '正文就是 .md 文件', icon: FileCode2 },
+  { title: '本地优先', desc: '数据只在你的磁盘上', icon: HardDrive },
+  { title: '富内容', desc: '表格 / 图表 / 公式 / 提示块', icon: Blocks },
+  { title: '版本历史', desc: '每篇都有独立快照', icon: History },
+]
+
+const ABOUT_KEYS: { label: string; key: string }[] = [
+  { label: '保存', key: 'Ctrl + S' },
+  { label: '新建笔记', key: 'Ctrl + N' },
+  { label: '打开目录', key: 'Ctrl + O' },
+  { label: '编辑 / 分栏 / 预览', key: 'Ctrl + 1 / 2 / 3' },
+  { label: '查找与替换', key: 'Ctrl + F' },
+  { label: '命令菜单', key: '/' },
+  { label: '折叠侧边栏', key: 'Ctrl + \\' },
+]
+
 watch(
   () => props.open,
   async (open) => {
@@ -118,6 +140,17 @@ const presetIndex = computed(() => {
 const presetLabel = computed(() =>
   presetIndex.value ? AI_PRESETS[presetIndex.value - 1].label : '自定义…',
 )
+
+/** 预设菜单就地弹出，点别处要收起来 */
+watch(presetOpen, (open) => {
+  if (!open) return
+  const off = () => {
+    presetOpen.value = false
+    window.removeEventListener('pointerdown', off, true)
+  }
+  // 延一拍再挂，免得把「点开菜单」这一次 pointerdown 也算进去
+  setTimeout(() => window.addEventListener('pointerdown', off, true), 0)
+})
 
 function pickPreset(i: number) {
   presetOpen.value = false
@@ -538,7 +571,7 @@ async function changeWorkspace() {
                     <span class="n-select-name">{{ presetLabel }}</span>
                     <ChevronDown class="n-select-caret" :size="12" :stroke-width="2" />
                   </button>
-                  <div v-if="presetOpen" class="n-menu st-drop-menu">
+                  <div v-if="presetOpen" class="n-menu n-menu-inline st-drop-menu">
                     <button
                       class="n-menu-item"
                       :class="{ on: !presetIndex }"
@@ -692,49 +725,95 @@ async function changeWorkspace() {
               </div>
             </template>
 
-            <!-- ══ 关于 ══ -->
+            <!-- ══ 关于 ══
+                 以前是一段说明文字加两张清单，像一份说明书。
+                 改成「一块带标的头图 + 四张特性卡 + 两张清单」：
+                 第一眼看到的是这个应用长什么样、能干什么，
+                 版本号和运行环境退到下面，需要的时候才看。 -->
             <template v-else>
-              <div class="st-hero">
-                <span class="st-hero-logo"><FileText :size="20" :stroke-width="1.8" /></span>
-                <span class="st-hero-meta">
-                  <span class="st-hero-name">Nota</span>
-                  <span class="st-hero-ver">版本 {{ APP_VERSION }}</span>
+              <div class="ab-hero">
+                <span class="ab-hero-glow" aria-hidden="true" />
+                <span class="ab-mark" aria-hidden="true">
+                  <svg viewBox="0 0 32 32" width="34" height="34" fill="none">
+                    <path
+                      d="M10 4.4h8.8L24 9.6v14.9a3.1 3.1 0 0 1-3.1 3.1H10a3.1 3.1 0 0 1-3.1-3.1V7.5A3.1 3.1 0 0 1 10 4.4Z"
+                      stroke="currentColor"
+                      stroke-width="2"
+                      stroke-linejoin="round"
+                    />
+                    <path
+                      d="M18.8 4.4v5.2H24"
+                      stroke="currentColor"
+                      stroke-width="2"
+                      stroke-linejoin="round"
+                    />
+                    <path
+                      d="M10.6 17.4h8.6M10.6 21.2h4.4"
+                      stroke="currentColor"
+                      stroke-width="2"
+                      stroke-linecap="round"
+                      opacity="0.72"
+                    />
+                    <path d="M17.4 21.2h3.4" stroke="#d98a4e" stroke-width="2" stroke-linecap="round" />
+                  </svg>
                 </span>
-                <span class="st-hero-badge">本地优先</span>
+                <span class="ab-hero-meta">
+                  <span class="ab-hero-name">
+                    Nota
+                    <span class="ab-hero-tag">本地优先</span>
+                  </span>
+                  <span class="ab-hero-ver">
+                    <span class="ab-dot" />
+                    版本 {{ APP_VERSION }}
+                  </span>
+                </span>
+                <span class="ab-hero-note">纯本地 · 无账号 · 无服务端</span>
               </div>
 
-              <p class="st-text st-muted">
+              <p class="ab-lead">
                 一个轻量的本地 Markdown 笔记应用。笔记就是普通的 <code>.md</code> 文件，
-                直接放在你选的目录里，随时可以用别的工具打开。没有账号，没有服务端，
-                所有数据都留在你自己的磁盘上。
+                放在你自己选的目录里，随时可以用别的编辑器打开、用 Git 管理、直接拷走。
+                没有账号，没有服务端，没有云端同步 —— 所有东西都留在你自己的磁盘上。
               </p>
 
+              <div class="ab-cards">
+                <div v-for="f in ABOUT_FEATURES" :key="f.title" class="ab-card">
+                  <span class="ab-card-ico"><component :is="f.icon" :size="15" :stroke-width="1.9" /></span>
+                  <span class="ab-card-title">{{ f.title }}</span>
+                  <span class="ab-card-desc">{{ f.desc }}</span>
+                </div>
+              </div>
+
               <div class="st-h4">运行环境</div>
-              <div class="st-rows">
-                <div class="st-mini">
-                  <span>Electron</span><span class="st-mono">{{ env.electron || '—' }}</span>
+              <div class="ab-env">
+                <div class="ab-env-cell">
+                  <span class="ab-env-k">Electron</span>
+                  <span class="ab-env-v">{{ env.electron || '—' }}</span>
                 </div>
-                <div class="st-mini">
-                  <span>Chromium</span><span class="st-mono">{{ env.chrome || '—' }}</span>
+                <div class="ab-env-cell">
+                  <span class="ab-env-k">Chromium</span>
+                  <span class="ab-env-v">{{ env.chrome || '—' }}</span>
                 </div>
-                <div class="st-mini">
-                  <span>Node</span><span class="st-mono">{{ env.node || '—' }}</span>
+                <div class="ab-env-cell">
+                  <span class="ab-env-k">Node</span>
+                  <span class="ab-env-v">{{ env.node || '—' }}</span>
                 </div>
-                <div class="st-mini">
-                  <span>平台</span><span class="st-mono">{{ envText }}</span>
+                <div class="ab-env-cell">
+                  <span class="ab-env-k">平台</span>
+                  <span class="ab-env-v">{{ envText }}</span>
                 </div>
               </div>
 
               <div class="st-h4">快捷键</div>
-              <div class="st-keys">
-                <div class="st-key"><span>保存</span><kbd>Ctrl + S</kbd></div>
-                <div class="st-key"><span>新建笔记</span><kbd>Ctrl + N</kbd></div>
-                <div class="st-key"><span>打开目录</span><kbd>Ctrl + O</kbd></div>
-                <div class="st-key"><span>编辑 / 分栏 / 预览</span><kbd>Ctrl + 1 / 2 / 3</kbd></div>
-                <div class="st-key"><span>折叠侧边栏</span><kbd>Ctrl + \</kbd></div>
-                <div class="st-key"><span>查找与替换</span><kbd>Ctrl + F</kbd></div>
-                <div class="st-key"><span>命令菜单</span><kbd>/</kbd></div>
+              <div class="ab-keys">
+                <div v-for="k in ABOUT_KEYS" :key="k.label" class="ab-key">
+                  <span>{{ k.label }}</span><kbd>{{ k.key }}</kbd>
+                </div>
               </div>
+
+              <p class="ab-foot">
+                © 2026 YMTJ0522 · 用 Electron + Vue 3 + CodeMirror 6 写的本地小工具
+              </p>
             </template>
           </div>
 
@@ -867,6 +946,7 @@ async function changeWorkspace() {
 }
 
 .st-x {
+  padding: 0;
   width: 28px;
   height: 28px;
   display: inline-flex;
@@ -1090,6 +1170,7 @@ async function changeWorkspace() {
 }
 
 .st-knob {
+  padding: 0;
   display: block;
   width: 18px;
   height: 18px;
@@ -1143,9 +1224,14 @@ async function changeWorkspace() {
   justify-self: end;
 }
 
+/* 宽度跟着选项文字走：撑满 300px 的控件列纯属浪费，
+   但也不能比按钮窄太多，所以给一个 150px 的下限 */
 .st-drop-menu {
-  width: 100%;
-  max-height: 280px;
+  right: 0;
+  width: max-content;
+  min-width: 150px;
+  max-width: 240px;
+  max-height: 260px;
   overflow-y: auto;
 }
 
@@ -1172,6 +1258,7 @@ async function changeWorkspace() {
 }
 
 .st-eye {
+  padding: 0;
   flex: none;
   width: 26px;
   height: 26px;
@@ -1297,53 +1384,239 @@ async function changeWorkspace() {
   color: var(--n-accent);
 }
 
-/* 关于 */
-.st-hero {
+/* ══ 关于 ══ */
+/* 头图：一块带渐变与光晕的横幅，不再是「一行信息 + 一张清单」。
+   内容是「这是什么 + 什么版本」，右下角那句话负责把定位说清楚。 */
+.ab-hero {
+  position: relative;
   display: flex;
   align-items: center;
-  gap: 11px;
-  padding: 13px 15px;
+  gap: 13px;
+  padding: 16px 18px;
   margin: 12px 0 14px;
-  border: 1px solid var(--n-line);
+  border: 1px solid color-mix(in oklab, var(--n-accent) 22%, var(--n-line));
   border-radius: var(--n-r-lg);
-  background: var(--n-bg);
+  background:
+    linear-gradient(
+      135deg,
+      color-mix(in oklab, var(--n-accent) 14%, var(--n-bg)),
+      color-mix(in oklab, var(--n-accent) 4%, var(--n-bg))
+    );
+  overflow: hidden;
 }
-.st-hero-logo {
+
+/* 右上角一团柔光：让渐变有个来源，不至于看着像色块没铺匀 */
+.ab-hero-glow {
+  position: absolute;
+  top: -70px;
+  right: -50px;
+  width: 210px;
+  height: 210px;
+  border-radius: 50%;
+  background: radial-gradient(
+    circle,
+    color-mix(in oklab, var(--n-accent) 26%, transparent),
+    transparent 68%
+  );
+  pointer-events: none;
+}
+
+.ab-mark {
+  position: relative;
+  flex: none;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 38px;
-  height: 38px;
-  border-radius: var(--n-r-md);
-  background: var(--n-accent);
-  color: var(--n-on-accent);
-  flex: none;
+  width: 52px;
+  height: 52px;
+  border-radius: var(--n-r-lg);
+  background: color-mix(in oklab, var(--n-accent) 12%, var(--n-bg));
+  border: 1px solid color-mix(in oklab, var(--n-accent) 26%, transparent);
+  color: var(--n-accent);
 }
-.st-hero-meta {
+
+.ab-hero-meta {
+  position: relative;
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 5px;
   min-width: 0;
-  flex: 1;
 }
-.st-hero-name {
-  font-size: 15px;
+
+.ab-hero-name {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 19px;
   font-weight: 700;
-  letter-spacing: -0.01em;
+  letter-spacing: -0.02em;
   color: var(--n-fg);
+  line-height: 1.2;
 }
-.st-hero-ver {
+
+.ab-hero-tag {
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: color-mix(in oklab, var(--n-accent) 18%, transparent);
+  color: var(--n-accent);
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0;
+}
+
+.ab-hero-ver {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   font-size: 11.5px;
   font-family: var(--n-font-mono);
-  color: var(--n-fg-faint);
+  color: var(--n-fg-dim);
 }
-.st-hero-badge {
-  padding: 3px 9px;
-  border-radius: 999px;
+
+.ab-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--n-ok);
+  box-shadow: 0 0 0 3px color-mix(in oklab, var(--n-ok) 22%, transparent);
+}
+
+.ab-hero-note {
+  position: relative;
+  margin-left: auto;
+  flex: none;
+  padding-left: 12px;
+  font-size: 11px;
+  color: var(--n-fg-faint);
+  text-align: right;
+  line-height: 1.5;
+}
+
+.ab-lead {
+  margin: 0 0 4px;
+  font-size: 12.5px;
+  line-height: 1.85;
+  color: var(--n-fg-dim);
+}
+
+.ab-lead code {
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: var(--n-surface);
+  border: 1px solid var(--n-line);
+  font-family: var(--n-font-mono);
+  font-size: 11.5px;
+  color: var(--n-fg);
+}
+
+/* 四张特性卡：两列，一眼扫完「这软件能干什么」 */
+.ab-cards {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.ab-card {
+  display: grid;
+  grid-template-columns: 26px minmax(0, 1fr);
+  grid-template-rows: auto auto;
+  align-items: center;
+  gap: 2px 9px;
+  padding: 10px 12px;
+  border: 1px solid var(--n-line);
+  border-radius: var(--n-r-md);
+  background: var(--n-bg);
+  transition: border-color var(--n-dur) var(--n-ease);
+}
+
+.ab-card:hover {
+  border-color: color-mix(in oklab, var(--n-accent) 42%, var(--n-line));
+}
+
+.ab-card-ico {
+  padding: 0;
+  grid-row: 1 / span 2;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border-radius: var(--n-r-sm);
   background: var(--n-accent-soft);
   color: var(--n-accent);
+}
+
+.ab-card-title {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--n-fg);
+}
+
+.ab-card-desc {
   font-size: 11px;
-  flex: none;
+  color: var(--n-fg-faint);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* 运行环境：四格 2×2，比原来四行「左标签右值」短一半 */
+.ab-env {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1px;
+  border: 1px solid var(--n-line);
+  border-radius: var(--n-r-md);
+  background: var(--n-line);
+  overflow: hidden;
+}
+
+.ab-env-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 9px 13px;
+  background: var(--n-bg);
+}
+
+.ab-env-k {
+  font-size: 10.5px;
+  letter-spacing: 0.04em;
+  color: var(--n-fg-faint);
+}
+
+.ab-env-v {
+  font-family: var(--n-font-mono);
+  font-size: 12px;
+  color: var(--n-fg);
+}
+
+/* 快捷键：两列，行高比原来矮，一屏能看全 */
+.ab-keys {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 2px 18px;
+}
+
+.ab-key {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 6px 0;
+  font-size: 12.5px;
+  color: var(--n-fg-dim);
+  border-bottom: 1px dashed color-mix(in oklab, var(--n-line) 70%, transparent);
+}
+
+.ab-foot {
+  margin: 18px 0 2px;
+  padding-top: 12px;
+  border-top: 1px solid var(--n-line);
+  font-size: 11px;
+  color: var(--n-fg-faint);
+  text-align: center;
 }
 
 /* 小节标题：比分区导航矮一档，用来分段但不抢视线 */

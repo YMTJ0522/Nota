@@ -499,18 +499,25 @@ export function insertFootnoteCommand(
 }
 
 /**
- * Inserts a `[!NOTE]` callout around the selection; every selected line is
+ * Inserts a `[!TYPE]` callout around the selection; every selected line is
  * quoted with `> `. The cursor lands after the inserted block.
+ *
+ * `type` 是工具栏下拉里选的那一种（NOTE / TIP / WARNING …）。
+ * 关键字一律转成大写：预览那边用 `[A-Za-z]+` 捕获之后 `toLowerCase()`，
+ * 小写也认，但 Markdown 世界里约定俗成写大写（Obsidian / GitHub 都如此），
+ * 统一成大写在源码里更像「一个标记」而不是随手打的词。
  */
 export function insertCalloutCommand(
   doc: string,
   selection: { from: number; to: number },
+  type = "NOTE",
 ): MarkdownCommandResult {
+  const key = /^[A-Za-z]+$/.test(type) ? type.toUpperCase() : "NOTE";
   const selected = doc.slice(selection.from, selection.to);
   const body = selected
     ? selected.split("\n").map((line) => `> ${line}`).join("\n")
     : "> ";
-  const insert = `> [!NOTE]\n${body}`;
+  const insert = `> [!${key}]\n${body}`;
   return {
     change: { from: selection.from, to: selection.to, insert },
     selection: { anchor: selection.from + insert.length },

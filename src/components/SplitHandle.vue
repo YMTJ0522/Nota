@@ -29,7 +29,9 @@ const dragging = ref(false)
 
 function current() {
   if (props.target === 'sidebar') return store.state.sidebarWidth
-  if (props.target === 'column') return store.state.columnWidth
+  // 自适应状态下界面上量到的是算出来的宽度，不是 state.columnWidth ——
+  // 从后者起算会让第一拖凭空跳一段
+  if (props.target === 'column') return store.effectiveColumnWidth()
   return store.state.outlineWidth
 }
 
@@ -57,9 +59,15 @@ function onDown(e: PointerEvent) {
   window.addEventListener('pointercancel', up)
 }
 
-/** 双击回到默认宽度：拖过头了不用一点点蹭回来 */
+/** 双击复位：拖过头了不用一点点蹭回来。
+    中间那一列复位到「自适应」（跟着窗口走），而不是某个写死的像素值 ——
+    它的默认状态本来就是自适应，复位自然该回到那里。 */
 function onDoubleClick() {
-  const defaults = { sidebar: 232, column: 296, outline: 176 }
+  if (props.target === 'column') {
+    store.resetColumnWidth()
+    return
+  }
+  const defaults = { sidebar: 232, outline: 176 }
   store.setWidth(props.target, defaults[props.target])
 }
 </script>
@@ -72,7 +80,7 @@ function onDoubleClick() {
     aria-orientation="vertical"
     :aria-label="label"
     :data-target="target"
-    :title="`${label}（双击复位）`"
+    :title="`${label}（双击复位${target === 'column' ? '为自适应' : ''}）`"
     @pointerdown="onDown"
     @dblclick="onDoubleClick"
   />

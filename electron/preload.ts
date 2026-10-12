@@ -54,8 +54,9 @@ contextBridge.exposeInMainWorld('api', {
   /* 回收站：删除的笔记进 .nota/trash，可恢复可彻底删 */
   trashList: (
     root: string,
-  ): Promise<{ key: string; rel: string; name: string; deletedAt: number; size: number }[]> =>
-    ipcRenderer.invoke('trash:list', root),
+  ): Promise<
+    { key: string; rel: string; name: string; deletedAt: number; size: number; isDir?: boolean }[]
+  > => ipcRenderer.invoke('trash:list', root),
   trashRestore: (root: string, key: string): Promise<string> =>
     ipcRenderer.invoke('trash:restore', root, key),
   trashPurge: (root: string, key: string): Promise<boolean> =>
@@ -70,6 +71,11 @@ contextBridge.exposeInMainWorld('api', {
   > => ipcRenderer.invoke('attach:list', root),
   attachDelete: (root: string, rel: string): Promise<boolean> =>
     ipcRenderer.invoke('attach:delete', root, rel),
+  /* 批量导入任意文件（图片/视频/压缩包/文档…）到 attachments/ */
+  attachImport: (
+    root: string,
+  ): Promise<{ rel: string; name: string; size: number; mtime: number; isVideo: boolean }[]> =>
+    ipcRenderer.invoke('attach:import', root),
 
   /* AI：请求在主进程发出，绕开渲染进程的 CORS 限制。
      回答是流式的：onAiDelta 收增量，aiChat 的 Promise 在流结束时才 resolve。 */

@@ -6,7 +6,23 @@ import type { TreeNode } from '@/store'
 import ConfirmDialog from '@/components/ConfirmDialog.vue'
 
 const props = defineProps<{ node: TreeNode; depth?: number }>()
+
+/**
+ * 右键不在这层弹菜单。
+ *
+ * 目录树是递归的：每一层都挂一份菜单组件，会有几十个实例各带一个弹窗，
+ * 而且它们全都 Teleport 到 body，谁在上面全看挂载顺序。
+ * 所以这里只负责把「在哪儿右键了哪一个」报上去，由 SidePanel 统一弹一份。
+ */
+const emit = defineEmits<{
+  (e: 'menu', payload: { x: number; y: number; node: TreeNode }): void
+}>()
+
 const { state } = store
+
+function onContextMenu(e: MouseEvent) {
+  emit('menu', { x: e.clientX, y: e.clientY, node: props.node })
+}
 
 const depth = computed(() => props.depth ?? 0)
 const nameInput = ref<HTMLInputElement | null>(null)
@@ -54,6 +70,7 @@ function onKey(e: KeyboardEvent) {
         class="row dir"
         :style="{ paddingLeft: 4 + depth * 13 + 'px' }"
         @click="store.toggleDir(node.path)"
+        @contextmenu.prevent="onContextMenu"
       >
         <ChevronRight class="chev" :class="{ open: isOpen }" :size="12" :stroke-width="2.2" />
         <span class="ico">
@@ -63,7 +80,13 @@ function onKey(e: KeyboardEvent) {
         <span class="name dir">{{ node.name }}</span>
       </button>
       <ul v-show="isOpen" class="list">
-        <TreeNodeItem v-for="c in node.children" :key="c.path" :node="c" :depth="depth + 1" />
+        <TreeNodeItem
+          v-for="c in node.children"
+          :key="c.path"
+          :node="c"
+          :depth="depth + 1"
+          @menu="(p) => emit('menu', p)"
+        />
       </ul>
     </template>
 
@@ -84,6 +107,7 @@ function onKey(e: KeyboardEvent) {
         :style="{ paddingLeft: 4 + depth * 13 + 'px' }"
         @click="store.openNote(node.path)"
         @dblclick="startRename"
+        @contextmenu.prevent="onContextMenu"
       >
         <span class="chev-slot" />
         <span class="ico">
@@ -202,6 +226,7 @@ function onKey(e: KeyboardEvent) {
 }
 
 .del {
+  padding: 0;
   position: absolute;
   right: 4px;
   width: 26px;

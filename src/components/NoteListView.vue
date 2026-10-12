@@ -14,7 +14,7 @@
  * 不额外读盘，所以开着这一栏也不会让打开工作区变慢。
  */
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
-import { FilePlus2, Search, Star, Trash2, X } from 'lucide-vue-next'
+import { Search, Star, Trash2, X } from 'lucide-vue-next'
 import { store } from '@/store'
 import type { TreeNode } from '@/store'
 import NoteContextMenu, { type NoteExportKind } from '@/components/NoteContextMenu.vue'
@@ -116,6 +116,11 @@ function onMenuStar() {
   closeMenu()
   if (!p) return
   void store.toggleStar(p).then((on) => toast(on ? '已收藏' : '已取消收藏'))
+}
+
+/** 卡片上那枚星：不用开右键菜单也能收藏 */
+function toggleStar(f: TreeNode) {
+  void store.toggleStar(f.path).then((on) => toast(on ? `已收藏《${f.name.replace(/\.md$/i, '')}》` : '已取消收藏'))
 }
 
 function onMenuOpen() {
@@ -223,20 +228,21 @@ onBeforeUnmount(() => {
       </button>
     </div>
 
+    <!-- 这条只报「这一列里有什么」：标题和条数。
+         新建 / 导入两枚按钮已经挪到编辑区顶栏（见 EditorActions），
+         理由写在那边 —— 它们跟「这个列表里有什么」本来就不相干。 -->
     <div class="nl-head">
       <span class="nl-title">{{ title }}</span>
       <span class="nl-count">{{ files.length }}</span>
-      <span class="nl-acts">
-        <button class="nl-btn" data-tip="新建笔记 (Ctrl+N)" @click="store.newNote()">
-          <FilePlus2 :size="14" :stroke-width="1.9" />
-        </button>
-      </span>
     </div>
 
     <div class="nl-scroll">
       <div v-if="state.loading" class="nl-empty">读取中…</div>
+      <!-- 空态不再摆两枚大按钮：按钮一出现界面就跳一下，
+           而且同一件事在上面的顶栏里一直有个更稳的入口。 -->
       <div v-else-if="files.length === 0" class="nl-empty">
-        {{ state.searchQuery || state.activeTag ? '这里没有匹配的笔记' : '这里还没有 .md 文件' }}
+        <template v-if="state.searchQuery || state.activeTag">这里没有匹配的笔记</template>
+        <template v-else>这里还没有 .md 文件。</template>
       </div>
       <template v-else>
         <div
@@ -253,7 +259,6 @@ onBeforeUnmount(() => {
         >
           <span class="nl-name">
             <span class="nl-text">{{ f.name.replace(/\.md$/i, '') }}</span>
-            <Star v-if="f.starred" class="nl-star" :size="11" :stroke-width="2" />
           </span>
           <span v-if="f.excerpt" class="nl-excerpt">{{ f.excerpt }}</span>
           <span class="nl-meta">
@@ -266,8 +271,16 @@ onBeforeUnmount(() => {
             <span v-if="!f.tags?.length" class="nl-tag nl-tag-none">未打标签</span>
           </span>
 
-          <!-- 删除：先上膛，再确认。不删就点别处，它自己会退回去 -->
-          <span class="nl-acts">
+          <!-- 删除 / 收藏：先上膛，再确认。不删就点别处，它自己会退回去 -->
+          <span class="nl-card-acts">
+            <button
+              class="nl-star-btn"
+              :class="{ on: f.starred }"
+              :title="f.starred ? '取消收藏' : '收藏'"
+              @click.stop="toggleStar(f)"
+            >
+              <Star :size="13" :stroke-width="1.9" />
+            </button>
             <template v-if="confirmPath === f.path">
               <button class="nl-del-yes" @click.stop="doRemove(f.path, f.name.replace(/\.md$/i, ''))">
                 确认删除
@@ -391,6 +404,7 @@ onBeforeUnmount(() => {
 }
 
 .nl-search-x {
+  padding: 0;
   flex: none;
   width: 18px;
   height: 18px;
@@ -444,56 +458,6 @@ onBeforeUnmount(() => {
   color: var(--n-fg-faint);
 }
 
-.nl-acts {
-  margin-left: auto;
-  display: flex;
-  align-items: center;
-  gap: 1px;
-}
-
-.nl-btn {
-  position: relative;
-  width: 24px;
-  height: 24px;
-  padding: 0;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: var(--n-r-sm);
-  color: var(--n-fg-dim);
-  transition: background var(--n-dur) var(--n-ease), color var(--n-dur) var(--n-ease);
-}
-
-.nl-btn:hover {
-  background: var(--n-raised);
-  color: var(--n-accent);
-}
-
-/* 悬停提示：和折叠窄轨同一套做法，纯 CSS 向右探出 */
-.nl-btn::after {
-  content: attr(data-tip);
-  position: absolute;
-  left: calc(100% + 8px);
-  top: 50%;
-  z-index: 60;
-  padding: 4px 8px;
-  border-radius: 6px;
-  background: var(--n-fg);
-  color: var(--n-bg);
-  font-size: 11.5px;
-  white-space: nowrap;
-  opacity: 0;
-  transform: translateY(-50%) translateX(-4px);
-  pointer-events: none;
-  transition: opacity 130ms var(--n-ease), transform 130ms var(--n-ease);
-  box-shadow: var(--n-shadow-md);
-}
-
-.nl-btn:hover::after {
-  opacity: 1;
-  transform: translateY(-50%) translateX(0);
-}
-
 .nl-head svg {
   fill: none;
   stroke: currentColor;
@@ -512,6 +476,7 @@ onBeforeUnmount(() => {
   line-height: 1.7;
   color: var(--n-fg-faint);
 }
+
 
 /* ── 一条笔记 ──
    注意它是 div 而不是 button：卡片里还住着「删除」按钮，
@@ -540,14 +505,55 @@ onBeforeUnmount(() => {
   box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--n-danger) 42%, transparent);
 }
 
-/* ── 卡片右上角那两个动作 ── */
-.nl-acts {
+/* ── 卡片右上角那几个动作 ──
+   曾经它和头部那组按钮都叫 .nl-acts，重名的结果是头部的「新建笔记」
+   吃到了这里的 position:absolute，一路飘到窗口右上角、正好压在关闭按钮上
+   （看起来就像关闭键上多了个「添加」图标）。名字拆开之后就没这回事了。 */
+.nl-card-acts {
   position: absolute;
   top: 6px;
   right: 6px;
   display: flex;
   align-items: center;
   gap: 4px;
+}
+
+.nl-star-btn {
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--n-r-sm);
+  color: var(--n-fg-faint);
+  opacity: 0;
+  transition: opacity var(--n-dur) var(--n-ease), background var(--n-dur) var(--n-ease),
+    color var(--n-dur) var(--n-ease);
+}
+
+.nl-star-btn.on {
+  opacity: 1;
+  color: var(--n-accent);
+}
+
+.nl-star-btn.on svg {
+  fill: currentColor;
+}
+
+.nl-item:hover .nl-star-btn,
+.nl-item:focus-within .nl-star-btn {
+  opacity: 1;
+}
+
+.nl-star-btn:hover {
+  background: color-mix(in oklab, var(--n-accent) 16%, transparent);
+  color: var(--n-accent);
+}
+
+.nl-star-btn svg {
+  fill: none;
+  stroke: currentColor;
 }
 
 .nl-del {

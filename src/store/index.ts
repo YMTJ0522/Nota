@@ -105,19 +105,29 @@ export interface AiConfig {
 
 export const AI_DEFAULTS: AiConfig = {
   enabled: true,
-  baseUrl: 'http://localhost:11434/v1',
+  baseUrl: 'http://127.0.0.1:11434/v1',
   model: 'llama3.2',
   apiKey: '',
   system: '你是写作助手。回答要简洁，直接给出结果，不要复述问题。',
   temperature: 0.7,
 }
 
-/** 常见本地/云端服务的预设，省得手打地址 */
+/**
+ * 常见本地/云端服务的预设，省得手打地址。
+ *
+ * 本地那两个写 127.0.0.1 而不是 localhost：Ollama / LM Studio 默认只监听
+ * IPv4，而 Windows 上 localhost 会先解析到 IPv6 的 ::1，连不上时看起来就是
+ * 「同一个地址有时候能测通、有时候不能」。主进程里另有一层兜底（见 main.ts
+ * 的 hostCandidates），但预设本身先给对的那个更省事。
+ */
 export const AI_PRESETS: { label: string; baseUrl: string; model: string }[] = [
-  { label: 'Ollama（本地）', baseUrl: 'http://localhost:11434/v1', model: 'llama3.2' },
-  { label: 'LM Studio（本地）', baseUrl: 'http://localhost:1234/v1', model: 'local-model' },
+  { label: 'Ollama（本地）', baseUrl: 'http://127.0.0.1:11434/v1', model: 'llama3.2' },
+  { label: 'LM Studio（本地）', baseUrl: 'http://127.0.0.1:1234/v1', model: 'local-model' },
   { label: 'OpenAI', baseUrl: 'https://api.openai.com/v1', model: 'gpt-4o-mini' },
   { label: 'DeepSeek', baseUrl: 'https://api.deepseek.com/v1', model: 'deepseek-chat' },
+  { label: '月之暗面 Kimi', baseUrl: 'https://api.moonshot.cn/v1', model: 'moonshot-v1-8k' },
+  { label: '智谱 GLM', baseUrl: 'https://open.bigmodel.cn/api/paas/v4', model: 'glm-4-flash' },
+  { label: '硅基流动', baseUrl: 'https://api.siliconflow.cn/v1', model: 'Qwen/Qwen2.5-7B-Instruct' },
 ]
 
 /** 设置里的色板列表：swatch 只用于画圆点，不参与真正的取色 */
@@ -192,6 +202,11 @@ interface State {
   sidebarWidth: number
   columnWidth: number
   outlineWidth: number
+  /** 中间那一列的宽度是不是「自适应窗口」。
+      默认开着：这一列的读者视角是「正在跟 AI 聊 / 正在挑素材」，
+      窄窄一条固定宽度会让每句话都折成三四行。人一旦自己拖过，
+      就按他拖的来（自适应关掉），双击分隔线可以再回到自适应。 */
+  columnAuto: boolean
   /** 全部对话会话。每个会话自带一堆消息 */
   sessions: ChatSession[]
   /** 当前正在看的会话 id */
@@ -296,6 +311,7 @@ const state = reactive<State>({
   sidebarWidth: 232,
   columnWidth: 296,
   outlineWidth: 176,
+  columnAuto: true,
   sessions: [],
   activeSessionId: 0,
   chat: [],
@@ -462,6 +478,23 @@ async function openNote(path: string) {
   }
 }
 
+/**
+ * 版本快照的节流状态。
+ *
+ * 以前只有「非静默保存」才记版本，而自动保存一律走 silent —— 于是
+ * 用户从头到尾只按自动保存的话，历史里一个版本都没有，这个功能等于不存在。
+ *
+ * 但每次自动保存都记也不行：600ms 一次防抖意味着连打一行字就是十几份快照，
+ * 真正想找的那一次早被挤出 40 份的上限了。
+ *
+ * 所以按「内容变了 + 距上一份快照超过 SNAP_GAP_MS」来记：
+ *  - 手动保存（Ctrl+S / 切笔记 / 关窗）不设门槛，每次都记 —— 那是用户
+ *    明确表示「我在这里停一下」的时刻；
+ *  - 自动保存走门槛，一段连续输入只会留下一份。
+ */
+const SNAP_GAP_MS = 30_000
+let lastSnap = { path: '', text: '', at: 0 }
+
 async function saveNote(opts: { silent?: boolean } = {}) {
   if (opening) return
   if (!state.activePath || !dirty.value) return
@@ -472,10 +505,15 @@ async function saveNote(opts: { silent?: boolean } = {}) {
     await window.api.writeNote(path, content)
     state.savedDraft = content
     state.lastSavedAt = Date.now()
-    // 非静默保存（Ctrl+S、切笔记、关窗）时留一份版本快照。
-    // 自动保存太频繁，不每次都记，否则历史会被几秒钟的中间态淹没。
-    if (!opts.silent && state.root) {
-      await window.api.historySave?.(state.root, path, content)
+    if (state.root) {
+      const now = Date.now()
+      const sameNote = lastSnap.path === path
+      const changed = !sameNote || content !== lastSnap.text
+      const cooled = !opts.silent || now - lastSnap.at >= SNAP_GAP_MS
+      if (changed && cooled) {
+        lastSnap = { path, text: content, at: now }
+        await window.api.historySave?.(state.root, path, content)
+      }
     }
   } finally {
     state.saving = false
@@ -626,6 +664,102 @@ function setActiveTag(tag: string | null) {
   state.activeTag = state.activeTag === tag ? null : tag
   // 标签就是一份筛选结果，切了就得让列表露出来
   showNoteList()
+}
+
+/**
+ * 改一个标签：改名或删掉（newName 传 null 就是删）。
+ *
+ * 标签没有自己的库，它是每篇笔记 frontmatter 里的一行，所以「删标签」
+ * 必然是「把所有带这个标签的笔记都改一遍」—— 这里就直接做这件事，
+ * 不做「看起来删了、其实还在」的假动作。
+ *
+ * 只动带这个标签的笔记，别的笔记一个字节都不碰。
+ * 当前正在编辑的那篇改的是 draft（走既有的保存通道），
+ * 其余的直接读写磁盘，改完刷新一次目录树，侧栏的标签清单立刻跟着变。
+ *
+ * @returns 真正改过的笔记篇数
+ */
+async function retagNotes(oldName: string, newName: string | null): Promise<number> {
+  const from = oldName.trim()
+  if (!from) return 0
+  const to = newName?.trim() ?? null
+  const targets = allFiles.value.filter((f) => (f.tags ?? []).includes(from))
+  let n = 0
+
+  for (const f of targets) {
+    const doc = f.path === state.activePath ? state.draft : await window.api.readNote(f.path)
+    const next = retagDoc(doc, from, to)
+    if (next === doc) continue
+
+    if (f.path === state.activePath) {
+      // 正在写的那篇改 draft：编辑器会跟着同步，自动保存也会照常落盘
+      state.draft = next
+    } else {
+      await window.api.writeNote(f.path, next)
+    }
+    n++
+  }
+
+  if (n > 0) {
+    if (state.activeTag === from) state.activeTag = to
+    await refreshTree()
+  }
+  return n
+}
+
+/** frontmatter 里 tags 那一行的位置与写法 */
+function findTagsLine(lines: string[]) {
+  const at = lines.findIndex((l) => /^(tags|tag)[ \t]*:/.test(l))
+  if (at < 0) return null
+  const inline = /^(tags|tag)[ \t]*:[ \t]*(\[.*\])$/.exec(lines[at])
+  if (inline) {
+    const items = inline[2]
+      .slice(1, -1)
+      .split(',')
+      .map((s) => s.trim().replace(/^["']|["']$/g, ''))
+      .filter(Boolean)
+    return { at, key: inline[1], block: false, items, end: at }
+  }
+  // 块式：`tags:` 下面缩进挂一串 `- 名`
+  let end = at
+  const items: string[] = []
+  for (let i = at + 1; i < lines.length; i++) {
+    const item = /^[ \t]*-[ \t]+(.*)$/.exec(lines[i] ?? '')
+    if (!item) break
+    items.push(item[1].trim().replace(/^["']|["']$/g, ''))
+    end = i
+  }
+  const key = /^(tags|tag)/.exec(lines[at])?.[1] ?? 'tags'
+  return { at, key, block: true, items, end }
+}
+
+/**
+ * 在 frontmatter 里把一个标签换成另一个（或去掉）；`[a, b]` 与 `- a` 两种写法都认。
+ * 没有 frontmatter、或这篇根本没这个标签时原样返回，调用方据此判断「有没有改动」。
+ */
+function retagDoc(doc: string, from: string, to: string | null): string {
+  const fm = doc.match(/^---\r?\n([\s\S]*?)\r?\n---[ \t]*\r?\n?/)
+  if (!fm) return doc
+
+  const lines = fm[1].split('\n')
+  const found = findTagsLine(lines)
+  if (!found || !found.items.includes(from)) return doc
+
+  const next = found.items.map((t) => (t === from ? to : t)).filter((t): t is string => !!t)
+
+  /* 一个标签都不剩就把整段 tags 拿掉 —— 留一个空的 `tags:` 在开头，
+     每次打开这篇都会看到一行没用的元数据。 */
+  const replaced =
+    next.length === 0
+      ? []
+      : found.block
+        ? [`${found.key}:`, ...next.map((t) => `  - ${t}`)]
+        : [`${found.key}: [${next.join(', ')}]`]
+
+  const head = [...lines.slice(0, found.at), ...replaced, ...lines.slice(found.end + 1)]
+  const body = head.join('\n').replace(/\n{2,}/g, '\n').replace(/^\n+|\n+$/g, '')
+  const tail = doc.slice(fm[0].length)
+  return body ? `---\n${body}\n---\n${tail}` : tail.replace(/^\n+/, '')
 }
 
 /** 把中间那一列拉回笔记列表。点导航、点标签时都要先走这一步，
@@ -832,6 +966,8 @@ export const NOTE_TABS: ColumnView[] = ['notes', 'outline', 'quote']
 const COLUMN_VIEWS: ColumnView[] = ['notes', 'outline', 'quote', 'attach', 'trash', 'ai']
 
 const COLUMN_KEY = 'nota-column'
+/** 中间那一列是不是还在「自适应」（人拖过就变 0） */
+const COLUMN_AUTO_KEY = 'nota-column-auto'
 const AI_NOTE_KEY = 'nota-ai-note'
 const AI_WITH_NOTE_KEY = 'nota-ai-withnote'
 
@@ -866,9 +1002,50 @@ function clampWidth(key: WidthKey, v: number) {
 function setWidth(key: WidthKey, v: number) {
   const next = clampWidth(key, v)
   if (key === 'sidebar') state.sidebarWidth = next
-  else if (key === 'column') state.columnWidth = next
-  else state.outlineWidth = next
+  else if (key === 'column') {
+    state.columnWidth = next
+    // 人自己拖过，就别再拿自适应覆盖他的选择（这个决定要跟着人走，重启也别偷偷改回来）
+    state.columnAuto = false
+    localStorage.setItem(COLUMN_AUTO_KEY, '0')
+  } else state.outlineWidth = next
   localStorage.setItem(`nota-w-${key}`, String(next))
+  return next
+}
+
+/** 每个视图「刚刚好」要占窗口的多少。
+    聊天要的是能读成句的行宽，笔记列表要的是扫一眼能看全一屏，
+    两者差得不少 —— 一个固定比例必然有一边别扭，所以按视图各给一个。 */
+const AUTO_RATIO: Record<string, { r: number; max: number }> = {
+  ai: { r: 0.32, max: 520 },
+  notes: { r: 0.22, max: 340 },
+  outline: { r: 0.22, max: 340 },
+  quote: { r: 0.22, max: 340 },
+  attach: { r: 0.26, max: 400 },
+  trash: { r: 0.26, max: 400 },
+}
+
+/** 中间那一列的「自适应」宽度：窗口越宽它越宽，但始终给编辑区留够地方。
+    上下都收在 WIDTH_LIMITS.column 里，跟拖动时的钳制保持一致。 */
+export function autoColumnWidth(winW: number, view: string = 'notes') {
+  const { r, max } = AUTO_RATIO[view] ?? AUTO_RATIO.notes
+  return clampWidth('column', Math.min(winW * r, max, winW - 520))
+}
+
+/** 中间那一列现在实际占多宽：自适应时是算出来的，人手动调过就是存的那个值。
+    拖动分隔线必须从「眼睛看到的这个宽度」起算 —— 拿 state.columnWidth 当起点的话，
+    自适应状态下第一拖会莫名其妙地跳一下（存的 296 和显示的 330 不是一回事）。 */
+export function effectiveColumnWidth(winW: number = window.innerWidth) {
+  return state.columnAuto ? autoColumnWidth(winW, state.columnView) : state.columnWidth
+}
+
+/** 回到自适应（双击中间那道分隔线）。
+    宽度照样落盘 —— 下次再拖是从这个宽度起步，只是「自适应」这个开关重新打开。 */
+function resetColumnWidth() {
+  const next = autoColumnWidth(window.innerWidth, state.columnView)
+  state.columnWidth = next
+  state.columnAuto = true
+  localStorage.setItem('nota-w-column', String(next))
+  localStorage.setItem(COLUMN_AUTO_KEY, '1')
   return next
 }
 
@@ -917,8 +1094,16 @@ function initPrefs() {
   state.aiWithNote = localStorage.getItem(AI_WITH_NOTE_KEY) !== '0'
   for (const key of ['sidebar', 'column', 'outline'] as WidthKey[]) {
     const raw = Number(localStorage.getItem(`nota-w-${key}`))
-    if (raw > 0) setWidth(key, raw)
+    if (raw > 0) {
+      const next = clampWidth(key, raw)
+      if (key === 'sidebar') state.sidebarWidth = next
+      else if (key === 'column') state.columnWidth = next
+      else state.outlineWidth = next
+    }
   }
+  // 「自适应」是个独立的开关：只要人没拖过分隔线，重启后仍然是自适应，
+  // 哪怕磁盘上还留着上次量出来的宽度（它只是下次手拖的起点）。
+  state.columnAuto = localStorage.getItem(COLUMN_AUTO_KEY) !== '0'
   const v = localStorage.getItem('nota-view')
   if (v === 'write' || v === 'split' || v === 'read') state.viewMode = v
   initAccent()
@@ -1460,6 +1645,7 @@ export const store = {
   commitNewFolder,
   cancelNewFolder,
   setActiveTag,
+  retagNotes,
   setTheme,
   setAccent,
   setAiConfig,
@@ -1473,6 +1659,9 @@ export const store = {
   toggleColumn,
   NOTE_TABS,
   setWidth,
+  autoColumnWidth,
+  effectiveColumnWidth,
+  resetColumnWidth,
   WIDTH_LIMITS,
   setViewMode,
   setNavFilter,

@@ -88,6 +88,7 @@ function isActive(id: SlashCommandId) {
 }
 
 .ico {
+  padding: 0;
   flex: none;
   width: 20px;
   height: 20px;

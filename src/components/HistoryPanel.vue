@@ -51,6 +51,14 @@ watch(
   },
 )
 
+/* 抽屉开着时换了笔记：跟着换，否则列出的还是上一篇的版本 */
+watch(
+  () => state.activePath,
+  () => {
+    if (props.open) load()
+  },
+)
+
 async function pick(it: Item) {
   active.value = it
   preview.value = (await window.api.historyRead?.(it.path)) ?? ''
@@ -94,7 +102,7 @@ function fmtSize(n: number) {
           <div class="hp-list">
             <div v-if="loading" class="hp-hint">读取中…</div>
             <div v-else-if="items.length === 0" class="hp-hint">
-              还没有历史版本。<br />保存一次（Ctrl+S）就会留下一个快照。
+              这篇还没有历史版本。<br />改动会被自动保存，保存后这里就多一个快照。
             </div>
             <button
               v-for="it in items"
@@ -183,6 +191,7 @@ function fmtSize(n: number) {
 }
 
 .hp-x {
+  padding: 0;
   width: 28px;
   height: 28px;
   display: inline-flex;

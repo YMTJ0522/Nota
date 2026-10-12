@@ -240,7 +240,8 @@ const top = await evaluate(`(() => {
     })(),
     // 侧栏顶行那枚开关还在（折叠后靠它回来）
     sidebarToggle: !!document.querySelector('.panel [data-role="sidebar-toggle"]'),
-    columnToggle: !!document.querySelector('.ph [data-role="column-toggle"]'),
+    // 2.2：资料栏的收起开关并到侧栏顶行去了（跟侧边栏的收起并排），编辑区顶行只留本行的操作
+    columnToggle: !!document.querySelector('.panel [data-role="column-toggle"]'),
     // 旧标题栏的品牌 logo 不该再出现；文件名也不该再糊在侧栏顶上（它现在归右侧那条）
     oldMark: !!document.querySelector('.bar .mark'),
     sideHeadText: document.querySelector('.panel .head .head-title')?.textContent?.trim() ?? '',
@@ -355,10 +356,10 @@ const shape = await evaluate(`(() => {
   return {
     exists: !!el,
     // 顶部：它盯的是哪一篇
-    card: !!q('.ag-card'),
+    card: !!q('.ag-head .ag-row-top'),
     agentName: q('.ag-name')?.textContent?.trim() ?? '',
     agentSub: q('.ag-sub')?.textContent?.trim() ?? '',
-    cardClose: !!q('.ag-card .ag-x'),
+    cardClose: !!q('.ag-head .ag-x'),
     // 2.0.0：这一道不再是「指令行」，改成了「会话行」——
     // 会话名 + 新建 + 删除当前会话，一并搬到了卡片正下方。
     sess: !!q('.ag-sess'),
@@ -374,14 +375,14 @@ const shape = await evaluate(`(() => {
     input: q('.composer .input')?.getAttribute('placeholder') ?? '',
     send: !!q('.composer .send'),
     model: q('.ag-model-name')?.textContent?.trim() ?? '',
-    session: !!q('.ss-wrap .ag-mini'),
+    session: (el?.querySelectorAll('.ag-sess .ag-mini').length ?? 0) >= 2,
     // 空态也得有话说
     emptyTitle: q('.ag-empty-title')?.textContent?.trim() ?? '',
     height: Math.round(el?.getBoundingClientRect().height ?? 0),
   }
 })()`)
 ok(
-  '6.AI 面板按参考图重排：卡片 / 会话行 / 上下文开关与笔记选择 / 消息流 / 快捷指令 / 输入区 / 模型与发送',
+  '6.AI 面板按参考图重排：顶部设定面板 / 会话行 / 上下文开关与笔记选择 / 消息流 / 快捷指令 / 输入区 / 模型与发送',
   shape.exists && shape.card && shape.agentName === 'AI 助手' &&
     shape.agentSub.includes('笔记') && shape.cardClose &&
     shape.sess && !!shape.sessName &&
