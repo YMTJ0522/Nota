@@ -303,22 +303,33 @@ defineExpose({ count: computed(() => items.value.length), reload: load })
              原来它们吊在窗口底边，离鼠标和卡片都很远，一屏看下来
              最显眼的反而是那条压在最下面的灰带子。 -->
         <div v-if="selectMode" class="av-bar">
-          <button class="pn-link" @click="sel.length === items.length ? clearSel() : selectAll()">
+          <button
+            class="pn-link"
+            data-act="all"
+            @click="sel.length === items.length ? clearSel() : selectAll()"
+          >
             {{ sel.length === items.length ? '取消全选' : '全选' }}
           </button>
-          <span class="av-bar-n">已选 {{ sel.length }} 个</span>
           <span class="av-bar-sp" />
-          <button class="pn-btn" :disabled="sel.length === 0" @click="insertMany(selectedItems)">
-            插入所选
+          <button
+            class="pn-btn"
+            data-act="insert"
+            title="把所选插入到当前笔记"
+            :disabled="sel.length === 0"
+            @click="insertMany(selectedItems)"
+          >
+            插入
           </button>
           <button
             class="pn-btn danger"
+            data-act="delete"
+            title="从附件库删除所选"
             :disabled="sel.length === 0"
             @click="pending = { list: selectedItems }"
           >
-            删除所选
+            删除
           </button>
-          <button class="pn-btn" @click="endSelect">完成</button>
+          <button class="pn-btn" data-act="done" title="退出多选" @click="endSelect">完成</button>
         </div>
         <div class="av-grid" :class="{ picking: selectMode }">
           <div
@@ -400,22 +411,30 @@ defineExpose({ count: computed(() => items.value.length), reload: load })
   gap: 10px;
 }
 
+/**
+ * 多选工具条。
+ *
+ * 「已选 N 个」不再在这儿写一遍 —— 顶栏的 `.pn-sub` 已经显示 `已选 N / M`，
+ * 同一件事写两处既占地方，又把这条窄栏挤爆（资料栏自适应宽度可以窄到 240px）。
+ * 批量按钮同理：字收成两个，完整说法放进 title。
+ *
+ * flex-wrap 是保险丝：真被压到放不下时，宁可整齐地折成两行，
+ * 也不要让 flex 把按钮捏扁、文字在里面换行（2.2.2 之前就是这个样子）。
+ */
 .av-bar {
   flex: none;
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 8px;
+  row-gap: 6px;
   margin-bottom: 8px;
-}
-
-.av-bar-n {
-  font-size: 11px;
-  color: var(--n-accent);
 }
 
 /* 把批量按钮推到右边：左边是「挑哪些」，右边是「对这些做什么」 */
 .av-bar-sp {
   flex: 1;
+  min-width: 0;
 }
 
 /* 工具条上的批量按钮：小一号，贴着顶栏不抢戏 */

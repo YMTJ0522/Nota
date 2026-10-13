@@ -1080,15 +1080,36 @@ function clampWidth(key: WidthKey, v: number) {
   return Math.max(min, Math.min(max, Math.round(v)))
 }
 
+/** 侧栏此刻实际占多宽（收成窄轨时是 48，不是它存着的宽度） */
+function sidebarNow(winW: number = window.innerWidth) {
+  return state.sidebar ? Math.min(state.sidebarWidth, winW) : WIDTH_LIMITS.sidebar.collapsed
+}
+
+/** 中间那一列最多能占多少：先把侧栏和编辑区各自的那份让出来，剩下的才是它的。
+    少了这一步，拖动 / 自适应都可能把编辑区压到没地方放顶行，最后挤出去的是窗口按钮。 */
+export function maxColumnWidth(winW: number = window.innerWidth) {
+  return Math.max(WIDTH_LIMITS.column.min, winW - sidebarNow(winW) - EDITOR_MIN_WIDTH)
+}
+
+/** 反过来给侧栏算上限（同一个道理，只是换一边让路） */
+export function maxSidebarWidth(winW: number = window.innerWidth) {
+  const colW = state.column ? Math.min(effectiveColumnWidth(winW), WIDTH_LIMITS.column.min) : 0
+  return Math.max(WIDTH_LIMITS.sidebar.min, winW - colW - EDITOR_MIN_WIDTH)
+}
+
 function setWidth(key: WidthKey, v: number) {
-  const next = clampWidth(key, v)
-  if (key === 'sidebar') state.sidebarWidth = next
+  let next = clampWidth(key, v)
+  // 两边都不许把编辑区挤到它站不住的地方：写在广阔的窗口里拖宽过的比例，
+  // 换个窄窗口不一定还成立。
+  if (key === 'sidebar') next = Math.max(WIDTH_LIMITS.sidebar.min, Math.min(next, maxSidebarWidth()))
   else if (key === 'column') {
+    next = Math.max(WIDTH_LIMITS.column.min, Math.min(next, maxColumnWidth()))
     state.columnWidth = next
     // 人自己拖过，就别再拿自适应覆盖他的选择（这个决定要跟着人走，重启也别偷偷改回来）
     state.columnAuto = false
     localStorage.setItem(COLUMN_AUTO_KEY, '0')
   } else state.outlineWidth = next
+  if (key === 'sidebar') state.sidebarWidth = next
   localStorage.setItem(`nota-w-${key}`, String(next))
   return next
 }
@@ -1105,18 +1126,24 @@ const AUTO_RATIO: Record<string, { r: number; max: number }> = {
   trash: { r: 0.26, max: 400 },
 }
 
+/** 编辑区再挤也不能比这更窄：再窄顶行那一排就装不下了（每一栏都留着自己的底线）。
+    顶行自己还有一套「挤窄降级」（见 EditorPane 的 data-crammed），两者配合着用。 */
+export const EDITOR_MIN_WIDTH = 520
+
 /** 中间那一列的「自适应」宽度：窗口越宽它越宽，但始终给编辑区留够地方。
     上下都收在 WIDTH_LIMITS.column 里，跟拖动时的钳制保持一致。 */
 export function autoColumnWidth(winW: number, view: string = 'notes') {
   const { r, max } = AUTO_RATIO[view] ?? AUTO_RATIO.notes
-  return clampWidth('column', Math.min(winW * r, max, winW - 520))
+  return clampWidth('column', Math.min(winW * r, max, maxColumnWidth(winW)))
 }
 
 /** 中间那一列现在实际占多宽：自适应时是算出来的，人手动调过就是存的那个值。
     拖动分隔线必须从「眼睛看到的这个宽度」起算 —— 拿 state.columnWidth 当起点的话，
     自适应状态下第一拖会莫名其妙地跳一下（存的 296 和显示的 330 不是一回事）。 */
 export function effectiveColumnWidth(winW: number = window.innerWidth) {
-  return state.columnAuto ? autoColumnWidth(winW, state.columnView) : state.columnWidth
+  // 从「上次那个宽窗口」恢复到窄窗口时，存着的宽度可能已经站不下了 —— 照样收一次上限
+  const cap = maxColumnWidth(winW)
+  return Math.min(state.columnAuto ? autoColumnWidth(winW, state.columnView) : state.columnWidth, cap)
 }
 
 /** 回到自适应（双击中间那道分隔线）。

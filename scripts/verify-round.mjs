@@ -295,7 +295,7 @@ const header = await evaluate(`(async () => {
   if (menuBtn) menuBtn.click()
   // 版本历史已经从下拉里独立出来，成了顶栏自己的一枚按钮
   const histBtn = document.querySelector('.ea-btn[title="版本历史"]')
-  const impBtn = document.querySelector('.ea-btn[title^="导入"]')
+  const impBtn = document.querySelector('.col-act[title^="导入"]')
   return {
     saveText: save ? save.textContent.trim() : null,
     saveClass: save ? save.className : null,

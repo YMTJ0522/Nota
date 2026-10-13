@@ -263,9 +263,10 @@ ok(
 
 /* ── 4. 资料栏收起展开 + 落盘 ──
    1.9.0：横贯整窗的标题栏去掉了，这枚开关跟着右侧编辑区走 ——
-   它现在在编辑区顶行（和侧栏顶行那枚各管各的）。 */
+   2.2.2 又把它从编辑区顶行并到侧栏顶行（和「收起侧边栏」排在一起），
+   收起之后这一组按钮还在窄轨上，所以自己也管得了自己的复原。 */
 const collapse = await evaluate(`(async () => {
-  const pick = () => document.querySelector('.ph [data-role="column-toggle"]')
+  const pick = () => document.querySelector('.panel .head [data-role="column-toggle"]')
   const btn = pick()
   if (!btn) return { err: 'no toggle' }
   btn.click()
@@ -282,9 +283,9 @@ ok(
   collapse,
 )
 
-/* ── 5. 顶栏三枚动作 + 导入 ── */
+/* ── 5. 顶栏动作 + 导入（导入 2.2.3 起住资料栏右上角） ── */
 const actions = await evaluate(`(async () => {
-  const imp = document.querySelector('.ea-btn[title^="导入"]')
+  const imp = document.querySelector('.col-act[title^="导入"]')
   const exp = document.querySelector('.ea-anchor')
   const hist = document.querySelector('.ea-btn[title="版本历史"]')
   if (!imp || !exp || !hist) return { err: 'missing buttons', imp: !!imp, exp: !!exp, hist: !!hist }
@@ -336,7 +337,8 @@ const toolbar = await evaluate(`(async () => {
 })()`)
 ok(
   '6.工具栏无 AI 下拉，搜索是自绘查找条',
-  !toolbar.ai && toolbar.wraps === 8 && toolbar.bar && toolbar.native === 0 && toolbar.closed,
+  // 下拉组数：2.1 加了「图表」「提示块」两组之后是 10 组（round10 第 3 条逐个数过）
+  !toolbar.ai && toolbar.wraps >= 10 && toolbar.bar && toolbar.native === 0 && toolbar.closed,
   toolbar,
 )
 

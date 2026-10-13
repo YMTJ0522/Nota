@@ -14,10 +14,25 @@
  * 开着 AI 对话也该同时看得见要改的那一篇 —— AI 铺满整屏反而把正文挡住了。
  *
  * 这一列可收（宽度还给正文）、可拖（见 SplitHandle），宽度都会记住。
+ *
+ * 顶行最右是「新建笔记 / 导入已有笔记」——一进一出，管的是「工作区里有哪些笔记」，
+ * 所以住在列表面这一侧，而不是编辑区顶行（那里剩下的是「对当前这一篇做什么」：
+ * 导出、版本历史）。
  */
-import { computed, watch } from 'vue'
-import { FileText, ListTree, Paperclip, Quote, Sparkles, Trash2 } from 'lucide-vue-next'
+import { computed, ref, watch } from 'vue'
+import {
+  FilePlus2,
+  FileText,
+  ListTree,
+  Loader2,
+  Paperclip,
+  Quote,
+  Sparkles,
+  Trash2,
+  Upload,
+} from 'lucide-vue-next'
 import { store } from '@/store'
+import { useFitTiers } from '@/composables/fit-tiers'
 import type { ColumnView } from '@/store'
 import NoteListView from './NoteListView.vue'
 import AttachView from './AttachView.vue'
@@ -27,6 +42,15 @@ import QuoteView from './QuoteView.vue'
 import AiChatPanel from './AiChatPanel.vue'
 
 const { state } = store
+
+/* 顶行挤窄时的让位：这一排放着三个页签（带计数）和两枚入口按钮，
+   栏宽到 220 的下限时它们会互相挤到一起去。
+   先收掉页签上的计数、再把页签内边距压到最小；
+   入住时间最晚的两枚按钮一直留着。
+   用哪一档由这一行自己试出来（见 useFitTiers）。 */
+const colEl = ref<HTMLElement | null>(null)
+const flowEl = ref<HTMLElement | null>(null)
+const { tier: flowTier } = useFitTiers(flowEl, colEl, 2)
 
 /**
  * 笔记这一类里的三种看法。
@@ -72,16 +96,43 @@ watch(
 function tabCount(id: ColumnView) {
   return id === 'notes' ? noteCount.value : 0
 }
+
+/**
+ * 新建：顺手把这一列切回「笔记」。
+ *
+ * 住在资料栏右上角，就得对得起这个位置 —— 在「大纲」「引用」页签下点它，
+ * 新笔记是建了，可眼前这一屏跟新笔记半点关系都没有，看着像没反应。
+ */
+async function doNew() {
+  if (!state.root) return
+  await store.newNote()
+  if (isNoteTab.value && view.value !== 'notes') store.setColumnView('notes')
+}
+
+/** 导入要读文件再写文件，给个转圈，免得以为点了没反应 */
+const importing = ref(false)
+
+async function doImport() {
+  if (importing.value) return
+  importing.value = true
+  try {
+    const added = await store.importNotes()
+    if (!added.length) return
+    window.dispatchEvent(
+      new CustomEvent('nota:toast', {
+        detail: `已导入 ${added.length} 篇：${added.map((a) => a.name).join('、')}`,
+      }),
+    )
+  } finally {
+    importing.value = false
+  }
+}
 </script>
 
 <template>
-  <section class="col" :data-view="view" aria-label="资料栏">
-    <header class="col-flow">
-      <!-- 笔记这一类：一排页签。
-           右上角以前还挂着两枚按钮 ——「新建笔记 +」和「收起这一栏」。
-           两个都是重复入口：新建在编辑区顶行（跟「导入已有笔记」并排），
-           收起到侧栏顶行（跟「收起侧边栏」并排），那两处哪个视图下都在，
-           这一条就纯属多写一遍。同一件事只留一个地方。 -->
+  <section ref="colEl" class="col" :data-view="view" aria-label="资料栏">
+    <header ref="flowEl" class="col-flow" :data-crammed="flowTier || null">
+      <!-- 笔记这一类：一排页签。 -->
       <template v-if="isNoteTab">
         <button
           v-for="t in NOTE_TABS"
@@ -108,6 +159,29 @@ function tabCount(id: ColumnView) {
         </span>
         <span class="col-spacer" />
       </template>
+
+      <!-- 一进一出，永远在这一列的右上角：
+           不管当前看的是笔记、附件还是 AI，收笔记的地方都在同一处。
+           「收起这一栏」不在这儿 —— 它在侧栏顶行，跟「收起侧边栏」并排。 -->
+      <button
+        class="col-act"
+        data-role="new-note"
+        title="新建笔记 (Ctrl+N)"
+        :disabled="!state.root"
+        @click="doNew"
+      >
+        <FilePlus2 :size="14" :stroke-width="1.9" />
+      </button>
+      <button
+        class="col-act"
+        data-role="import-note"
+        title="导入已有笔记"
+        :disabled="!state.root || importing"
+        @click="doImport"
+      >
+        <Loader2 v-if="importing" class="spinning" :size="14" :stroke-width="1.9" />
+        <Upload v-else :size="14" :stroke-width="1.9" />
+      </button>
     </header>
 
     <div class="col-body">
@@ -148,6 +222,27 @@ function tabCount(id: ColumnView) {
 
 .col-flow button {
   -webkit-app-region: no-drag;
+}
+
+/* 挤窄时的让位顺序（档位由 useFitTiers 试出来，详见脚本上方的说明）：
+   1 档 收掉页签上的计数 —— 它只是个数字，点开才知道有多少篇也不迟
+   2 档 再压页签的内边距与行间距 */
+.col-flow[data-crammed="1"],
+.col-flow[data-crammed="2"] {
+  padding: 0 4px 0 6px;
+}
+
+.col-flow[data-crammed="2"] {
+  gap: 0;
+}
+
+.col-flow[data-crammed="1"] .col-tab-n,
+.col-flow[data-crammed="2"] .col-tab-n {
+  display: none;
+}
+
+.col-flow[data-crammed="2"] .col-tab {
+  padding: 0 4px;
 }
 
 .col-tab {
@@ -215,10 +310,76 @@ function tabCount(id: ColumnView) {
   flex: 1;
 }
 
+/* 右上角的两枚动作：和页签同高、同圆角，看着是同一排里的东西 */
+.col-act {
+  flex: none;
+  width: 26px;
+  height: 24px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--n-r-sm);
+  color: var(--n-fg-dim);
+  transition:
+    background var(--n-dur) var(--n-ease),
+    color var(--n-dur) var(--n-ease);
+}
+
+.col-act svg {
+  fill: none;
+  stroke: currentColor;
+}
+
+.col-act:hover:not(:disabled) {
+  background: var(--n-raised);
+  color: var(--n-accent);
+}
+
+.col-act:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.spinning {
+  animation: col-spin 900ms linear infinite;
+}
+
+@keyframes col-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 .col-body {
   flex: 1;
   min-height: 0;
   display: flex;
   flex-direction: column;
+}
+
+/**
+ * 页签切换时内容淡入。
+ *
+ * 只做「进来」这一半，不做「出去」：Vue 的 v-if / v-else-if 本来就是
+ * 同一帧里拆旧装新，再配 out-in 反而中间会空出一百多毫秒的空白，
+ * 看着比不动画还卡。新的那块直接带一段极短的淡入 + 3px 上移就够顺了。
+ *
+ * 选择器写 `.col-body > *`：这几个视图各自是子组件，Vue 会把父组件的
+ * scope id 打到它们的根元素上，所以 scoped 样式够得着。
+ */
+.col-body > * {
+  animation: n-view-in 170ms var(--n-ease);
+}
+
+@keyframes n-view-in {
+  from {
+    opacity: 0;
+    transform: translateY(3px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
 }
 </style>

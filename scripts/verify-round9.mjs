@@ -318,8 +318,8 @@ const a2 = await evaluate(cmDoc())
 await evaluate(open('空的'))
 await sleep(1000)
 const emptyBefore = await evaluate(cmDoc())
-// 2.2：导入从中间栏的头部 / 空态撤走，跟「新建」并排住进编辑区顶行；按 title 认，别按下标
-await evaluate("document.querySelector('.ea-btn[title=\"导入已有笔记\"]')?.click()")
+// 2.2.3：导入跟「新建」并排住资料栏右上角（.col-act），不是编辑区顶行；按 title 认，别按下标
+await evaluate("document.querySelector('.col-act[title=\"导入已有笔记\"]')?.click()")
 await sleep(1400)
 const afterImport = await evaluate(`(() => ({
   doc: ${cmDoc()},

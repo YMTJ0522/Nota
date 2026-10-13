@@ -441,10 +441,11 @@ const about = await evaluate(`(async () => {
   tab?.click()
   await new Promise(r => setTimeout(r, 500))
   const dlg = document.querySelector('.st')
-  const rows = [...(dlg?.querySelectorAll('.st-mini') ?? [])].map(r => r.textContent.trim())
+  // 关于页 2.x 重排过：hero 叫 .ab-hero，环境四格叫 .ab-env-cell（原来那批 .st-* 已经没了）
+  const rows = [...(dlg?.querySelectorAll('.ab-env-cell') ?? [])].map(r => r.textContent.trim())
   const x = document.querySelector('.st-x'); if (x) x.click()
   await new Promise(r => setTimeout(r, 250))
-  return { rows, hasHero: !!dlg?.querySelector('.st-hero') }
+  return { rows, hasHero: !!dlg?.querySelector('.ab-hero') }
 })()`)
 ok(
   '13.关于页有运行环境',

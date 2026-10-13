@@ -423,9 +423,35 @@ export interface HeadingItem {
  *
  * 会跳过 front matter 和围栏代码块里的 `#`，免得把注释当成章节。
  */
+/**
+ * 标题锚点：从文字生成 slug，重名的在后面加序号。
+ *
+ * 为什么不用「第几个标题」当 id（2.2.2 之前就是 `h-0` / `h-1` …）：
+ * 大纲那份从源码提，预览这份从渲染后的 HTML 提，两边认到的标题集合并不
+ * 总是完全一样 —— setext 标题（`标题` 下面一行 `===`）在源码里看不出来，
+ * 引用块里的 `> # 标题` 源码那行又不以 `#` 开头。只要某一侧多认或少认一个，
+ * 之后所有编号就整体错位一格，点第三项会跳到第四项去。
+ *
+ * 改成按文字取名之后，即使某一侧多一个标题，错位的也只有那一个，
+ * 其余各项仍然各就各位。
+ */
+export function headingSlug(text: string, seen: Map<string, number>): string {
+  const base =
+    text
+      .trim()
+      .toLowerCase()
+      .replace(/[\s　]+/g, '-')
+      .replace(/[^\p{L}\p{N}-]+/gu, '')
+      .replace(/^-+|-+$/g, '') || 'h'
+  const n = (seen.get(base) ?? 0) + 1
+  seen.set(base, n)
+  return n === 1 ? base : `${base}-${n}`
+}
+
 export function outlineFromSource(raw: string): HeadingItem[] {
   const out: HeadingItem[] = []
   const lines = raw.split('\n')
+  const seen = new Map<string, number>()
   let fence = false
   /** front matter 必须以首行的 --- 开头 */
   let front = lines[0]?.trim() === '---'
@@ -446,7 +472,7 @@ export function outlineFromSource(raw: string): HeadingItem[] {
     if (!m) continue
     const level = m[1].length
     const text = plainInline(m[2])
-    out.push({ id: `h-${out.length}`, level, text, line: i })
+    out.push({ id: headingSlug(text, seen), level, text, line: i })
   }
   return out
 }
@@ -473,6 +499,7 @@ function plainInline(s: string): string {
  */
 function decorateHeadings(html: string): { html: string; headings: HeadingItem[] } {
   const headings: HeadingItem[] = []
+  const seen = new Map<string, number>()
   const next = html.replace(
     /<h([1-6])([^>]*)>([\s\S]*?)<\/h\1>/g,
     (whole, lvl: string, attrs: string, inner: string) => {
@@ -482,7 +509,7 @@ function decorateHeadings(html: string): { html: string; headings: HeadingItem[]
         if (existing) headings.push({ id: existing, level: Number(lvl), text })
         return whole
       }
-      const id = `h-${headings.length}`
+      const id = headingSlug(text, seen)
       headings.push({ id, level: Number(lvl), text })
       return `<h${lvl}${attrs} id="${id}">${inner}</h${lvl}>`
     },

@@ -44,12 +44,19 @@
 
   /* 编辑器专用 */
   /* 选中色。
-     以前是「强调色 + 透明」，想法是让高亮跟着主题色走，实际效果不好：
-     透明意味着底色会透上来，深色主题下紫色（紫藤）混上近黑底就成了
-     一片发灰的浊色，白字压上去糊成一团，看着像「没选中」。
-     现在改成不透明的实色（和 --n-bg 混），两套主题各给一个合适的浓度：
-     浅色下浅一档即可，深色下要够浓才盖得住底、又留得住文字对比。 */
+     两轮改法，两次都栽在同一个地方，值得记一笔：
+       1) 最早是「强调色 + 透明」：透明意味着底色会透上来，深色下紫藤混上
+          近黑底就是一片发灰的浊色，白字压上去糊成一团，看着像「没选中」。
+       2) 改成和 --n-bg 混的实色之后不浊了，但混色是把两个颜色的 oklab
+          a/b 坐标直接平均 —— 深色底（#16161a）本身带一点蓝紫，
+          绿强调色被它拽偏，彩度还按配比被砍掉一半，结果是一片
+          「脏兮兮的中深灰绿」，也就是这次被点名说丑的那个颜色。
+     真正的解法是别去混：用相对颜色语法直接拿强调色的色相，
+     亮度锁在一个舒服的档位上，彩度只按需要收一点。
+     下面那行 color-mix 是给不支持 `oklch(from …)` 的旧渲染器留的退路
+     （不认识的值整条声明会被丢掉，前一条自然生效）。 */
   --n-selection: color-mix(in oklab, var(--n-accent) 30%, var(--n-bg));
+  --n-selection: oklch(from var(--n-accent) 87% calc(c * 0.42) h);
   --n-selection-fg: #1b1f1c;
   --n-active-line: color-mix(in oklab, var(--n-accent) 5%, transparent);
   --n-code-bg: #f1efe9;
@@ -177,7 +184,11 @@
   --n-violet: #a99adf;
   --n-violet-soft: #2a2740;
 
-  --n-selection: color-mix(in oklab, var(--n-accent) 52%, var(--n-bg));
+  /* 同浅色那套：不跟底色混，直接取强调色的色相，亮度锁在 48%
+     （再亮白字就压不住了，再暗就跟 --n-surface 分不开），彩度留八成，
+     选中块一眼就是「这一个颜色」，不是一片发灰的影子。 */
+  --n-selection: color-mix(in oklab, var(--n-accent) 62%, var(--n-bg));
+  --n-selection: oklch(from var(--n-accent) 48% calc(c * 0.8) h);
   --n-selection-fg: #f4f7f3;
   --n-active-line: color-mix(in oklab, var(--n-accent) 6%, transparent);
   --n-code-bg: #191a1e;
@@ -247,6 +258,26 @@
 
 * {
   box-sizing: border-box;
+}
+
+/**
+ * 系统里开了「减弱动效」就一律走直线。
+ *
+ * 这套界面里动效不少（菜单弹入、视图淡入、栏宽滑动、大纲平滑滚动），
+ * 对晕动敏感的人，一堆东西同时滑起来是真难受。这里统一压到近乎瞬时，
+ * 而不是一个个组件里各判一次 —— 那样总会有漏的。
+ * 留 0.01ms 而不是 0：有些代码（比如大纲跳转的滚动）是靠
+ * animationend / rAF 收尾的，写成 0 会有个别浏览器干脆不触发。
+ */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }
 
 /* 全应用统一的选中态。

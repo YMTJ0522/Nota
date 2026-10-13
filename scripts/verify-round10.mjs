@@ -237,11 +237,39 @@ const attach = await evaluate(`(async () => {
   // 进多选模式
   document.querySelector('.pn-x[data-tip="多选"]')?.click()
   await wait(400)
-  const picking = {
-    bar: !!document.querySelector('.av-bar'),
-    checks: document.querySelectorAll('.av-check').length,
-    btns: [...document.querySelectorAll('.av-bar button')].map(b => b.textContent.trim()),
+  const barEl = document.querySelector('.av-bar')
+  const pick = (el) => {
+    const kids = [...el.children].filter(e => e.getBoundingClientRect().width > 0)
+    const btns = [...el.querySelectorAll('.pn-btn')]
+    const bar = el.getBoundingClientRect()
+    return {
+      acts: [...el.querySelectorAll('button')].map(b => b.dataset.act ?? ''),
+      // 「是不是同一行」要看中线，不能看 top：工具条里本来就混着高矮不同的东西
+      // （全选是链接样式、中间还有一个弹性撑条），比 top 会把正常情况误判成折行。
+      lines: new Set(kids.map((e) => {
+        const r = e.getBoundingClientRect()
+        return Math.round((r.top + r.bottom) / 8)
+      })).size,
+      clipped: kids.some((e) => {
+        const r = e.getBoundingClientRect()
+        return r.right > bar.right + 1 || r.left < bar.left - 1
+      }),
+      heights: btns.map(b => Math.round(b.getBoundingClientRect().height)),
+      overflow: btns.map(b => b.scrollWidth - b.clientWidth),
+    }
   }
+  const picking = {
+    bar: !!barEl,
+    checks: document.querySelectorAll('.av-check').length,
+    ...pick(barEl),
+  }
+  // 压到资料栏自适应的下限附近再看一次：宁可整齐折行，也不许把按钮捏扁
+  const prevW = barEl.style.width
+  barEl.style.width = '232px'
+  await wait(80)
+  const narrow = pick(barEl)
+  barEl.style.width = prevW
+  await wait(60)
   // 点卡片本体就勾上
   document.querySelectorAll('.av-card')[0]?.click()
   await wait(200)
@@ -249,26 +277,31 @@ const attach = await evaluate(`(async () => {
   await wait(280)
   const picked = {
     on: document.querySelectorAll('.av-card.on').length,
-    n: document.querySelector('.av-bar-n')?.textContent?.trim() ?? '',
+    n: document.querySelector('.av .pn-sub')?.textContent?.trim() ?? '',
   }
   // 退出：勾选框和工具条都该消失
-  void [...document.querySelectorAll('.av-bar button')].find(b => b.textContent.trim() === '完成')?.click()
+  document.querySelector('.av-bar button[data-act="done"]')?.click()
   await wait(360)
   const exited = {
     bar: !!document.querySelector('.av-bar'),
     checks: document.querySelectorAll('.av-check').length,
     on: document.querySelectorAll('.av-card.on').length,
   }
-  return { idle, before, afterImport, names, picking, picked, exited }
+  return { idle, before, afterImport, names, picking, narrow, picked, exited }
 })()`)
 ok(
-  '6.附件库：默认没有勾选框也没有底部按钮条；进多选才出勾选框，工具条在顶部，退出后收干净',
+  '6.附件库：默认没有勾选框也没有底部按钮条；进多选才出勾选框，工具条在顶部；窄到 232px 也不变形，退出后收干净',
   attach.idle.checks === 0 && !attach.idle.bar && !attach.idle.foot &&
     attach.afterImport === attach.before + 1 && attach.names.includes('新导入的资料.zip') &&
     attach.picking.bar && attach.picking.checks === attach.afterImport &&
-    attach.picking.btns.some((b) => b.includes('插入所选')) &&
-    attach.picking.btns.some((b) => b.includes('删除所选')) &&
-    attach.picked.on === 2 && attach.picked.n.includes('2') &&
+    attach.picking.acts.join(',') === 'all,insert,delete,done' &&
+    attach.picking.lines === 1 && !attach.picking.clipped &&
+    attach.picking.heights.every((h) => h >= 22 && h <= 26) &&
+    attach.narrow.heights.every((h) => h >= 22 && h <= 26) &&
+    !attach.narrow.clipped && attach.narrow.lines <= 2 &&
+    attach.picking.overflow.every((d) => d <= 1) &&
+    attach.narrow.overflow.every((d) => d <= 1) &&
+    attach.picked.on === 2 && attach.picked.n.startsWith('已选 2') &&
     !attach.exited.bar && attach.exited.checks === 0 && attach.exited.on === 0,
   attach,
 )
@@ -282,30 +315,62 @@ const trash = await evaluate(`(async () => {
   const rows = document.querySelectorAll('.tv .pn-row').length
   document.querySelector('.pn-x[data-tip="多选"]')?.click()
   await wait(380)
-  const picking = {
-    bar: !!document.querySelector('.tv-bar'),
-    checks: document.querySelectorAll('.tv-check').length,
-    btns: [...document.querySelectorAll('.tv-bar button')].map(b => b.textContent.trim()),
+  const barEl = document.querySelector('.tv-bar')
+  const pick = (el) => {
+    const kids = [...el.children].filter(e => e.getBoundingClientRect().width > 0)
+    const btns = [...el.querySelectorAll('.pn-btn')]
+    const bar = el.getBoundingClientRect()
+    return {
+      acts: [...el.querySelectorAll('button')].map(b => b.dataset.act ?? ''),
+      // 「是不是同一行」要看中线，不能看 top：工具条里本来就混着高矮不同的东西
+      // （全选是链接样式、中间还有一个弹性撑条），比 top 会把正常情况误判成折行。
+      lines: new Set(kids.map((e) => {
+        const r = e.getBoundingClientRect()
+        return Math.round((r.top + r.bottom) / 8)
+      })).size,
+      clipped: kids.some((e) => {
+        const r = e.getBoundingClientRect()
+        return r.right > bar.right + 1 || r.left < bar.left - 1
+      }),
+      heights: btns.map(b => Math.round(b.getBoundingClientRect().height)),
+      overflow: btns.map(b => b.scrollWidth - b.clientWidth),
+    }
   }
+  const picking = {
+    bar: !!barEl,
+    checks: document.querySelectorAll('.tv-check').length,
+    ...pick(barEl),
+  }
+  const prevW = barEl.style.width
+  barEl.style.width = '232px'
+  await wait(80)
+  const narrow = pick(barEl)
+  barEl.style.width = prevW
+  await wait(60)
   document.querySelectorAll('.tv .pn-row')[0]?.click()
   await wait(240)
-  const one = { on: document.querySelectorAll('.pn-row.on').length, n: document.querySelector('.tv-bar-n')?.textContent ?? '' }
+  const one = { on: document.querySelectorAll('.pn-row.on').length, n: document.querySelector('.tv .pn-sub')?.textContent?.trim() ?? '' }
   // 全选
-  void [...document.querySelectorAll('.tv-bar button')].find(b => b.textContent.trim() === '全选')?.click()
+  document.querySelector('.tv-bar button[data-act="all"]')?.click()
   await wait(300)
-  const all = { on: document.querySelectorAll('.pn-row.on').length, n: document.querySelector('.tv-bar-n')?.textContent ?? '' }
-  void [...document.querySelectorAll('.tv-bar button')].find(b => b.textContent.trim() === '完成')?.click()
+  const all = { on: document.querySelectorAll('.pn-row.on').length, n: document.querySelector('.tv .pn-sub')?.textContent?.trim() ?? '' }
+  document.querySelector('.tv-bar button[data-act="done"]')?.click()
   await wait(320)
-  return { idle, rows, picking, one, all, exited: { bar: !!document.querySelector('.tv-bar'), checks: document.querySelectorAll('.tv-check').length } }
+  return { idle, rows, picking, narrow, one, all, exited: { bar: !!document.querySelector('.tv-bar'), checks: document.querySelectorAll('.tv-check').length } }
 })()`)
 ok(
-  '7.回收站：默认干净；进多选后可点行勾选、可全选；批量按钮在顶部，退出收干净',
+  '7.回收站：默认干净；进多选后可点行勾选、可全选；批量按钮在顶部且窄到 232px 不变形，退出收干净',
   trash.idle.checks === 0 && !trash.idle.bar && trash.rows === 2 &&
     trash.picking.bar && trash.picking.checks === trash.rows &&
-    trash.picking.btns.some((b) => b.includes('恢复所选')) &&
-    trash.picking.btns.some((b) => b.includes('删除')) &&
-    trash.one.on === 1 && trash.one.n.includes('1') &&
-    trash.all.on === trash.rows && trash.all.n.includes(String(trash.rows)) &&
+    trash.picking.acts.join(',') === 'all,restore,purge,done' &&
+    trash.picking.lines === 1 && !trash.picking.clipped &&
+    trash.picking.heights.every((h) => h >= 22 && h <= 26) &&
+    trash.narrow.heights.every((h) => h >= 22 && h <= 26) &&
+    !trash.narrow.clipped && trash.narrow.lines <= 2 &&
+    trash.picking.overflow.every((d) => d <= 1) &&
+    trash.narrow.overflow.every((d) => d <= 1) &&
+    trash.one.on === 1 && trash.one.n.startsWith('已选 1') &&
+    trash.all.on === trash.rows && trash.all.n.startsWith(`已选 ${trash.rows}`) &&
     !trash.exited.bar && trash.exited.checks === 0,
   trash,
 )
@@ -315,8 +380,9 @@ await evaluate(navExpr('所有笔记'))
 await sleep(700)
 const list = await evaluate(`(async () => {
   const wait = (ms) => new Promise(r => setTimeout(r, ms))
-  // 2.2：改到编辑区顶栏 —— 中间栏那条只报「这里有什么」
-  const tips = [...document.querySelectorAll('.ph-right .ea-btn')].map(b => b.getAttribute('title'))
+  // 2.2.3：新建 / 导入住资料栏右上角（.col-flow 里），编辑区顶行只留导出与版本历史
+  const tips = [...document.querySelectorAll('.col-flow .col-act')].map(b => b.getAttribute('title'))
+  const editorTips = [...document.querySelectorAll('.ph-right .ea-btn')].map(b => b.getAttribute('title'))
   // 收藏：找一张没被收藏的卡片
   const card = [...document.querySelectorAll('.nlist .nl-item')].find(c => !c.querySelector('.nl-star-btn.on'))
   const name = card?.querySelector('.nl-text')?.textContent?.trim() ?? ''
@@ -328,6 +394,7 @@ const list = await evaluate(`(async () => {
   const disk = window.__notes['/ws/' + name + '.md'] ?? ''
   return {
     tips,
+    editorTips,
     name,
     hasBtn: !!card?.querySelector('.nl-star-btn'),
     onDisk: disk.slice(0, 60),
@@ -336,8 +403,10 @@ const list = await evaluate(`(async () => {
   }
 })()`)
 ok(
-  '8.笔记列表头部有「导入笔记」，卡片上有独立收藏按钮且点了真的写进 frontmatter',
+  '8.新建/导入住资料栏右上角（编辑区顶行不再重复这两件事），卡片上有独立收藏按钮且点了真的写进 frontmatter',
   list.tips.some((t) => (t ?? '').includes('导入')) && list.tips.some((t) => (t ?? '').includes('新建')) &&
+    !list.editorTips.some((t) => (t ?? '').includes('导入')) &&
+    !list.editorTips.some((t) => (t ?? '').includes('新建')) &&
     list.hasBtn && list.starred,
   list,
 )

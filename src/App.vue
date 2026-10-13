@@ -95,7 +95,12 @@ onBeforeUnmount(() => {
     <div class="body" :style="widthVars()">
       <SidePanel v-if="state.root" />
       <SplitHandle v-if="state.root && state.sidebar" target="sidebar" label="拖动调整侧边栏宽度" />
-      <SideColumn v-if="state.root && state.column" />
+      <!-- 资料栏收起/展开是一次「整块滑走 / 滑回来」：v-if 直接删掉的话，
+           编辑区会硬生生跳一大截。用 Transition 让它在 0 宽度上收缩/张开。
+           侧栏那一条本来就有自己的宽度过渡（它收起后还要留一条图标窄轨）。 -->
+      <Transition name="colx">
+        <SideColumn v-if="state.root && state.column" />
+      </Transition>
       <SplitHandle v-if="state.root && state.column" target="column" label="拖动调整资料栏宽度" />
 
       <main class="main">
@@ -140,6 +145,25 @@ onBeforeUnmount(() => {
   display: flex;
   flex-direction: column;
   background: var(--n-bg);
+}
+
+/* 资料栏收起 / 展开：宽度从 0 滑到 --col-w。
+   `!important` 是因为 .col 自己那条 `width: var(--col-w)` 和这里同权重，
+   写不写全靠谁在后面，太脆；不如明说这一刻就是 0。
+   只在进出场这两百多毫秒里挂过渡，窗口缩放时宽度照旧是瞬时的
+   —— 拖窗口时栏跟在后面甩，比不动画还难受。 */
+.colx-enter-active,
+.colx-leave-active {
+  overflow: hidden;
+  transition:
+    width 200ms var(--n-ease),
+    opacity 160ms var(--n-ease);
+}
+
+.colx-enter-from,
+.colx-leave-to {
+  width: 0 !important;
+  opacity: 0;
 }
 
 /* 空态下的顶栏：只有名字和三颗窗口按钮，

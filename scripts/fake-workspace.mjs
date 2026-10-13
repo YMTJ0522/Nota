@@ -65,6 +65,63 @@ export const NOTE_CODE = [
 export const NOTE_BOOK = '# 书评\n\n读书笔记。\n'
 export const NOTE_IMPORTED = '# 导入进来的\n\n外面收进来的一篇。\n'
 
+/** 每节塞几段废话，把文档撑到真的能滚 —— 大纲跳转的断言需要页面有滚动空间 */
+const pad = (tag) =>
+  [
+    `这是「${tag}」一节的第一段。多写几行，好让这一节自己就比一屏还高，`,
+    '这样跳过去的时候才滚得动，动画也才看得出来。',
+    '',
+    `第二段接着说「${tag}」。段落之间空一行，预览才会渲染成两个 p。`,
+    '这里再凑一句长度差不多的句子，保持版面均匀。',
+    '',
+    `第三段收尾，讲完「${tag}」这件事。`,
+  ].join('\n')
+
+/**
+ * 大纲跳转专用的结构样本。
+ *
+ * 里面**故意**埋了两种「源码里看不出来」的标题：
+ *   - setext：`还有 setext 标题` 下面跟一行 `====`，只有渲染后才知道它是 h1；
+ *   - 引用块里的 `#`：源码那行以 `>` 开头，正则抓不到，预览里却真的会出 h1。
+ * 两侧认到的标题集合因此天然对不齐。2.2.2 之前两边都按「第几个」编号
+ * （h-0 / h-1 …），差一个就整体错位，表现就是「点第三项跳到第四项」。
+ * 这份样本就是拿这两个坑当靶子的。
+ */
+export const NOTE_STRUCT = [
+  '---',
+  'tags: []',
+  '---',
+  '',
+  '# 总览',
+  '',
+  pad('总览'),
+  '',
+  '## 安装',
+  '',
+  pad('安装'),
+  '',
+  '### 依赖',
+  '',
+  pad('依赖'),
+  '',
+  '## 配置',
+  '',
+  pad('配置'),
+  '',
+  '> # 被引用的标题',
+  '>',
+  '> 引用块里的标题只存在于渲染后的 HTML 里。',
+  '',
+  '## 常见问题',
+  '',
+  pad('常见问题'),
+  '',
+  '还有 setext 标题',
+  '================',
+  '',
+  pad('尾注'),
+].join('\n')
+
 export function makeNotes() {
   return {
     '/ws/甲笔记.md': NOTE_PLAIN,
@@ -113,7 +170,18 @@ export function makeInject(opts = {}) {
     '  readTree: async () => window.__tree ?? [],' +
     '  readNote: async (f) => { await window.__wait(30); return window.__notes[f] ?? "" },' +
     '  writeNote: async (f, c) => { window.__notes[f] = c; return true },' +
-    '  createNote: async (d, n) => { let p = d + "/" + n + ".md", i = 1; while (window.__notes[p] !== undefined) { p = d + "/" + n + " " + i + ".md"; i++ } window.__notes[p] = ""; return p },' +
+    '  createNote: async (d, n) => {' +
+    '    let p = d + "/" + n + ".md", i = 1;' +
+    '    while (window.__notes[p] !== undefined) { p = d + "/" + n + " " + i + ".md"; i++ }' +
+    '    window.__notes[p] = "";' +
+    /* 注意：整段注入脚本是拼成**一行**的字符串，里面绝不能出现 // 注释，
+       一出现就把这一行剩下的内容全吃掉（上次就是这么炸的）。 */
+    '    window.__tree = JSON.parse(JSON.stringify(window.__tree));' +
+    '    const find = (ns) => { for (const x of ns) { if (x.path === d) return x; if (x.children) { const hit = find(x.children); if (hit) return hit } } return null };' +
+    '    const parent = find(window.__tree);' +
+    '    const node = { type: "file", name: p.split("/").pop(), path: p, tags: [], starred: false, mtime: Date.now(), excerpt: "" };' +
+    '    if (parent) parent.children = (parent.children || []).concat([node]); else window.__tree.push(node);' +
+    '    return p },' +
     '  createFolder: async (p, n) => { let q = p + "/" + n, i = 1; while (JSON.stringify(window.__tree).includes(JSON.stringify(q))) { q = p + "/" + n + " " + i; i++ } window.__tree.push({ type: "dir", name: n, path: q, children: [] }); return q },' +
     '  deleteNote: async (f) => { window.__deleted = (window.__deleted || []).concat(f);' +
     '    window.__tree = JSON.parse(JSON.stringify(window.__tree));' +

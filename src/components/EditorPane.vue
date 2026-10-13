@@ -19,6 +19,7 @@ import {
   X,
 } from 'lucide-vue-next'
 import { store } from '@/store'
+import { useFitTiers } from '@/composables/fit-tiers'
 import { baseExtensions, editorViewPrefs } from '@/editor/setup'
 import {
   SearchQuery,
@@ -73,6 +74,8 @@ import type { EditorMenuTarget } from '@/components/EditorContextMenu.vue'
 const { state } = store
 
 const host = ref<HTMLDivElement | null>(null)
+/** 编辑侧那一格（v-show 控制），切回写作/分栏时要给它补一段淡入 */
+const edWrap = ref<HTMLElement | null>(null)
 /** 预览容器：既是正文容器，也是大纲的滚动参考；mermaid 也要在 DOM 挂载后往里填 SVG */
 const previewRef = ref<HTMLDivElement | null>(null)
 /** 视图模式放在 store 里，切换后重启应用也保持 */
@@ -120,26 +123,167 @@ watch(
   { immediate: true },
 )
 
-/** 中间那一列的「大纲」里点了某个标题：两栏都滚过去 */
+/**
+ * 给任意滚动容器做一次缓动滚动。
+ *
+ * 自己写而不是用 `scrollTo({behavior:'smooth'})`：编辑区那个滚动容器是
+ * CodeMirror 的 scrollDOM，得由我们自己一帧一帧写 scrollTop；而且同步滚动
+ * 那套「回音」判断必须知道这段动画什么时候结束（见 onFrame）。
+ *
+ * 中途用户自己滚（滚轮 / 按住滚动条）立刻让位 —— 抢在动画里跟人较劲最招人烦。
+ */
+/**
+ * 每个滚动容器各自记账。
+ *
+ * 一开始这里是一个全局变量存「上一次动画的终止函数」，想的是「新跳转掐掉旧的」。
+ * 结果大纲点一下要同时动两栏 —— 第二次调用顺手就把预览那一段掐死了，
+ * 表现就是「预览区纹丝不动、只有编辑区滑了一下」。
+ * 要掐的是**同一个容器**上的上一段动画，别的容器跟自己无关。
+ */
+const tweenStops = new WeakMap<HTMLElement, () => void>()
+
+function tweenScroll(
+  el: HTMLElement,
+  to: number,
+  opts: { ms?: number; onFrame?: () => void; redo?: () => number } = {},
+) {
+  const clamp = (v: number) => Math.max(0, Math.min(v, Math.max(0, el.scrollHeight - el.clientHeight)))
+  const from = el.scrollTop
+  const target = clamp(to)
+  const reduced = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
+
+  tweenStops.get(el)?.()
+
+  let dead = false
+  const clean = () => {
+    el.removeEventListener('wheel', giveUp)
+    el.removeEventListener('pointerdown', giveUp)
+    if (tweenStops.get(el) === stop) tweenStops.delete(el)
+  }
+  const stop = () => {
+    dead = true
+    clean()
+  }
+  const giveUp = () => stop()
+
+  /** easeOutCubic：起步快、收尾稳，长距离也不晕 */
+  const run = (a: number, b: number, dur: number) =>
+    new Promise<void>((resolve) => {
+      if (dur <= 0 || Math.abs(b - a) < 2) {
+        el.scrollTop = b
+        opts.onFrame?.()
+        resolve()
+        return
+      }
+      const t0 = performance.now()
+      const step = (now: number) => {
+        if (dead) return resolve()
+        const p = Math.min(1, (now - t0) / dur)
+        el.scrollTop = a + (b - a) * (1 - Math.pow(1 - p, 3))
+        opts.onFrame?.()
+        if (p < 1) requestAnimationFrame(step)
+        else resolve()
+      }
+      requestAnimationFrame(step)
+    })
+
+  el.addEventListener('wheel', giveUp, { passive: true })
+  el.addEventListener('pointerdown', giveUp)
+  tweenStops.set(el, stop)
+
+  void (async () => {
+    await run(from, target, reduced ? 0 : (opts.ms ?? 300))
+    if (dead) return
+    /**
+     * 落位之后的补正。
+     *
+     * CodeMirror 对「视口外那些行」只有估算高度。动画刚结束时它还没重新
+     * measure，等它量完，行高被修正掉，那一行就不在预期位置上了 ——
+     * 第一跳尤其容易偏，因为那时它连文档总高都还是估的。
+     * 所以收尾时再问一次目标，差得明显就补一段极短的动画过去。
+     * 只补一次，不递归：补到第三次说明偏的是别的东西，在动画里无限
+     * 追下去只会变成抖动。
+     */
+    if (opts.redo) {
+      const next = clamp(opts.redo())
+      if (Math.abs(next - el.scrollTop) > 6) await run(el.scrollTop, next, reduced ? 0 : 150)
+    }
+    clean()
+  })()
+}
+
+/**
+ * 大纲点的那一项在预览里对应哪个元素。
+ *
+ * 先按 id 找；找不到就按文字找。id 是两边各自按文字生成的 slug（见
+ * headingSlug），绝大多数情况对得上，但 setext 标题只存在于渲染后的 HTML 里、
+ * 引用块里的 `#` 标题又只存在于源码里 —— 这两种情况下某一侧会多出一项，
+ * 按文字兜底至少不会「点了没反应」。
+ */
+function findHeadingEl(box: HTMLElement, h: HeadingItem): HTMLElement | null {
+  const byId = box.querySelector<HTMLElement>(`#${CSS.escape(h.id)}`)
+  if (byId) return byId
+  const all = [...box.querySelectorAll<HTMLElement>('h1,h2,h3,h4,h5,h6')]
+  return (
+    all.find((e) => (e.textContent ?? '').trim() === h.text) ??
+    all.find((e) => (e.textContent ?? '').trim().includes(h.text)) ??
+    null
+  )
+}
+
+/**
+ * 中间那一列的「大纲」里点了某个标题：两栏都滚过去。
+ *
+ * 两处都要小心：
+ *  - 位置一律用「两个矩形的差」算，不用 offsetTop。offsetTop 是相对最近的
+ *    定位祖先的，预览里那些卡片、代码块一旦有 position，读出来就是错的，
+ *    点第三项会飞到别的地方去。
+ *  - 动画期间要把同步滚动的回音窗口一直往后推。那个窗口原本只有 160ms，
+ *    平滑动画要走 300ms，走到一半窗口就过期了，于是这一栏自己滚的那一路
+ *    被当成「用户滚的」，反手又写回另一栏，两边互相拽，最后停在谁都没点过
+ *    的地方（2.2.2 之前「点了乱跳」就是这个）。
+ */
 function onHeadingRequest(e: Event) {
   const h = (e as CustomEvent<HeadingItem>).detail
   if (!h) return
+  state.activeHeading = h.id
 
-  // 预览在的时候优先按 DOM 元素滚，位置最准（setext 标题也能对上）
   const box = previewRef.value
-  const el = box?.querySelector<HTMLElement>(`#${CSS.escape(h.id)}`)
-  if (box && el) box.scrollTo({ top: el.offsetTop - 12, behavior: 'smooth' })
+  if (box) {
+    const el = findHeadingEl(box, h)
+    if (el) {
+      const r = el.getBoundingClientRect()
+      const br = box.getBoundingClientRect()
+      const top = box.scrollTop + (r.top - br.top) - 12
+      tweenScroll(box, top, { onFrame: () => { echo.preview = performance.now() + 90 } })
+    }
+  }
 
+  if (!view) return
   // 编辑区按行号滚：带源码行号的用现成的，没有才退回按文字找
+  const lines = state.draft.split('\n')
   const line =
     h.line ??
-    state.draft
-      .split('\n')
-      .findIndex((l) => /^#{1,6}\s/.test(l) && l.replace(/^#{1,6}\s*/, '').trim() === h.text)
-  if (line < 0 || !view) return
+    lines.findIndex((l) => /^#{1,6}\s/.test(l) && l.replace(/^#{1,6}\s*/, '').trim() === h.text)
+  if (line < 0) return
   const max = view.state.doc.length
-  const pos = Math.min(state.draft.split('\n').slice(0, line).reduce((a, l) => a + l.length + 1, 0), max)
-  view.dispatch({ effects: EditorView.scrollIntoView(pos, { y: 'start' }) })
+  const pos = Math.min(lines.slice(0, line).reduce((a, l) => a + l.length + 1, 0), max)
+  // 目标 scrollTop 由 CodeMirror 的行块几何算出来：lineBlockAt 给的是
+  // 「相对文档顶端」的偏移，加上 documentTop 才是屏幕坐标，再减掉
+  // scrollDOM 自己的视口顶端，就是这一行要落到的滚动位置。
+  // 写成函数是因为动画收尾还要再问一次（CM 量完会把行高修正掉）。
+  const v = view
+  const editorTarget = () => {
+    const block = v.lineBlockAt(pos)
+    const rect = v.scrollDOM.getBoundingClientRect()
+    return v.scrollDOM.scrollTop + (v.documentTop + block.top - rect.top) - 10
+  }
+  tweenScroll(v.scrollDOM, editorTarget(), {
+    onFrame: () => {
+      echo.editor = performance.now() + 90
+    },
+    redo: editorTarget,
+  })
 }
 
 /** 标题回车 / 失焦时改名 */
@@ -377,12 +521,15 @@ function markActiveHeading() {
 
   const p = previewRef.value
   if (p) {
-    const top = p.scrollTop + 64
+    // 标题相对滚动容器顶部的位置：用两个矩形的差，不用 offsetTop ——
+    // 预览里那些卡片、代码块一旦带 position，offsetTop 量的就是另一个父级，
+    // 结果就是「明明滚到第三节了，大纲还高亮着第二节」。
+    const base = p.getBoundingClientRect().top - p.scrollTop
     let cur: string | null = heads[0]?.id ?? null
     for (const h of heads) {
-      const el = p.querySelector<HTMLElement>(`#${CSS.escape(h.id)}`)
+      const el = findHeadingEl(p, h)
       if (!el) continue
-      if (el.offsetTop <= top) cur = h.id
+      if (el.getBoundingClientRect().top - base <= 64) cur = h.id
       else break
     }
     state.activeHeading = cur
@@ -404,28 +551,30 @@ function markActiveHeading() {
 }
 
 const onEditorScroll = () => {
-  markActiveHeading()
   const v = view
   if (!v) return
   const top = v.scrollDOM.scrollTop
-  // 时间窗先兜住：我刚抛出去的滚动效果，可能要隔一帧才真的落到 DOM 上
+  // 时间窗先兜住：我刚抛出去的滚动效果，可能要隔一帧才真的落到 DOM 上。
+  // 平滑动画期间这个窗每帧都在往后推（见 tweenScroll 的 onFrame），
+  // 所以「读到哪一节」也一并跳过 —— 动画一路上的中间位置不该点亮别的标题。
   if (performance.now() < echo.editor) {
     landed.editor = top
     return
   }
+  markActiveHeading()
   // 之后再落到位附近的，也算我自己那一次搬运的余波
   if (Math.abs(top - landed.editor) <= 4) return
   syncFromEditor()
 }
 
 const onPreviewScroll = () => {
-  markActiveHeading()
   const p = previewRef.value
   if (!p) return
   if (performance.now() < echo.preview) {
     landed.preview = p.scrollTop
     return
   }
+  markActiveHeading()
   if (Math.abs(p.scrollTop - landed.preview) <= 4) return
   syncFromPreview()
 }
@@ -744,6 +893,18 @@ function pushDoc(text: string) {
   syncing = false
 }
 
+/* ── 顶行的「挤窄降级」 ──
+   这一行里住着八样东西，靠 flex 让它们自己挤的结果一定是两败俱伤：
+   标题被压到十几像素（它是这篇文档的名字，最不该吃亏），
+   而右边那堆永远不让步，最后把窗口按钮顶到屏幕外边去。
+   所以按主人不在也无所谓 → 有事时才需要看的顺序，定三档让位。
+   档位看的是**编辑区自己**有多宽，不是窗口有多宽 —— 中间那一列
+   换成 AI 面板时能吃掉三成窗口，同样的窗口宽度，编辑区只剩一半。 */
+const paneEl = ref<HTMLElement | null>(null)
+const phEl = ref<HTMLElement | null>(null)
+// 0 档＝什么都不收；每升一档，让位的是其中离「非看不可」最远的那一样（见下面 CSS）
+const { tier: crammed } = useFitTiers(phEl, paneEl, 4)
+
 onMounted(() => {
   render()
   nextTick(() => {
@@ -919,8 +1080,25 @@ watch(mode, async (m) => {
     // 不量它会沿用旧的视口高度，首屏可能只画出半屏甚至一片空白
     view?.requestMeasure()
     await render()
+    await nextTick()
+    flashPaneIn()
   }
 })
+
+/**
+ * 从「阅读」切回写作 / 分栏时给编辑侧补一段淡入。
+ *
+ * 它是 v-show 的（编辑器不能真卸载），没有「刚挂载」这一刻可以挂动画，
+ * 只能手动补：先摘掉 class、读一次 offsetWidth 强制回流、再加回去 ——
+ * 少了中间那步，同一个 class 连着加两次浏览器不会重放动画。
+ */
+function flashPaneIn() {
+  const el = edWrap.value
+  if (!el) return
+  el.classList.remove('pane-in')
+  void el.offsetWidth
+  el.classList.add('pane-in')
+}
 
 /* 边写边看：分栏/阅读下正文一变就重排预览。
    180ms 防抖——低于这个值每敲一个字都要重新解析整篇，
@@ -945,11 +1123,11 @@ defineExpose({ getView: () => view })
 </script>
 
 <template>
-  <div class="pane">
+  <div ref="paneEl" class="pane" :data-crammed="crammed || null">
     <!-- 顶部：左边是可编辑的标题，下面一行是它在工作区里的位置；
          右边是字数、保存状态、动作、视图切换，最右是三颗窗口按钮。
          这一整条也是拖动窗口的地方（按钮自己声明不参与拖动）。 -->
-    <header class="ph">
+    <header ref="phEl" class="ph" :data-crammed="crammed || null">
       <div class="ph-id">
         <input
           v-model="titleDraft"
@@ -975,7 +1153,8 @@ defineExpose({ getView: () => view })
           <span class="ph-save-text">{{ saveLabel }}</span>
         </span>
 
-        <!-- 导入 / 导出 / 版本历史 -->
+        <!-- 只留「对当前这一篇做什么」：导出、版本历史。
+             新建 / 导入管的是「工作区里有哪些笔记」，2.2.3 起搬到资料栏右上角。 -->
         <EditorActions />
 
         <!-- 视图切换：编辑 / 分栏 / 预览 -->
@@ -1041,7 +1220,7 @@ defineExpose({ getView: () => view })
     />
 
     <div class="stage" :data-layout="mode">
-      <div v-show="showEditor" class="ed-wrap">
+      <div ref="edWrap" v-show="showEditor" class="ed-wrap">
         <div ref="host" class="host" @contextmenu="onContextMenu" />
 
         <!-- 查找条。CodeMirror 原生面板带替换框和正则/整词一堆开关，
@@ -1192,6 +1371,47 @@ defineExpose({ getView: () => view })
 .ph-title:focus {
   background: var(--n-bg);
   border-color: var(--n-accent);
+}
+
+/* ── 挤窄时的让位顺序 ──
+   这一排住着八样东西，谁都不肯让一步的结果就是两败俱伤：标题被压到十几像素，
+   右边那堆把窗口按钮顶到屏幕外面去。所以按「少了它多久会被发现」排序让位：
+     1 档 字数收掉 —— 它只是个数字
+     2 档 保存只留那颗灯 —— 颜色照样说得清状态，文案退到 tooltip
+     3 档 导出收掉 —— 笔记卡片右键菜单里四种格式都在
+     4 档 连视图切换也收 —— Ctrl+1 / 2 / 3 还在
+   什么时候升档不写阈值，由 useFitTiers 逐档试到「这一排装得下」为止。 */
+.ph-id {
+  /* 标题是这篇文档的名字，给它留一条底线：再挤也不能压成一横杠 */
+  min-width: 88px;
+}
+
+.ph[data-crammed="1"],
+.ph[data-crammed="2"],
+.ph[data-crammed="3"],
+.ph[data-crammed="4"] {
+  gap: 6px;
+  padding-left: 10px;
+}
+
+.ph[data-crammed="1"] .ph-stat,
+.ph[data-crammed="2"] .ph-stat,
+.ph[data-crammed="3"] .ph-stat,
+.ph[data-crammed="4"] .ph-stat,
+.ph[data-crammed="2"] .ph-save-text,
+.ph[data-crammed="3"] .ph-save-text,
+.ph[data-crammed="4"] .ph-save-text,
+.ph[data-crammed="3"] .ea .ea-anchor,
+.ph[data-crammed="4"] .ea .ea-anchor,
+.ph[data-crammed="4"] .ph-seg {
+  display: none;
+}
+
+.ph[data-crammed="2"] .ph-right,
+.ph[data-crammed="3"] .ph-right,
+.ph[data-crammed="4"] .ph-right {
+  gap: 7px;
+  padding-right: 8px;
 }
 
 .ph-right {
@@ -1426,6 +1646,24 @@ defineExpose({ getView: () => view })
   min-width: 0;
   display: flex;
   flex-direction: row;
+  /* 切到分栏 / 阅读时这一块是刚挂载的，淡一下，别突然拍在脸上 */
+  animation: n-pane-in 180ms var(--n-ease);
+}
+
+/* 编辑侧是 v-show（不能真的卸载，CodeMirror 得留着），
+   所以没有「挂载」这一刻可以挂动画，只能切回写作/分栏时补一个 class。
+   只淡不位移：位移会让 CodeMirror 在这两百毫秒里量到的坐标全是偏的。 */
+.ed-wrap.pane-in {
+  animation: n-pane-in 180ms var(--n-ease);
+}
+
+@keyframes n-pane-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
 }
 
 .host {

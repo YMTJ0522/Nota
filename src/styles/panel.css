@@ -185,10 +185,15 @@
   padding: 10px 2px 2px;
 }
 
+/* flex:none + nowrap 是硬性约束：资料栏自适应宽度可以窄到 240px，
+   少了这两条，flex 会把按钮捏扁、文字在里头折成两行（2.2.2 之前的多选工具条
+   就是这么乱的）。放不下时由容器的 flex-wrap 整齐地折行，不让按钮自己变形。 */
 .pn-btn {
   display: inline-flex;
   align-items: center;
   gap: 6px;
+  flex: none;
+  white-space: nowrap;
   height: 27px;
   padding: 0 12px;
   border-radius: var(--n-r-md);

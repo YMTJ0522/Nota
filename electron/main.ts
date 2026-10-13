@@ -33,7 +33,10 @@ function createWindow() {
   win = new BrowserWindow({
     width: 1180,
     height: 760,
-    minWidth: 720,
+    // 三栏 + 编辑区顶行那一排，低于这个宽度就装不下了：再窄下去，
+    // 顶行的东西会被挤出窗口（连窗口按钮一起出去了）。
+    // 想要更窄＝把侧栏收成窄轨，而不是让整排东西互相压。
+    minWidth: 960,
     minHeight: 480,
     show: false,
     autoHideMenuBar: true,

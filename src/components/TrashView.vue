@@ -307,22 +307,33 @@ function timeText(ms: number) {
              原来它们钉在窗口最底下，眼睛扫到底才能找到，
              而且那一条灰带子比列表本身还显眼。 -->
         <div v-if="selectMode" class="tv-bar">
-          <button class="pn-link" @click="sel.length === items.length ? clearSel() : selectAll()">
+          <button
+            class="pn-link"
+            data-act="all"
+            @click="sel.length === items.length ? clearSel() : selectAll()"
+          >
             {{ sel.length === items.length ? '取消全选' : '全选' }}
           </button>
-          <span class="tv-bar-n">已选 {{ sel.length }} 项</span>
           <span class="tv-bar-sp" />
-          <button class="pn-btn" :disabled="sel.length === 0" @click="restoreMany(selectedItems)">
-            恢复所选
+          <button
+            class="pn-btn"
+            data-act="restore"
+            title="把所选恢复到原位置"
+            :disabled="sel.length === 0"
+            @click="restoreMany(selectedItems)"
+          >
+            恢复
           </button>
           <button
             class="pn-btn danger"
+            data-act="purge"
+            title="彻底删除所选（不可恢复）"
             :disabled="sel.length === 0"
             @click="pending = { kind: 'many', list: selectedItems }"
           >
-            彻底删除
+            删除
           </button>
-          <button class="pn-btn" @click="endSelect">完成</button>
+          <button class="pn-btn" data-act="done" title="退出多选" @click="endSelect">完成</button>
         </div>
         <div class="pn-list">
           <div
@@ -419,17 +430,16 @@ function timeText(ms: number) {
   display: flex;
   align-items: center;
   gap: 8px;
+    /* 同 .av-bar：资料栏能窄到 240px，宁可整齐折行也不要被捏扁 */
+  flex-wrap: wrap;
+  row-gap: 6px;
   margin-bottom: 6px;
-}
-
-.tv-bar-n {
-  font-size: 11px;
-  color: var(--n-accent);
 }
 
 /* 左边「挑哪些」、右边「对这些做什么」 */
 .tv-bar-sp {
   flex: 1;
+  min-width: 0;
 }
 
 .tv-bar .pn-btn {

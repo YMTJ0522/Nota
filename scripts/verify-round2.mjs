@@ -318,15 +318,28 @@ ok(
   { ...settingsLoc, headerItems: headerNoSettings.items },
 )
 
-/* ── 5. 侧栏折叠按钮在「资料库」行 ── */
+/* ── 5. 侧栏折叠按钮在「资料库」行 ──
+   2.2.2：顶行只剩两枚「收起」（资料栏在前、侧边栏在后）。
+   原来这里的「新建文件夹」已经并进文件夹右键菜单（见 round10 第 5 条），
+   入口不再一处一个——新建笔记住资料栏右上角，见 round10 第 8 条。 */
 const headBtns = await evaluate(`(() => {
   const head = document.querySelector('.panel .head')
   if (!head) return { err: 'no head' }
-  const btns = [...head.querySelectorAll('.mini')].map(b => b.getAttribute('data-tip'))
-  return { btns, hasCollapse: btns.some(t => (t || '').includes('收起侧边栏')),
-           hasFolder: btns.some(t => (t || '').includes('新建文件夹')) }
+  const btns = [...head.querySelectorAll('.mini')]
+  const tips = btns.map(b => b.getAttribute('data-tip') ?? b.getAttribute('title'))
+  const roles = btns.map(b => b.getAttribute('data-role'))
+  return { tips, roles,
+           hasCollapse: roles.includes('sidebar-toggle'),
+           hasColumn: roles.includes('column-toggle'),
+           extras: tips.filter((t, i) => !roles[i]) }
 })()`)
-ok('5.侧栏头部按钮', headBtns.hasCollapse && headBtns.hasFolder, headBtns)
+ok(
+  '5.侧栏顶行就两枚收起：资料栏在前、侧边栏在后',
+  headBtns.hasCollapse && headBtns.hasColumn &&
+    headBtns.roles.join(',') === 'column-toggle,sidebar-toggle' &&
+    headBtns.extras.length === 0,
+  headBtns,
+)
 
 /* ── 6. 删除按钮图标变大 ── */
 const delIcon = await evaluate(`(() => {

@@ -131,35 +131,55 @@ watch(
 )
 
 /** 服务商预设：自绘下拉。用「当前 baseUrl 命中哪套预设」反推选中项，
-    不去另外存一份状态 —— 用户手改过地址之后，这里显示的仍然是真实的那套 */
+    不去另外存一份状态 —— 用户手改过地址之后，这里显示的仍然是真实的那套。
+    比对前把地址抹平（去 / 去协议大小写），手敲的 `https://api.deepseek.com/v1/`
+    也该认成 DeepSeek，而不是掉回「自定义」。 */
 const presetOpen = ref(false)
+const normUrl = (u: string) => u.trim().toLowerCase().replace(/\/+$/, '')
 const presetIndex = computed(() => {
-  const i = AI_PRESETS.findIndex((p) => p.baseUrl === state.ai.baseUrl)
+  const cur = normUrl(state.ai.baseUrl)
+  const i = AI_PRESETS.findIndex((p) => normUrl(p.baseUrl) === cur)
   return i < 0 ? 0 : i + 1
 })
 const presetLabel = computed(() =>
   presetIndex.value ? AI_PRESETS[presetIndex.value - 1].label : '自定义…',
 )
 
-/** 预设菜单就地弹出，点别处要收起来 */
-watch(presetOpen, (open) => {
-  if (!open) return
-  const off = () => {
-    presetOpen.value = false
-    window.removeEventListener('pointerdown', off, true)
-  }
-  // 延一拍再挂，免得把「点开菜单」这一次 pointerdown 也算进去
-  setTimeout(() => window.addEventListener('pointerdown', off, true), 0)
-})
+/** 「自定义…」不是一个状态、是一件动作：把光标送进接口地址那一格，接着打字就行。
+    它同时是「当前这套地址不匹配任何一个预设」的指示灯 —— 匹配不上时那一行打勾。 */
+const urlInput = ref<HTMLInputElement | null>(null)
 
 function pickPreset(i: number) {
   presetOpen.value = false
-  if (i < 0) return
+  if (i < 0) {
+    urlInput.value?.focus()
+    urlInput.value?.select()
+    return
+  }
   const p = AI_PRESETS[i]
   if (!p) return
   store.setAiConfig({ baseUrl: p.baseUrl, model: p.model })
   testResult.value = null
   testModels.value = []
+}
+
+/**
+ * 预设菜单就地弹出，点别处要收起来。
+ *
+ * 这里**必须**放过落在 `.st-drop` 里的那一下。之前是「捕获阶段无条件收起」，
+ * 结果 pointerdown 一进来菜单就被 Vue 拆掉，等 mouseup 时按钮已经不在 DOM 里，
+ * click 事件根本不产生 —— 表现就是「每一项都点得动，但永远还是自定义」。
+ * 跟 SidePanel / Toolbar 那几处保持同一个套路：点在菜单内就不收。
+ */
+function onDocPointer(e: PointerEvent) {
+  if (!presetOpen.value) return
+  if ((e.target as HTMLElement | null)?.closest('.st-drop')) return
+  presetOpen.value = false
+}
+function onEsc(e: KeyboardEvent) {
+  if (!presetOpen.value || e.key !== 'Escape') return
+  e.stopPropagation()
+  presetOpen.value = false
 }
 
 async function testConnection() {
@@ -185,8 +205,16 @@ function onJump(e: Event) {
   if (id === 'ai') section.value = 'ai'
 }
 
-onMounted(() => window.addEventListener('nota:settings', onJump))
-onBeforeUnmount(() => window.removeEventListener('nota:settings', onJump))
+onMounted(() => {
+  window.addEventListener('nota:settings', onJump)
+  document.addEventListener('pointerdown', onDocPointer)
+  document.addEventListener('keydown', onEsc, true)
+})
+onBeforeUnmount(() => {
+  window.removeEventListener('nota:settings', onJump)
+  document.removeEventListener('pointerdown', onDocPointer)
+  document.removeEventListener('keydown', onEsc, true)
+})
 
 /** 色板圆点的预览色：跟着当前主题取对应那一套 */
 function swatchOf(id: AccentName) {
@@ -564,6 +592,7 @@ async function changeWorkspace() {
                 <div class="st-drop">
                   <button
                     class="n-select st-select"
+                    data-role="preset-select"
                     :class="{ on: presetOpen }"
                     :aria-expanded="presetOpen"
                     @click="presetOpen = !presetOpen"
@@ -575,6 +604,7 @@ async function changeWorkspace() {
                     <button
                       class="n-menu-item"
                       :class="{ on: !presetIndex }"
+                      data-preset="自定义"
                       @click="pickPreset(-1)"
                     >
                       <span class="n-menu-name">自定义…</span>
@@ -585,6 +615,7 @@ async function changeWorkspace() {
                       :key="p.label"
                       class="n-menu-item"
                       :class="{ on: presetIndex === i + 1 }"
+                      :data-preset="p.label"
                       @click="pickPreset(i)"
                     >
                       <span class="n-menu-name">{{ p.label }}</span>
@@ -602,6 +633,7 @@ async function changeWorkspace() {
                 <div class="st-field">
                   <Link2 class="st-field-ico" :size="13" :stroke-width="1.9" />
                   <input
+                    ref="urlInput"
                     v-model="state.ai.baseUrl"
                     class="st-input"
                     type="text"

@@ -1,27 +1,22 @@
 <script setup lang="ts">
 /**
- * 编辑区顶栏右侧的文件动作。
+ * 编辑区顶栏右侧的文件动作 —— 只管「当前打开的这一篇」。
  *
  * 原来是「更多操作」一个下拉里塞了导出 Markdown / 导出 HTML / 版本历史——
  * 点两下才够得着，而且三件事的性质根本不同。现在拆开：
- *   新建 · 导入（把外面的 .md 收进工作区） · 导出（另存为 md / html） · 版本历史
+ *   导出（另存为 md / html） · 版本历史
  * 各自一个按钮，导出保留下拉是因为它确实有两种格式要选。
  *
- * 「新建」和「导入」这两件事以前挂在中间栏的列表头上（列表头还有一条空态提示，
- * 两枚大按钮占掉半屏）。那两枚按钮跟「这个列表里有什么」并不相干，
- * 而且空态一出现界面就跳一下。现在统一挪到这一行最左边：
- * 顶栏是全窗口最稳定的位置，笔记多与少、有没有打开笔记，它们都在原地。
+ * 「新建」和「导入」不在这儿：它们改的是「工作区里有哪些笔记」，不是当前这一篇，
+ * 2.2.3 起挪到了资料栏右上角（那一列不管切到笔记/附件/AI，它们都在同一处）。
  */
 import { ref, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import {
   /* 图标统一取自 Lucide（ISC），和工具栏同源 */
   Download,
   FileCode2,
-  FilePlus2,
   FileText,
   History,
-  Loader2,
-  Upload,
 } from 'lucide-vue-next'
 import { store } from '@/store'
 import HistoryPanel from '@/components/HistoryPanel.vue'
@@ -30,8 +25,6 @@ const { state } = store
 
 const openMenu = ref(false)
 const historyOpen = ref(false)
-/** 导入要读文件再写文件，给个转圈，免得以为点了没反应 */
-const importing = ref(false)
 
 const anchor = ref<HTMLElement | null>(null)
 const menu = ref<HTMLElement | null>(null)
@@ -78,23 +71,6 @@ async function doExport(kind: 'md' | 'html') {
   if (path) toast(`已导出到 ${path}`)
 }
 
-/**
- * 导入：把工作区外面的 Markdown 收进来。
- * 目标目录取「当前笔记所在的目录」，没有打开的笔记就放工作区根——
- * 多数人是「正在哪写就收到哪」。
- */
-async function doImport() {
-  if (importing.value) return
-  importing.value = true
-  try {
-    const added = await store.importNotes()
-    if (!added.length) return
-    toast(`已导入 ${added.length} 篇：${added.map((a) => a.name).join('、')}`)
-  } finally {
-    importing.value = false
-  }
-}
-
 function onDocPointer(e: PointerEvent) {
   const el = e.target as HTMLElement
   if (!el.closest('.ea-menu') && !el.closest('.ea-anchor')) close()
@@ -125,22 +101,6 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="ea">
-    <!-- 新建：和导入左右相邻，一进一出 -->
-    <button class="ea-btn" title="新建笔记 (Ctrl+N)" :disabled="!state.root" @click="state.root && store.newNote()">
-      <FilePlus2 :size="14" :stroke-width="1.9" />
-    </button>
-
-    <!-- 导入：和导出左右相邻，一进一出 -->
-    <button
-      class="ea-btn"
-      title="导入已有笔记"
-      :disabled="!state.root || importing"
-      @click="doImport"
-    >
-      <Loader2 v-if="importing" class="spin" :size="14" :stroke-width="1.9" />
-      <Upload v-else :size="14" :stroke-width="1.9" />
-    </button>
-
     <!-- 导出：两种格式，所以还是留一个下拉 -->
     <button
       ref="anchor"
@@ -217,14 +177,6 @@ onBeforeUnmount(() => {
 .ea-btn:disabled {
   opacity: 0.4;
   cursor: default;
-}
-
-.spin {
-  animation: ea-spin 900ms linear infinite;
-}
-
-@keyframes ea-spin {
-  to { transform: rotate(360deg); }
 }
 </style>
 
