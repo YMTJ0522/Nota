@@ -389,10 +389,12 @@ const ctx = await evaluate(`(async () => {
   }))
   return { opened: !!m, items, seps: m?.querySelectorAll('.ctx-sep').length ?? 0 }
 })()`)
-const EXPECT = ['打开','收藏','重命名','归类','复制路径','在系统打开','导出 PDF','导出 HTML','导出 Markdown','导出 Word','删除']
+// 2.2.6 起多了一项「更换图标…」（紧跟「重命名」：都是「这一条长什么样」那一类）。
+// 断言里的文案不带省略号 —— 上面取值时统一把尾部 … 剥掉了。
+const EXPECT = ['打开','收藏','重命名','更换图标','归类','复制路径','在系统打开','导出 PDF','导出 HTML','导出 Markdown','导出 Word','删除']
 const got = ctx.items.map((i) => i.text)
 ok(
-  '7.笔记卡片右键菜单：11 项，顺序与文案照参考图，删除是危险项',
+  '7.笔记卡片右键菜单：12 项，顺序与文案照参考图，删除是危险项',
   ctx.opened && got.join('|') === EXPECT.join('|') &&
     ctx.items[ctx.items.length - 1].danger === true,
   { got, seps: ctx.seps },

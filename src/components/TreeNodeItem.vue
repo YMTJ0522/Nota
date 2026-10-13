@@ -1,9 +1,16 @@
 <script setup lang="ts">
 import { ref, nextTick, computed } from 'vue'
-import { ChevronRight, FileText, Folder, FolderOpen, Trash2 } from 'lucide-vue-next'
+import { ChevronRight, Trash2 } from 'lucide-vue-next'
 import { store } from '@/store'
 import type { TreeNode } from '@/store'
 import ConfirmDialog from '@/components/ConfirmDialog.vue'
+import NodeIcon from '@/components/NodeIcon.vue'
+
+/**
+ * 图标由 NodeIcon 统一画：没挑过就是文件夹/文档那两枚，
+ * 挑过就是品牌图标或表情。这里不再自己 import 那两个 Lucide 图标，
+ * 免得「默认图标」在两处各写一份、改了一处另一处漏掉。
+ */
 
 const props = defineProps<{ node: TreeNode; depth?: number }>()
 
@@ -74,8 +81,7 @@ function onKey(e: KeyboardEvent) {
       >
         <ChevronRight class="chev" :class="{ open: isOpen }" :size="12" :stroke-width="2.2" />
         <span class="ico">
-          <FolderOpen v-if="isOpen" :size="14" :stroke-width="1.9" />
-          <Folder v-else :size="14" :stroke-width="1.9" />
+          <NodeIcon :path="node.path" type="dir" :open="isOpen" :size="14" />
         </span>
         <span class="name dir">{{ node.name }}</span>
       </button>
@@ -111,7 +117,7 @@ function onKey(e: KeyboardEvent) {
       >
         <span class="chev-slot" />
         <span class="ico">
-          <FileText :size="14" :stroke-width="1.9" />
+          <NodeIcon :path="node.path" type="file" :size="14" />
         </span>
         <span class="name">{{ displayName }}</span>
         <span v-if="node.starred" class="star">★</span>
@@ -200,7 +206,9 @@ function onKey(e: KeyboardEvent) {
   transition: color var(--n-dur) var(--n-ease);
 }
 
-.ico svg {
+/* 品牌图标是**实心**的（monochrome path），给它套描边规则会把整枚
+   描出一圈边线。所以只给描边图标加这两条，品牌与表情跳过。 */
+.ico svg:not(.ni-brand) {
   fill: none;
   stroke: currentColor;
 }

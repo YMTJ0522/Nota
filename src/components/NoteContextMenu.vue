@@ -19,6 +19,7 @@ import {
   FileType,
   FolderInput,
   PencilLine,
+  Shapes,
   Star,
   Trash2,
 } from 'lucide-vue-next'
@@ -38,6 +39,7 @@ const emit = defineEmits<{
   (e: 'open'): void
   (e: 'star'): void
   (e: 'rename'): void
+  (e: 'icon'): void
   (e: 'move'): void
   (e: 'copyPath'): void
   (e: 'reveal'): void
@@ -71,6 +73,9 @@ const EXPORTS: { kind: NoteExportKind; label: string; icon: unknown }[] = [
     <ContextMenuSeparator />
 
     <ContextMenuItem :icon="PencilLine" label="重命名" @select="emit('rename')" />
+    <!-- 换图标放在「改它本身」这一组：它改的是这篇笔记看起来什么样，
+         和重命名是同一类动作，不是磁盘操作 -->
+    <ContextMenuItem :icon="Shapes" label="更换图标…" @select="emit('icon')" />
     <ContextMenuItem :icon="FolderInput" label="归类…" @select="emit('move')" />
 
     <ContextMenuSeparator />

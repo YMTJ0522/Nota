@@ -109,7 +109,7 @@ src/
   components/      界面组件（Toolbar / SlashMenu / EditorPane / SidePanel ...）
   styles/          设计 token 与全局样式
 build/
-  icon.svg         图标源文件
+  icon-source.png  图标母版（1024×1024 RGBA，四角透明）
   icon.ico         打包用图标（多尺寸）
   make-icon.cjs    图标生成脚本
 scripts/

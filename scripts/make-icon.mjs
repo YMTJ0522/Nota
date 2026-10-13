@@ -1,5 +1,5 @@
 /**
- * 生成应用图标：build/icon.svg → build/icon.ico（多尺寸）+ build/icon.png
+ * 生成应用图标：build/icon-source.png → build/icon.ico（多尺寸）+ build/icon.png
  *
  * 为什么要这个包装脚本，而不是直接 `electron build/make-icon.cjs`：
  *

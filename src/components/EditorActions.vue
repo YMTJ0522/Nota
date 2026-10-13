@@ -15,13 +15,24 @@ import {
   /* 图标统一取自 Lucide（ISC），和工具栏同源 */
   Download,
   FileCode2,
+  FileDown,
   FileText,
+  FileType,
   History,
 } from 'lucide-vue-next'
-import { store } from '@/store'
+import { store, type ExportKind } from '@/store'
 import HistoryPanel from '@/components/HistoryPanel.vue'
 
 const { state } = store
+
+/** 顶栏导出菜单的四项。顺序、图标、文案都跟笔记右键菜单那一份保持一致
+    ——两处入口长得不一样，人就会以为它们是两件不同的事。 */
+const EXPORT_ITEMS: { kind: ExportKind; label: string; icon: unknown }[] = [
+  { kind: 'pdf', label: '导出 PDF', icon: FileDown },
+  { kind: 'word', label: '导出 Word', icon: FileType },
+  { kind: 'html', label: '导出 HTML', icon: FileText },
+  { kind: 'md', label: '导出 Markdown', icon: FileCode2 },
+]
 
 const openMenu = ref(false)
 const historyOpen = ref(false)
@@ -65,8 +76,10 @@ function toast(text: string) {
   window.dispatchEvent(new CustomEvent('nota:toast', { detail: text }))
 }
 
-async function doExport(kind: 'md' | 'html') {
+async function doExport(kind: ExportKind) {
   close()
+  // PDF 要开一个隐藏窗口打印，比另存慢一截；先给一句反馈，别让人以为没点上
+  if (kind === 'pdf' || kind === 'word') toast('正在生成，稍等…')
   const path = await store.exportNote(kind)
   if (path) toast(`已导出到 ${path}`)
 }
@@ -125,13 +138,14 @@ onBeforeUnmount(() => {
 
     <Teleport to="body">
       <div v-if="openMenu" ref="menu" class="ea-menu hm-menu n-menu" :style="style">
-        <button class="ea-item hm-item n-menu-item" @click="doExport('md')">
-          <FileText :size="14" :stroke-width="1.8" />
-          <span class="n-menu-name">导出为 Markdown</span>
-        </button>
-        <button class="ea-item hm-item n-menu-item" @click="doExport('html')">
-          <FileCode2 :size="14" :stroke-width="1.8" />
-          <span class="n-menu-name">导出为 HTML</span>
+        <button
+          v-for="it in EXPORT_ITEMS"
+          :key="it.kind"
+          class="ea-item hm-item n-menu-item"
+          @click="doExport(it.kind)"
+        >
+          <component :is="it.icon" :size="14" :stroke-width="1.8" />
+          <span class="n-menu-name">{{ it.label }}</span>
         </button>
       </div>
     </Teleport>

@@ -1,6 +1,11 @@
 import { reactive, computed } from 'vue'
 import type { HeadingItem } from '@/editor/preview-rich'
-import { stripFrontMatter } from '@/editor/preview-rich'
+import {
+  stripFrontMatter,
+  renderMathInHtml,
+  renderMermaidInHtml,
+  enhancePreview,
+} from '@/editor/preview-rich'
 import { getMarked, highlightFences } from '@/editor/markdown'
 
 /* ─────────────────────────────────────────────
@@ -222,6 +227,10 @@ interface State {
   aiStage: string
   /** AI 这一轮在改哪一篇。null = 跟着当前打开的那篇走 */
   aiNote: string | null
+  /** 联网检索：开着时每轮提问先去查资料，再把摘要一起交给模型 */
+  aiWeb: boolean
+  /** 节点图标：相对路径 → `brand:python` / `emoji:📌`。随工作区走 */
+  icons: Record<string, string>
   /** 要不要把那一篇的正文一起交给模型 */
   aiWithNote: boolean
   /** 当前笔记的标题结构。由编辑区在渲染预览时写进来，
@@ -245,6 +254,8 @@ export interface ChatMessage {
   steps?: AgentStep[]
   /** 这一轮从按下回车到收完答案花了多久 */
   ms?: number
+  /** 这一轮联网查到的来源。跟着消息存，切会话再切回来还在 */
+  sources?: { title: string; url: string }[]
 }
 
 /** 执行过程里的一步。label 是一句话，detail 是这一步的具体结果 */
@@ -321,7 +332,9 @@ const state = reactive<State>({
   aiBusy: false,
   aiStage: '',
   aiNote: null,
+  aiWeb: false,
   aiWithNote: true,
+  icons: {},
   headings: [],
   activeHeading: null,
 })
@@ -447,10 +460,12 @@ async function openWorkspace() {
   const dir = await window.api.pickWorkspace()
   if (!dir) return
   state.root = dir
+  state.icons = {}
   state.loading = true
   state.tree = await window.api.readTree(dir)
   state.loading = false
   rememberRoot(dir)
+  await loadIcons()
 }
 
 /* ── 最近打开过的文件夹 ──
@@ -525,14 +540,81 @@ async function switchWorkspace(dir: string): Promise<boolean> {
   setAiNote(null)
   state.root = dir
   state.tree = tree
+  state.icons = {}
   state.loading = false
   rememberRoot(dir)
+  await loadIcons()
   return true
 }
 
 async function refreshTree() {
   if (!state.root) return
   state.tree = await window.api.readTree(state.root)
+}
+
+/* ── 节点图标 ──
+   文件夹和笔记都可以自己挑一个图标：一组编程语言/技术栈的品牌图标，
+   加一组工作向表情。默认是系统那两枚（文件夹 / 文档）。
+
+   落在工作区的 .nota/icons.json（主进程那边读写），键是**相对路径**——
+   工作区整个换个盘符或挪个目录，图标不会跟着一起失效。
+
+   值写成 `brand:python` / `emoji:📌` 这种前缀形式：一个字符串就够，
+   不用为了两种图标搞两套存储结构。 */
+export interface NodeIcon {
+  kind: 'brand' | 'emoji'
+  id: string
+}
+
+function relOf(p: string): string {
+  const root = state.root ? state.root.replace(/[\\/]+$/, '') : ''
+  const abs = p.replace(/\\/g, '/')
+  if (root && abs.toLowerCase().startsWith(root.replace(/\\/g, '/').toLowerCase() + '/')) {
+    return abs.slice(root.replace(/\\/g, '/').length + 1)
+  }
+  return abs
+}
+
+function parseIcon(v: string | undefined): NodeIcon | null {
+  if (!v) return null
+  const cut = v.indexOf(':')
+  if (cut < 0) return null
+  const kind = v.slice(0, cut)
+  const id = v.slice(cut + 1)
+  if (!id) return null
+  if (kind === 'brand' || kind === 'emoji') return { kind, id }
+  return null
+}
+
+function encodeIcon(ic: NodeIcon): string {
+  return `${ic.kind}:${ic.id}`
+}
+
+/** 某个节点的图标。没有自定义就返回 null，交给组件画默认的那一枚 */
+function iconOf(p: string): NodeIcon | null {
+  if (!p) return null
+  return parseIcon(state.icons[relOf(p)])
+}
+
+async function loadIcons() {
+  if (!state.root) {
+    if (Object.keys(state.icons).length) state.icons = {}
+    return
+  }
+  state.icons = (await window.api.iconsRead?.(state.root)) ?? {}
+}
+
+/** 设置 / 清除（传 null）某个节点的图标 */
+async function setNodeIcon(p: string, ic: NodeIcon | null) {
+  if (!state.root || !p) return
+  const key = relOf(p)
+  // reactive 对象上直接改属性是可行的（state 本身是 reactive），
+  // 但下面要整体写回磁盘，所以先复制一份再赋值，保证界面这次就更新
+  const next = { ...state.icons }
+  if (ic) next[key] = encodeIcon(ic)
+  else delete next[key]
+  state.icons = next
+  await window.api.iconsWrite?.(state.root, next)
 }
 
 /**
@@ -878,44 +960,153 @@ function absolutizeMedia(html: string): string {
   )
 }
 
-/** 导出用的排版：够把 Markdown 摊开成一份像样的文档，不追求和预览 1:1 */
+/**
+ * 导出用的排版。
+ *
+ * 早先这只是「够把 Markdown 摊开成一份像样的文档」的十几行，结果导出来的
+ * 东西和软件里看到的完全不是一回事：表格是方框、代码块没有圆角、字体掉回
+ * 系统默认。现在它按预览那一套来写（同一组圆角、同一套层级、同一份配色），
+ * 只是把所有 var() 换成具体值——导出的文件是独立打开的，拿不到本机的
+ * 主题变量。
+ *
+ * 字族与软件一致：圆体在前，系统字体兜底。本机装了圆体（软件本身自带）时
+ * 导出的文档跟屏幕上是一个字形；换一台没装字的机器也只是退回系统字体，
+ * 不会缺字、不会变乱码。
+ */
 const EXPORT_CSS = `
-:root { color-scheme: light dark; }
-body { max-width: 760px; margin: 44px auto; padding: 0 22px;
-  font: 16px/1.75 -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
-  color: #24231f; background: #fff; -webkit-font-smoothing: antialiased; }
-h1,h2,h3,h4,h5,h6 { line-height: 1.35; margin: 1.6em 0 .6em; font-weight: 650; letter-spacing: -0.01em; }
-h1 { font-size: 1.9em; } h2 { font-size: 1.45em; } h3 { font-size: 1.2em; }
-p, ul, ol, blockquote, pre, table { margin: .9em 0; }
-ul, ol { padding-left: 1.5em; }
-a { color: #2f6f52; text-underline-offset: 2px; }
-code { font-family: ui-monospace, Consolas, "Sarasa Mono SC", monospace; font-size: .92em;
-  background: #f1efe9; padding: .12em .34em; border-radius: 4px; }
-pre { background: #f1efe9; padding: 14px 16px; border-radius: 10px; overflow-x: auto; }
-pre code { background: none; padding: 0; }
+:root {
+  --fg: #24231f; --fg-dim: #55534e; --fg-faint: #8a867c;
+  --line: #dedbd4; --surface: #f7f6f3;
+  --code-bg: #f4f2ec; --code-line: #e2ded4; --code-fg: #3b3934;
+  --accent: #2f6f52; --accent-soft: #eef4f0;
+}
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  max-width: 780px; margin: 0 auto; padding: 40px 26px 64px;
+  font-family: "NanxiXinyuanti", "南西新圆体", -apple-system, "Segoe UI",
+    "PingFang SC", "Microsoft YaHei", "Noto Sans CJK SC", sans-serif;
+  font-size: 16px; line-height: 1.78; color: var(--fg); background: #fbfaf7;
+  -webkit-font-smoothing: antialiased;
+}
+h1, h2, h3, h4, h5, h6 {
+  line-height: 1.34; margin: 1.5em 0 .5em; font-weight: 700;
+  letter-spacing: -.015em; color: var(--fg);
+  /* 打印时标题不能落在页尾当孤行 */
+  break-after: avoid; page-break-after: avoid;
+}
+h1 { font-size: 1.62em; margin-top: 0; }
+h2 { font-size: 1.34em; }
+h3 { font-size: 1.16em; }
+h4 { font-size: 1.04em; }
+h5 { font-size: .96em; color: var(--fg-dim); }
+h6 { font-size: .92em; color: var(--fg-faint); }
+p { margin: .8em 0; }
+ul, ol { padding-left: 1.45em; margin: .8em 0; }
+li { margin: .28em 0; }
+li > ul, li > ol { margin: .28em 0; }
+/* 任务列表：去掉圆点，复选框单独一格 */
+ul.contains-task-list { list-style: none; padding-left: .2em; }
+li.task-list-item { display: flex; gap: .5em; align-items: baseline; }
+li.task-list-item input { margin: 0; }
+a { color: var(--accent); text-decoration: underline; text-underline-offset: 3px; }
+a[href] { word-break: break-word; }
+strong { font-weight: 700; }
+del { color: var(--fg-faint); }
+mark { background: #f6e3a8; color: inherit; padding: 0 2px; border-radius: 3px; }
+hr { border: none; border-top: 1px solid var(--line); margin: 2em 0; }
+code {
+  font-family: "JetBrains Mono", "Cascadia Code", ui-monospace, Consolas,
+    "Sarasa Mono SC", monospace;
+  font-size: .88em; padding: .15em .4em; border-radius: 5px;
+  color: var(--code-fg); background: var(--code-bg);
+}
+pre {
+  margin: .95em 0; padding: 13px 15px;
+  border: 1px solid var(--code-line); border-radius: 10px;
+  background: var(--code-bg); color: var(--code-fg);
+  overflow-x: auto; tab-size: 2;
+  /* 代码块被拆到两页上是最难看的一种断法，宁可整块推到下一页 */
+  break-inside: avoid; page-break-inside: avoid;
+  white-space: pre-wrap; word-break: break-word;
+}
+pre code {
+  display: block; padding: 0; border: 0; background: transparent;
+  color: inherit; font-size: .88em; line-height: 1.72;
+}
 .pv-line { display: block; min-height: 1.5em; }
-blockquote { border-left: 3px solid #3f7d5f; margin-left: 0; padding: .3em 0 .3em 14px;
-  background: #eef4f0; color: #55534e; border-radius: 0 8px 8px 0; }
-mark { background: #f6e3a8; padding: 0 2px; border-radius: 3px; }
-img, video { max-width: 100%; border-radius: 8px; }
-hr { border: none; border-top: 1px solid #dedbd4; margin: 2em 0; }
-table { border-collapse: collapse; width: 100%; }
-th, td { border: 1px solid #dedbd4; padding: 6px 10px; text-align: left; }
-th { background: #f7f6f3; font-weight: 600; }
+blockquote {
+  margin: 1em 0; padding: .45em 0 .45em 14px;
+  border-left: 3px solid var(--accent); border-radius: 0 6px 6px 0;
+  background: var(--accent-soft); color: var(--fg-dim);
+}
+blockquote p:first-child { margin-top: 0; }
+blockquote p:last-child { margin-bottom: 0; }
+img, video { max-width: 100%; height: auto; border-radius: 8px; }
+img { display: block; margin: 1em auto; }
+figure { margin: 1em 0; text-align: center; }
+figcaption { font-size: .88em; color: var(--fg-faint); margin-top: .4em; }
+/* 表格：圆角由外层裁（collapse 状态下 table 自己吃不到 border-radius），
+   所以改成 separate、只画右/下两条边，最外圈交给 wrapper。 */
+.pv-table-wrap {
+  margin: 1em 0; border: 1px solid var(--line);
+  border-radius: 10px; overflow: hidden;
+}
+table { border-collapse: separate; border-spacing: 0; width: 100%; margin: 0; font-size: .94em; }
+th, td { border-right: 1px solid var(--line); border-bottom: 1px solid var(--line);
+  padding: 7px 11px; text-align: left; vertical-align: top; }
+th:last-child, td:last-child { border-right: none; }
+tbody tr:last-child td { border-bottom: none; }
+th { background: var(--surface); font-weight: 600; }
+thead { display: table-header-group; }
+tr { break-inside: avoid; page-break-inside: avoid; }
+/* Callout（> [!NOTE] 这类） */
+.pv-callout {
+  margin: 1em 0; border: 1px solid var(--code-line);
+  border-left: 3px solid var(--accent); border-radius: 8px;
+  background: var(--accent-soft); overflow: hidden;
+}
+.pv-callout-head { padding: 7px 12px; font-size: .86em; font-weight: 600; color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 10%, #fff); }
+.pv-callout-body { padding: 2px 12px 8px; }
+.pv-callout-body > p:first-child { margin-top: .5em; }
+.pv-callout-body > p:last-child { margin-bottom: .5em; }
+/* 折叠块 / 分栏 / 嵌入：导出时全部摊平，不做交互 */
+.pv-fold > summary { cursor: default; font-weight: 600; }
+.pv-embed { display: inline-flex; gap: 5px; padding: 2px 9px 2px 7px;
+  border: 1px solid var(--line); border-radius: 6px; background: var(--surface);
+  font-size: .92em; color: var(--accent); }
+/* 公式：katex 的样式不随导出走（那是一整份 CSS），
+   所以导出时统一降级成等宽原文 —— 至少不会变成一堆乱字符。 */
+.pv-math, .pv-math-block { font-family: ui-monospace, Consolas, monospace;
+  background: var(--code-bg); border-radius: 4px; padding: 0 .3em; }
+.pv-math-block { display: block; padding: .5em .7em; margin: .8em 0; text-align: center; }
+/* 脚注 */
+.footnotes { margin-top: 2.5em; padding-top: 1em; border-top: 1px solid var(--line);
+  font-size: .9em; color: var(--fg-dim); }
+sup a { text-decoration: none; }
+/* 代码高亮：与预览同一套类名 */
 .cm-hl-keyword { color: #8a4e30 } .cm-hl-string { color: #2d7a56 }
 .cm-hl-number { color: #b56a16 } .cm-hl-func { color: #3d5f8f }
 .cm-hl-type { color: #6a548f } .cm-hl-prop { color: #5c6848 }
 .cm-hl-operator { color: #8a4e30 } .cm-hl-punct { color: #6b6862 }
 .cm-hl-var { color: #6b6862 } .cm-hl-comment { color: #8d8a83; font-style: italic }
-.pdf-break { page-break-before: always; }
+.pdf-break { break-before: page; page-break-before: always; }
+@page { size: A4; margin: 18mm 16mm; }
+@media print {
+  body { max-width: none; margin: 0; padding: 0; background: #fff; font-size: 11.5pt; }
+  a { color: var(--fg); text-decoration: none; }
+  pre, .pv-table-wrap, .pv-callout, img { box-shadow: none; }
+}
 @media (prefers-color-scheme: dark) {
-  body { color: #e8e5df; background: #1a1a18; }
-  a { color: #86c4a4; }
-  code, pre { background: #191a1e; }
-  blockquote { background: #20241f; color: #b3b0a8; }
+  :root {
+    --fg: #e8e5df; --fg-dim: #b3b0a8; --fg-faint: #8a8780;
+    --line: #34342f; --surface: #22221e;
+    --code-bg: #1b1c20; --code-line: #2c2d33; --code-fg: #d8d5ce;
+    --accent: #86c4a4; --accent-soft: #1e2620;
+  }
+  body { background: #1a1a18; }
   mark { background: #5c4f24; color: #f0ece2; }
-  hr, th, td { border-color: #34342f; }
-  th { background: #22221e; }
   .cm-hl-keyword { color: #e0a57a } .cm-hl-string { color: #86c4a4 }
   .cm-hl-number { color: #e0b36a } .cm-hl-func { color: #8fb0dd }
   .cm-hl-type { color: #b7a3dd } .cm-hl-prop { color: #b3c49a }
@@ -924,24 +1115,63 @@ th { background: #f7f6f3; font-weight: 600; }
 }`
 
 /** Markdown → 正文 HTML（和预览同一套解析与高亮） */
-async function renderExportBody(md: string): Promise<string> {
+/**
+ * 把 Markdown 摊成导出用的 HTML 片段，外加这份笔记**额外需要**的样式。
+ *
+ * 变换链跟预览**完全一致**（`highlightFences` → `enhancePreview`）：
+ * 提示块、分栏标签、折叠、高亮、嵌入、公式、图表、表格包裹全在这一步。
+ * 早先导出只跑了 `highlightFences`，于是预览里是提示块的，导出来是一段
+ * `> [!TIP]` 原文；预览里是表格圆角的，导出来是没包裹的方框表。
+ * 少走这一步，导出和屏幕上就是两样东西。
+ *
+ * 之后再把这几个「预览里靠 JS 补出来」的东西真正渲染出来：
+ *   · Mermaid —— 渲染成内联 SVG 塞回去（SVG 自带样式，不依赖外部文件）；
+ *   · 公式 —— KaTeX 的 HTML，样式与字体由 extraCss 带（见 export-style.ts）。
+ * 不渲染的话导出来就是一块空的图表容器加一堆 `$...$`。
+ *
+ * `forWord` 换一套输出：图表光栅化成 PNG、公式出 MathML。
+ * Word 的 HTML 解析器既不认行内 `<svg>` 也不认 KaTeX 那套 span 布局，
+ * 但对 `<img>` 和 `<math>` 都是一等公民。Word 那一路不需要额外样式 ——
+ * 它自己排公式，把浏览器的 CSS 塞进去反而会打架。
+ *
+ * 渲染在一个游离的容器里做，不进页面 DOM，所以不会闪一下。
+ */
+async function renderExportBody(
+  md: string,
+  forWord = false,
+): Promise<{ body: string; extraCss: string }> {
   const { marked } = await getMarked()
   const raw = marked.parse(stripFrontMatter(md), { async: false }) as string
-  return absolutizeMedia(await highlightFences(raw))
+  let body = absolutizeMedia(enhancePreview(await highlightFences(raw)).html)
+
+  const hasGraph = body.includes('pv-mermaid-graph')
+  const hasMath = body.includes('pv-math')
+  if (hasGraph || hasMath) {
+    const host = document.createElement('div')
+    host.innerHTML = body
+    if (hasGraph) await renderMermaidInHtml(host, { asImage: forWord })
+    if (hasMath) await renderMathInHtml(host, forWord ? { output: 'mathml' } : {})
+    body = host.innerHTML
+  }
+
+  // 公式样式（含 base64 字体）只有真有公式时才值得带上，约 340KB
+  const extraCss = hasMath && !forWord ? (await import('@/editor/export-style')).katexExportCss() : ''
+  return { body, extraCss }
 }
 
 function escapeHtmlText(s: string) {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
 }
 
-function htmlDocument(title: string, body: string) {
+function htmlDocument(title: string, body: string, extraCss = '') {
   return `<!doctype html>
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="generator" content="Nota">
 <title>${escapeHtmlText(title)}</title>
-<style>${EXPORT_CSS}</style>
+<style>${EXPORT_CSS}</style>${extraCss ? `\n<style>${extraCss}</style>` : ''}
 </head>
 <body>
 ${body}
@@ -958,15 +1188,32 @@ function wordDocument(title: string, body: string) {
   return `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word" xmlns="http://www.w3.org/TR/REC-html40">
 <head>
 <meta charset="utf-8">
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
 <title>${escapeHtmlText(title)}</title>
-<!--[if gte mso 9]><xml><w:WordDocument><w:View>Print</w:View><w:Zoom>100</w:Zoom></w:WordDocument></xml><![endif]-->
+<!--[if gte mso 9]>
+<xml>
+ <w:WordDocument>
+  <w:View>Print</w:View>
+  <w:Zoom>100</w:Zoom>
+  <w:DoNotOptimizeForBrowser/>
+ </w:WordDocument>
+</xml>
+<![endif]-->
 <style>
-@page { size: A4; margin: 2cm; }
 ${EXPORT_CSS}
+/* Word 只认自己那一套：分区里显式声明纸张与页边距，
+   mso 的表格/段落默认行高也要压掉，否则粘贴进来的 HTML 会被撑开。 */
+@page WordSection1 { size: A4; margin: 2.2cm 2cm; }
+div.WordSection1 { page: WordSection1; }
+p, li, td, th { mso-line-height-rule: exactly; }
+table { mso-table-lspace: 0pt; mso-table-rspace: 0pt; }
+img { border: 0; }
 </style>
 </head>
 <body>
+<div class="WordSection1">
 ${body}
+</div>
 </body>
 </html>`
 }
@@ -982,22 +1229,28 @@ async function exportNoteAs(path: string, kind: ExportKind): Promise<string | nu
   if (kind === 'md') {
     return window.api.exportSave({ defaultName: `${name}.md`, kind, data: md })
   }
-  const body = await renderExportBody(md)
+  const body = await renderExportBody(md, kind === 'word')
   if (kind === 'pdf') {
-    return window.api.exportPdf({ defaultName: `${name}.pdf`, html: htmlDocument(name, body) })
+    return window.api.exportPdf({ defaultName: `${name}.pdf`, html: htmlDocument(name, body.body, body.extraCss) })
   }
   if (kind === 'word') {
     return window.api.exportSave({
       defaultName: `${name}.doc`,
       kind,
-      data: wordDocument(name, body),
+      data: wordDocument(name, body.body),
     })
   }
-  return window.api.exportSave({ defaultName: `${name}.html`, kind, data: htmlDocument(name, body) })
+  return window.api.exportSave({
+    defaultName: `${name}.html`,
+    kind,
+    data: htmlDocument(name, body.body, body.extraCss),
+  })
 }
 
-/** 顶栏那个导出下拉用的入口：对准当前打开的那篇 */
-async function exportNote(kind: 'md' | 'html') {
+/** 顶栏那个导出下拉用的入口：对准当前打开的那篇。
+    四种格式与右键菜单完全一致 —— 只放两种的时候，想在顶栏导 PDF 的人
+    会以为「这个软件导不了 PDF」。 */
+async function exportNote(kind: ExportKind) {
   if (!state.activePath) return null
   return exportNoteAs(state.activePath, kind)
 }
@@ -1051,6 +1304,7 @@ const COLUMN_KEY = 'nota-column'
 const COLUMN_AUTO_KEY = 'nota-column-auto'
 const AI_NOTE_KEY = 'nota-ai-note'
 const AI_WITH_NOTE_KEY = 'nota-ai-withnote'
+const AI_WEB_KEY = 'nota-ai-web'
 
 function setColumnView(v: ColumnView) {
   state.columnView = v
@@ -1200,6 +1454,7 @@ function initPrefs() {
   const an = localStorage.getItem(AI_NOTE_KEY)
   state.aiNote = an && an.length ? an : null
   state.aiWithNote = localStorage.getItem(AI_WITH_NOTE_KEY) !== '0'
+  state.aiWeb = localStorage.getItem(AI_WEB_KEY) === '1'
   for (const key of ['sidebar', 'column', 'outline'] as WidthKey[]) {
     const raw = Number(localStorage.getItem(`nota-w-${key}`))
     if (raw > 0) {
@@ -1640,12 +1895,33 @@ async function sendChat(text: string, opts: { withNote?: boolean } = {}) {
         : '只带近 12 轮对话',
     )
 
-    const system = noteBlock
-      ? `${state.ai.system}\n\n以下是用户正在写的笔记，回答时参考它：\n${noteBlock}`
-      : state.ai.system
+    // ②·b 联网检索。放在组织上下文之后：先知道笔记要说什么，才知道该怎么查
+    let webBlock = ''
+    if (state.aiWeb) {
+      const hw = rec.begin('联网检索', q.length > 24 ? `${q.slice(0, 24)}…` : q)
+      state.aiStage = '正在联网检索…'
+      try {
+        const r = await window.api.aiWebSearch(q, 5)
+        if (r.ok && r.hits?.length) {
+          webBlock = webContextBlock(r.hits)
+          msg.sources = r.hits.map((h) => ({ title: h.title, url: h.url }))
+          rec.end(hw, `${r.engine ?? '搜索'} · ${r.hits.length} 条来源`)
+        } else {
+          // 没查到不算失败：这一轮照常回答，只是没有外部资料可依托
+          rec.end(hw, r.error ?? '没检索到结果，按已有知识回答')
+        }
+      } catch (e) {
+        rec.end(hw, String(e), 'fail')
+      }
+    }
+
+    const system = [state.ai.system]
+    if (noteBlock) system.push(`以下是用户正在写的笔记，回答时参考它：\n${noteBlock}`)
+    if (webBlock) system.push(webBlock)
+    const systemText = system.join('\n\n')
 
     const messages = [
-      { role: 'system', content: system },
+      { role: 'system', content: systemText },
       ...state.chat
         .filter((m) => !m.error && m.id !== msg.id && m.content)
         .slice(-12) // 只带最近几轮，长对话不该把上下文无限撑大
@@ -1717,6 +1993,33 @@ function setAiWithNote(v: boolean) {
   localStorage.setItem(AI_WITH_NOTE_KEY, v ? '1' : '0')
 }
 
+/**
+ * 联网检索开关。
+ *
+ * 默认关：多数提问不需要联网，而每一轮都先去抓一次网页会白白多等几秒。
+ * 开着时会在执行过程里多出一步「联网检索」，查到几条、用的哪个引擎
+ * 都写在那一行的结果里 —— agent 做的事得看得见。
+ */
+function setAiWeb(v: boolean) {
+  state.aiWeb = v
+  localStorage.setItem(AI_WEB_KEY, v ? '1' : '0')
+}
+
+/** 把检索结果压成一段模型能直接用的参考资料 */
+function webContextBlock(hits: { title: string; url: string; snippet: string }[]) {
+  const lines = hits.map((h, i) => {
+    const snip = h.snippet.trim()
+    return `[${i + 1}] ${h.title}\n    ${h.url}${snip ? `\n    ${snip}` : ''}`
+  })
+  return [
+    '以下是联网检索到的资料（可能不完整，也可能有过时内容）。',
+    '回答时优先参考它们；哪一条支撑了你的说法，就在句末用 [序号] 标出来。',
+    '资料里没有的内容不要编，直接说没查到。',
+    '',
+    ...lines,
+  ].join('\n')
+}
+
 /** 首次展开所有顶层目录 */
 function autoExpand() {
   for (const n of state.tree) {
@@ -1740,6 +2043,9 @@ export const store = {
   switchWorkspace,
   forgetRoot,
   refreshTree,
+  loadIcons,
+  iconOf,
+  setNodeIcon,
   openNote,
   saveNote,
   newNote,
@@ -1789,6 +2095,7 @@ export const store = {
   aiTargetPath,
   setAiNote,
   setAiWithNote,
+  setAiWeb,
   sendChat,
   retryChat,
   clearChat,

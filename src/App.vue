@@ -68,11 +68,32 @@ function onKey(e: KeyboardEvent) {
   }
 }
 
+/**
+ * 正文、AI 回答、来源列表里都会出现 http(s) 链接。
+ * 直接让默认行为跑的话，Electron 会把整个应用窗口导航到那个网址——
+ * 界面没了，笔记还在。所以统一拦下来交给系统浏览器。
+ *
+ * 用 window.open 而不是 IPC：主进程已经装了 setWindowOpenHandler，
+ * 它会把新窗口转成 shell.openExternal 并 deny 掉，正好是我们要的行为。
+ */
+function onLinkClick(e: MouseEvent) {
+  if (e.defaultPrevented || e.button !== 0) return
+  if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return
+  const el = e.target as HTMLElement | null
+  const a = el?.closest?.('a[href]') as HTMLAnchorElement | null
+  if (!a) return
+  const href = a.getAttribute('href') ?? ''
+  if (!/^https?:\/\//i.test(href)) return
+  e.preventDefault()
+  window.open(href, '_blank', 'noopener')
+}
+
 onMounted(() => {
   store.initTheme()
   store.initPrefs()
   window.addEventListener('keydown', onKey)
   window.addEventListener('nota:library', onLibrary)
+  document.addEventListener('click', onLinkClick)
   ro = new ResizeObserver(() => {
     winW.value = window.innerWidth
   })
@@ -82,6 +103,7 @@ onMounted(() => {
 onBeforeUnmount(() => {
   window.removeEventListener('keydown', onKey)
   window.removeEventListener('nota:library', onLibrary)
+  document.removeEventListener('click', onLinkClick)
   ro?.disconnect()
 })
 </script>

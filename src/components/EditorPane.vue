@@ -15,6 +15,10 @@ import {
   Sun,
   ChevronDown,
   ChevronUp,
+  CaseSensitive,
+  WholeWord,
+  Regex,
+  Replace,
   Search,
   X,
 } from 'lucide-vue-next'
@@ -25,6 +29,8 @@ import {
   SearchQuery,
   findNext,
   findPrevious,
+  replaceAll,
+  replaceNext,
   setSearchQuery,
 } from '@codemirror/search'
 import { notaThemeExtensions } from '@/editor/theme'
@@ -365,16 +371,31 @@ async function render() {
 }
 
 /* ── 编辑区查找条 ──
-   只做「找」不做「换」：替换在笔记场景里用得极少，却要占一整行控件。
    匹配逻辑仍交给 @codemirror/search（setSearchQuery + findNext/Previous），
-   这样高亮和滚动行为与编辑器原生一致，画出来的只是上面那条输入框。 */
+   这样高亮和滚动行为与编辑器原生一致，画出来的只是上面那条输入框。
+
+   三个开关（大小写 / 全字 / 正则）和一个替换行都是后补的：原来只有「找」，
+   于是「把整篇里的 Nota 改成 nota」这种事得手工一个个改，
+   而「只找单词 foo、不要 foobar」根本做不到。默认都关着 ——
+   多数时候人只想找一串字，不该先去关掉三个开关。 */
 const findOpen = ref(false)
 const findText = ref('')
 const findTotal = ref(0)
 const findAt = ref(0)
 const findInput = ref<HTMLInputElement | null>(null)
+/** 区分大小写。关着时 Nota 能匹配 nota */
+const findCase = ref(false)
+/** 全字匹配：只找「两边都不是字母数字」的那些 */
+const findWord = ref(false)
+/** 正则。开着时输入框交给 RegExp，写坏了就地提示，不让整条查找崩掉 */
+const findRegex = ref(false)
+const findError = ref('')
+/** 替换行：默认收着，点那个 A→B 图标才展开 */
+const replaceOpen = ref(false)
+const replaceText = ref('')
 
 const findCountText = computed(() => {
+  if (findError.value) return '条件有误'
   if (!findText.value) return ''
   if (findTotal.value === 0) return '无匹配'
   return findAt.value ? `${findAt.value} / ${findTotal.value}` : `${findTotal.value} 处`
@@ -405,9 +426,43 @@ function closeFind() {
   findText.value = ''
   findTotal.value = 0
   findAt.value = 0
+  findError.value = ''
+  // 替换行跟着收：留着的话下次打开会先看到一整行空输入框
+  replaceOpen.value = false
+  replaceText.value = ''
   const v = view
   if (v) v.dispatch({ effects: setSearchQuery.of(new SearchQuery({ search: '' })) })
   v?.focus()
+}
+
+/**
+ * 按当前三个开关造一条查询。
+ *
+ * 替换文本也一并塞进去 —— replaceNext / replaceAll 取的是查询对象上的
+ * replace 字段，不是自己的参数；只建查询不填它，替换会变成「删掉」。
+ *
+ * 正则写坏时构造函数不抛异常，而是给一个 `valid: false` 的对象，
+ * 所以要看 valid，不能靠 try/catch。
+ */
+function buildQuery(text: string): SearchQuery {
+  const q = new SearchQuery({
+    search: text,
+    caseSensitive: findCase.value,
+    wholeWord: findWord.value,
+    regexp: findRegex.value,
+    replace: replaceText.value,
+  })
+  return q.valid ? q : new SearchQuery({ search: '' })
+}
+
+function queryOk(text: string) {
+  return new SearchQuery({
+    search: text,
+    caseSensitive: findCase.value,
+    wholeWord: findWord.value,
+    regexp: findRegex.value,
+    replace: replaceText.value,
+  }).valid
 }
 
 /** 重新计数，并标出光标当前停在第几个匹配上 */
@@ -415,7 +470,15 @@ function refreshFind() {
   const v = view
   if (!v) return
   const text = findText.value
-  const query = new SearchQuery({ search: text, caseSensitive: false })
+  const query = buildQuery(text)
+  if (text && !queryOk(text)) {
+    findError.value = '正则表达式有误'
+    findTotal.value = 0
+    findAt.value = 0
+    v.dispatch({ effects: setSearchQuery.of(new SearchQuery({ search: '' })) })
+    return
+  }
+  findError.value = ''
   v.dispatch({ effects: setSearchQuery.of(query) })
 
   if (!text) {
@@ -440,9 +503,39 @@ function refreshFind() {
 
 function stepFind(dir: 1 | -1) {
   const v = view
-  if (!v || !findText.value) return
+  if (!v || !findText.value || findError.value) return
   if (dir === 1) findNext(v)
   else findPrevious(v)
+  refreshFind()
+}
+
+/** 三个开关任何一个动了都要整条重算：高亮、计数、当前项全都跟着变 */
+function onFindOption() {
+  refreshFind()
+}
+
+/**
+ * 替换当前这一处。replaceNext 自带「换完顺带跳到下一处」，正好是想要的。
+ *
+ * 先 refreshFind 一次：替换文本是绑在输入框上的，不重算的话查询里带的
+ * 还是上一次的替换内容。
+ */
+function doReplaceOne() {
+  const v = view
+  if (!v || !findText.value || findError.value) return
+  refreshFind()
+  if (findError.value) return
+  replaceNext(v)
+  refreshFind()
+}
+
+/** 全文替换。改的是文档而不是草稿字符串，所以撤销（Ctrl+Z）能一次退回来 */
+function doReplaceAll() {
+  const v = view
+  if (!v || !findText.value || findError.value) return
+  refreshFind()
+  if (findError.value) return
+  replaceAll(v)
   refreshFind()
 }
 
@@ -1223,32 +1316,105 @@ defineExpose({ getView: () => view })
       <div ref="edWrap" v-show="showEditor" class="ed-wrap">
         <div ref="host" class="host" @contextmenu="onContextMenu" />
 
-        <!-- 查找条。CodeMirror 原生面板带替换框和正则/整词一堆开关，
-             这里只要「一个输入框 + 上/下 + 关闭」，所以自己画一条浮在上面。 -->
-        <div v-if="findOpen" class="findbar">
-          <Search class="fb-ico" :size="12" :stroke-width="2" />
-          <input
-            ref="findInput"
-            v-model="findText"
-            class="fb-input"
-            type="text"
-            placeholder="在当前笔记中查找…"
-            spellcheck="false"
-            @input="refreshFind"
-            @keydown.enter.exact.prevent="stepFind(1)"
-            @keydown.enter.shift.prevent="stepFind(-1)"
-            @keydown.esc="closeFind"
-          />
-          <span class="fb-count">{{ findCountText }}</span>
-          <button class="fb-btn" title="上一个 (Shift+Enter)" @click="stepFind(-1)">
-            <ChevronUp :size="13" :stroke-width="2.1" />
-          </button>
-          <button class="fb-btn" title="下一个 (Enter)" @click="stepFind(1)">
-            <ChevronDown :size="13" :stroke-width="2.1" />
-          </button>
-          <button class="fb-btn" title="关闭 (Esc)" @click="closeFind">
-            <X :size="12" :stroke-width="2.2" />
-          </button>
+        <!-- 查找条。CodeMirror 原生面板把替换框和一堆开关全摊开，占两行还
+             带英文文案，所以自己画一条：上面「输入框 + 计数 + 上/下」，
+             三个匹配开关收成图标，替换行按需展开。 -->
+        <div v-if="findOpen" class="findbar" :class="{ 'with-rep': replaceOpen }">
+          <div class="fb-row">
+            <Search class="fb-ico" :size="12" :stroke-width="2" />
+            <input
+              ref="findInput"
+              v-model="findText"
+              class="fb-input"
+              type="text"
+              placeholder="在当前笔记中查找…"
+              spellcheck="false"
+              @input="refreshFind"
+              @keydown.enter.exact.prevent="stepFind(1)"
+              @keydown.enter.shift.prevent="stepFind(-1)"
+              @keydown.esc="closeFind"
+            />
+            <span class="fb-count" :class="{ bad: findError || (findText && !findTotal) }">
+              {{ findCountText }}
+            </span>
+
+            <button
+              class="fb-btn opt"
+              :class="{ on: findCase }"
+              title="区分大小写"
+              :aria-pressed="findCase"
+              @click="findCase = !findCase; onFindOption()"
+            >
+              <CaseSensitive :size="13" :stroke-width="2.1" />
+            </button>
+            <button
+              class="fb-btn opt"
+              :class="{ on: findWord }"
+              title="全字匹配"
+              :aria-pressed="findWord"
+              @click="findWord = !findWord; onFindOption()"
+            >
+              <WholeWord :size="13" :stroke-width="2.1" />
+            </button>
+            <button
+              class="fb-btn opt"
+              :class="{ on: findRegex }"
+              title="正则表达式"
+              :aria-pressed="findRegex"
+              @click="findRegex = !findRegex; onFindOption()"
+            >
+              <Regex :size="13" :stroke-width="2.1" />
+            </button>
+            <button
+              class="fb-btn opt"
+              :class="{ on: replaceOpen }"
+              title="替换"
+              :aria-pressed="replaceOpen"
+              @click="replaceOpen = !replaceOpen"
+            >
+              <Replace :size="13" :stroke-width="2.1" />
+            </button>
+
+            <span class="fb-sep" />
+            <button class="fb-btn" title="上一个 (Shift+Enter)" @click="stepFind(-1)">
+              <ChevronUp :size="13" :stroke-width="2.1" />
+            </button>
+            <button class="fb-btn" title="下一个 (Enter)" @click="stepFind(1)">
+              <ChevronDown :size="13" :stroke-width="2.1" />
+            </button>
+            <button class="fb-btn" title="关闭 (Esc)" @click="closeFind">
+              <X :size="12" :stroke-width="2.2" />
+            </button>
+          </div>
+
+          <div v-if="replaceOpen" class="fb-row">
+            <Replace class="fb-ico" :size="12" :stroke-width="2" />
+            <input
+              v-model="replaceText"
+              class="fb-input"
+              type="text"
+              placeholder="替换为…"
+              spellcheck="false"
+              @keydown.enter.exact.prevent="doReplaceOne"
+              @keydown.esc="closeFind"
+            />
+            <button
+              class="fb-btn wide"
+              title="替换当前这一处，并跳到下一处"
+              :disabled="!findTotal"
+              @click="doReplaceOne"
+            >
+              替换
+            </button>
+            <button
+              class="fb-btn wide"
+              :title="`把全部 ${findTotal} 处替换掉`"
+              :disabled="!findTotal"
+              @click="doReplaceAll"
+            >
+              全部
+            </button>
+          </div>
         </div>
       </div>
       <div v-if="showPreview" class="pvw">
@@ -1582,25 +1748,33 @@ defineExpose({ getView: () => view })
   border-right: 1px solid var(--n-line);
 }
 
-/* ── 查找条 ── */
+/* ── 查找条 ──
+   展开替换行时是两行，所以高度不能再写死成 30px —— 用 padding + 行高撑，
+   一行 30、两行 60，浮在编辑区右上角不会盖掉正文第一行。 */
 .findbar {
   position: absolute;
   top: 8px;
   right: 14px;
   z-index: 6;
   display: flex;
-  align-items: center;
+  flex-direction: column;
   gap: 2px;
-  height: 30px;
-  padding: 0 5px 0 9px;
+  padding: 3px 5px;
   border: 1px solid var(--n-line-strong);
   border-radius: var(--n-r-md);
   background: var(--n-raised);
   box-shadow: var(--n-shadow-md);
 }
+.fb-row {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  height: 26px;
+}
 .findbar .fb-ico {
   color: var(--n-fg-faint);
   flex: none;
+  margin: 0 2px 0 3px;
 }
 .fb-input {
   width: 168px;
@@ -1623,6 +1797,10 @@ defineExpose({ getView: () => view })
   color: var(--n-fg-dim);
   flex: none;
 }
+/* 「无匹配」和「正则写坏了」都是要人去看的信息，给淡红 */
+.fb-count.bad {
+  color: var(--n-danger);
+}
 .fb-btn {
   padding: 0;
   display: inline-flex;
@@ -1634,9 +1812,30 @@ defineExpose({ getView: () => view })
   color: var(--n-fg-dim);
   flex: none;
 }
-.fb-btn:hover {
+.fb-btn:hover:not(:disabled) {
   background: var(--n-accent-soft);
   color: var(--n-accent);
+}
+.fb-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+/* 三个匹配开关 + 替换开关：开着时是强调色，一眼能看出这一轮是按什么规则找的 */
+.fb-btn.opt.on {
+  background: color-mix(in srgb, var(--n-accent) 14%, transparent);
+  color: var(--n-accent);
+}
+.fb-btn.wide {
+  width: auto;
+  padding: 0 8px;
+  font-size: 11.5px;
+}
+.fb-sep {
+  width: 1px;
+  height: 15px;
+  margin: 0 3px;
+  background: var(--n-line);
+  flex: none;
 }
 
 /* 预览侧：正文 + 右侧大纲并排。

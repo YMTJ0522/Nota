@@ -370,18 +370,25 @@ const search = await evaluate(`(() => {
     native: !!native,
     inputW: Math.round(ib?.width ?? 0),
     buttons: btns.length,
-    // 三个按钮：上一个 / 下一个 / 关闭
+    // 2.2.6 补齐之后是七个：三个匹配开关 + 替换 + 上一个 / 下一个 / 关闭
     titles: btns.map(b => b.getAttribute('title')),
     display: getComputedStyle(bar).display,
   }
 })()`)
 ok(
   '11.自绘查找条',
-  search.exists && search.native === false && search.inputW > 120 && search.buttons === 3 &&
+  search.exists && search.native === false && search.inputW > 120 &&
+    // 按钮数不写死：2.2.6 补了「区分大小写 / 全字匹配 / 正则表达式 / 替换」
+    // 之后从 3 个变成 7 个，写死数字每次补功能都要改一遍断言。
+    // 真正要保证的是「自绘的那几个键位都在」。
+    ['区分大小写', '全字匹配', '正则表达式', '上一个', '下一个'].every((t) =>
+      search.titles.some((x) => (x || '').includes(t)),
+    ) &&
     search.display === 'flex',
   search,
 )
-await evaluate("document.querySelector('.findbar .fb-btn:last-child')?.click()")
+/* 按 title 找「关闭」而不是靠 `:last-child`：补齐按钮之后它不再保证是最后一个 */
+await evaluate(`[...document.querySelectorAll('.findbar button')].find(b => (b.getAttribute('title')||'').includes('关闭'))?.click()`)
 
 /* ── 7. 侧边栏结构 ── */
 const side = await evaluate(`(() => {

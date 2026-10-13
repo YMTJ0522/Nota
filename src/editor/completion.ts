@@ -9,7 +9,7 @@ import {
 } from '@codemirror/autocomplete'
 import { LanguageDescription, syntaxTree } from '@codemirror/language'
 import type { EditorState, Extension } from '@codemirror/state'
-import { keymap } from '@codemirror/view'
+import { EditorView, keymap } from '@codemirror/view'
 import { fencedCodeLanguages } from './code-languages'
 
 /**
@@ -199,6 +199,29 @@ function docWords(state: EditorState) {
   return index.words
 }
 
+/* ── 输入法（IME）──
+   中文、日文、韩文都靠「先敲一串拉丁字母、再上屏成汉字」输入。
+   拼音还没上屏的那段时间里，编辑器里已经有了真实的拉丁字符 ——
+   补全源分不清「这是拼音」还是「这是人在打英文单词」，于是每敲一个字母
+   就弹一层英文候选，正好压在输入法的候选条上：不但挡视线，还会把
+   输入法的窗挤走。
+
+   所以组字期间一律不补全。用 DOM 的 compositionstart / compositionend
+   直接记账（而不是去猜字符范围）：这两个事件是浏览器自己发的，
+   只要输入法开着就一定准。 */
+let composing = false
+
+const imeGuard = EditorView.domEventHandlers({
+  compositionstart: () => {
+    composing = true
+    return false
+  },
+  compositionend: () => {
+    composing = false
+    return false
+  },
+})
+
 /* ── 补全源 ── */
 
 /**
@@ -263,6 +286,9 @@ function snippetOptions(lang: string, token = ''): Completion[] {
 function notaCompletion(ctx: CompletionContext): CompletionResult | null {
   const { state } = ctx
 
+  // 组字期间直接退出。放在最前面：这时候连 matchBefore 都不该跑。
+  if (composing) return null
+
   // 先看字，再决定要不要去判断围栏 —— 单字符输入是最高频的按键，
   // 早退在这里能省掉绝大部分「扫全篇找围栏」的开销。
   const match = ctx.matchBefore(TOKEN_RE)
@@ -298,6 +324,7 @@ const MANUAL_KEY = 'Alt-/'
 
 export function markdownCompletion(): Extension[] {
   return [
+    imeGuard,
     autocompletion({
       override: [notaCompletion],
       // 候选自带 type 小标（keyword / text），不用再画图标

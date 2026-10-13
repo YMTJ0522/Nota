@@ -29,6 +29,7 @@ import type { NavFilter, SettingsSection, TreeNode } from '@/store'
 import TreeNodeItem from './TreeNodeItem.vue'
 import SettingsDialog from '@/components/SettingsDialog.vue'
 import NoteContextMenu, { type NoteExportKind } from '@/components/NoteContextMenu.vue'
+import IconPickerDialog from '@/components/IconPickerDialog.vue'
 import FolderContextMenu from '@/components/FolderContextMenu.vue'
 import TagContextMenu from '@/components/TagContextMenu.vue'
 import PromptDialog from '@/components/PromptDialog.vue'
@@ -244,6 +245,19 @@ async function onMenuReveal() {
   if (n) await store.revealNote(n.path)
 }
 
+/* ── 换图标 ──
+   图标写在 .nota/icons.json，记的是相对路径。文件夹也能换，
+   所以这里不区分类型，一律交给 setNodeIcon。 */
+const iconOpen = ref(false)
+
+async function onIconPick(ic: { kind: 'brand' | 'emoji'; id: string } | null) {
+  const n = actionNode.value
+  iconOpen.value = false
+  if (!n) return
+  await store.setNodeIcon(n.path, ic)
+  toast(ic ? '图标已更换' : '已恢复默认图标')
+}
+
 async function onMenuExport(kind: NoteExportKind) {
   const n = takeNode()
   if (!n) return
@@ -423,8 +437,10 @@ onBeforeUnmount(() => document.removeEventListener('pointerdown', onDocPointer))
     <!-- ══ 展开态 ══ -->
     <template v-if="state.sidebar">
       <header class="head">
-        <!-- 标：和 build/icon.svg 同一个造型（折角纸页 + 三行字），
-             这里按界面里的尺寸做成描边版，最后一笔用品牌琥珀色收尾 -->
+        <!-- 标：界面里的「Nota」记号（折角纸页 + 三行字，最后一笔用琥珀收尾）。
+             应用图标是另一回事（build/icon-source.png，奶油底手写体那张）——
+             界面上不用那张：18px 的彩色位图塞进侧栏顶栏只会糊成一格色块，
+             描边版才跟这一栏其它图标同一种笔法。 -->
         <span class="logo" aria-hidden="true">
           <svg viewBox="0 0 32 32" width="18" height="18" fill="none">
             <path
@@ -746,6 +762,12 @@ onBeforeUnmount(() => document.removeEventListener('pointerdown', onDocPointer))
           moveOpen = true
         }
       "
+      @icon="
+        () => {
+          takeNode()
+          iconOpen = true
+        }
+      "
       @copy-path="onMenuCopyPath"
       @reveal="onMenuReveal"
       @export="onMenuExport"
@@ -774,6 +796,12 @@ onBeforeUnmount(() => document.removeEventListener('pointerdown', onDocPointer))
           renameOpen = true
         }
       "
+      @icon="
+        () => {
+          takeNode()
+          iconOpen = true
+        }
+      "
       @copy-path="onMenuCopyPath"
       @reveal="onMenuReveal"
       @remove="
@@ -782,6 +810,14 @@ onBeforeUnmount(() => document.removeEventListener('pointerdown', onDocPointer))
           removeOpen = true
         }
       "
+    />
+
+    <IconPickerDialog
+      :open="iconOpen"
+      :name="actionIsDir ? actionNode?.name ?? '' : actionName"
+      :type="actionIsDir ? 'dir' : 'file'"
+      @close="iconOpen = false"
+      @pick="onIconPick"
     />
 
     <TagContextMenu

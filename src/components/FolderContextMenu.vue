@@ -15,6 +15,7 @@ import {
   FilePlus2,
   FolderPlus,
   PencilLine,
+  Shapes,
   Trash2,
 } from 'lucide-vue-next'
 import ContextMenu from '@/components/ContextMenu.vue'
@@ -31,6 +32,7 @@ const emit = defineEmits<{
   (e: 'newNote'): void
   (e: 'newFolder'): void
   (e: 'rename'): void
+  (e: 'icon'): void
   (e: 'copyPath'): void
   (e: 'reveal'): void
   (e: 'remove'): void
@@ -51,6 +53,7 @@ const emit = defineEmits<{
     <ContextMenuSeparator />
 
     <ContextMenuItem :icon="PencilLine" label="重命名" @select="emit('rename')" />
+    <ContextMenuItem :icon="Shapes" label="更换图标…" @select="emit('icon')" />
 
     <ContextMenuSeparator />
 

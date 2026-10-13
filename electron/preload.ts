@@ -1,4 +1,17 @@
-import { contextBridge, ipcRenderer } from 'electron'
+import { contextBridge, ipcRenderer, webUtils } from 'electron'
+
+/**
+ * 拖进来的 File 在 Electron 里是有真实磁盘路径的。
+ * 单独暴露一个取路径的方法（而不是把整个 webUtils 递过去）——
+ * 渲染进程只能问「这个文件的路径是什么」，拿不到别的。
+ */
+contextBridge.exposeInMainWorld('pathForFile', (file: File): string => {
+  try {
+    return webUtils.getPathForFile(file)
+  } catch {
+    return ''
+  }
+})
 
 /**
  * 安全桥接：只暴露白名单方法，渲染进程拿不到 Node 的 fs / child_process 等能力。
@@ -96,6 +109,29 @@ contextBridge.exposeInMainWorld('api', {
     temperature: number
   }): Promise<{ ok: boolean; models?: string[]; error?: string }> =>
     ipcRenderer.invoke('ai:test', cfg),
+  /* 节点图标：相对路径 → 图标 id，存在工作区 .nota/icons.json */
+  iconsRead: (root: string): Promise<Record<string, string>> =>
+    ipcRenderer.invoke('icons:read', root),
+  iconsWrite: (root: string, map: Record<string, string>): Promise<boolean> =>
+    ipcRenderer.invoke('icons:write', root, map),
+
+  /* 把粘贴 / 拖进来的图片存进工作区 attachments/，返回相对路径 */
+  mediaSave: (
+    root: string,
+    item: { srcPath?: string; bytes?: string; ext?: string },
+  ): Promise<{ rel: string; name: string; isVideo: boolean } | null> =>
+    ipcRenderer.invoke('media:save', root, item),
+
+  /* 联网检索：agent 那一轮先去查资料。走主进程，不受 CORS 限制 */
+  aiWebSearch: (
+    query: string,
+    limit?: number,
+  ): Promise<{
+    ok: boolean
+    hits?: { title: string; url: string; snippet: string }[]
+    engine?: string
+    error?: string
+  }> => ipcRenderer.invoke('ai:websearch', query, limit),
 
   /* 运行环境版本（关于页展示） */
   appInfo: (): Promise<{

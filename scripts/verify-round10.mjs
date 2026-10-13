@@ -200,10 +200,11 @@ const ctx2 = await evaluate(`(async () => {
   await wait(200)
   return { folder, tags, dirFound: !!dir, tagFound: !!tag }
 })()`)
-const FOLDER_EXPECT = ['在此新建笔记', '在此新建子文件夹', '重命名', '复制路径', '在系统打开', '删除文件夹']
+// 2.2.6 加了「更换图标…」（紧跟「重命名」）
+const FOLDER_EXPECT = ['在此新建笔记', '在此新建子文件夹', '重命名', '更换图标', '复制路径', '在系统打开', '删除文件夹']
 ok(
-  '5.文件夹右键 6 项（含删除文件夹）',
-  ctx2.dirFound && ctx2.folder.length === 6 &&
+  '5.文件夹右键 7 项（含删除文件夹）',
+  ctx2.dirFound && ctx2.folder.length === 7 &&
     FOLDER_EXPECT.every((t) => ctx2.folder.some((g) => g.includes(t))) &&
     ctx2.folder.some((t) => t.includes('删除')),
   ctx2.folder,
@@ -669,7 +670,10 @@ ok(
   aiPanel.headOk && aiPanel.rows.length === 3 &&
     aiPanel.rows[0].includes('ag-row-top') && aiPanel.rows[1].includes('ag-sess') && aiPanel.rows[2].includes('ag-note') &&
     aiPanel.colAuto > 300 &&
-    aiPanel.menu && aiPanel.menu.h > 120 && aiPanel.menu.items >= 3 &&
+    // items 从 >=3 降到 >=2：2.2.6 起模型下拉只列真正探测到的模型，
+    // 不再摆一堆没配过密钥的预设 —— 假接口只回了一个 llama3.2，
+    // 加上末尾固定的「模型设置…」就是 2 项，这是对的。
+    aiPanel.menu && aiPanel.menu.h > 120 && aiPanel.menu.items >= 2 &&
     aiPanel.menu.top >= 0 && aiPanel.menu.bottom <= 1000 &&
     aiPanel.composer && Math.abs(aiPanel.composer.left - aiPanel.composer.right) <= 2,
   aiPanel,

@@ -31,8 +31,10 @@ async function pickRoot(dir: string) {
   <div class="welcome">
     <div class="inner">
       <div class="logo">
-        <!-- 与 build/icon.svg 同一套语言：页面 + 折角 + 两条文字行。
-            这里用细描边而非实心，跟应用内其它图标保持一致的克制感。 -->
+        <!-- 与侧栏顶栏同一套记号：页面 + 折角 + 两条文字行。
+             这里用细描边而非实心，跟应用内其它图标保持一致的克制感。
+             （应用图标是那张奶油底手写体的位图，见 build/icon-source.png，
+             不用在界面上：一张彩色位图放进正文里会跟这一页的描边语言打架。） -->
         <svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
           <path d="M5 3.5A1.5 1.5 0 0 1 6.5 2h8L20 7.5v13A1.5 1.5 0 0 1 18.5 22h-12A1.5 1.5 0 0 1 5 20.5z" />
           <path d="M14 2v6h6" />

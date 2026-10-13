@@ -317,6 +317,147 @@ ipcMain.handle(
   },
 )
 
+/* ── 联网检索 ──
+   agent 那一轮要「先查再答」，就得有地方去查。
+
+   这里刻意不接任何要注册、要密钥的搜索 API：为了偶尔查一次资料先去申请
+   一个 Key，成本比功能本身还高。所以直接抓公开搜索页的 HTML，再从中取
+   标题 / 链接 / 摘要三样。
+
+   两个引擎依次试：DuckDuckGo（境外可达、无反爬门槛）→ Bing（国内更稳）。
+   抓不到就如实报失败，聊天照常继续 —— 没查到资料也不该让这一轮废掉。 */
+const WEB_TIMEOUT_MS = 12000
+
+export interface WebHit {
+  title: string
+  url: string
+  snippet: string
+}
+
+/** 把 HTML 里那些实体与标签清掉，只留能读的纯文本 */
+function htmlToText(s: string) {
+  return decodeEntities(s.replace(/<[^>]*>/g, '')).replace(/\s+/g, ' ').trim()
+}
+
+function decodeEntities(s: string) {
+  const named: Record<string, string> = {
+    amp: '&',
+    lt: '<',
+    gt: '>',
+    quot: '"',
+    apos: "'",
+    nbsp: ' ',
+    '#39': "'",
+  }
+  return s
+    .replace(/&#(\d+);/g, (_m, d: string) => String.fromCodePoint(Number(d)))
+    .replace(/&#x([0-9a-f]+);/gi, (_m, h: string) => String.fromCodePoint(parseInt(h, 16)))
+    .replace(/&([a-z#0-9]+);/gi, (m, n: string) => named[n.toLowerCase()] ?? m)
+}
+
+/** DuckDuckGo 的 lite 页把真实地址塞在跳转链接的 uddg 参数里，取出来才是原站 */
+function unwrapUrl(u: string) {
+  try {
+    const abs = u.startsWith('//') ? `https:${u}` : u
+    const url = new URL(abs)
+    const real = url.searchParams.get('uddg')
+    return real ? decodeURIComponent(real) : abs
+  } catch {
+    return u
+  }
+}
+
+const SEARCH_ENGINES: {
+  name: string
+  build: (q: string) => string
+  link: RegExp
+  snip: RegExp
+}[] = [
+  {
+    name: 'DuckDuckGo',
+    build: (q) => `https://lite.duckduckgo.com/lite/?q=${encodeURIComponent(q)}`,
+    link: /<a[^>]+class="result-link"[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/gi,
+    snip: /<td[^>]+class="result-snippet"[^>]*>([\s\S]*?)<\/td>/gi,
+  },
+  {
+    name: 'Bing',
+    build: (q) => `https://www.bing.com/search?q=${encodeURIComponent(q)}&count=10`,
+    link: /<h2>\s*<a[^>]+href="(https?:\/\/[^"]+)"[^>]*>([\s\S]*?)<\/a>/gi,
+    snip: /<p[^>]+class="b_(?:lineclamp\d|paractl|caption)"[^>]*>([\s\S]*?)<\/p>/gi,
+  },
+]
+
+/**
+ * 抓一个引擎的结果。标题与摘要是两个互不相关的正则扫出来的，
+ * 所以按下标配对；数量对不齐时以少的那一头为准，多出来的丢掉 ——
+ * 宁可少给两条，也不能把 A 的标题配到 B 的摘要上。
+ */
+function parseEngine(html: string, engine: (typeof SEARCH_ENGINES)[number], limit: number) {
+  const links: { url: string; title: string }[] = []
+  for (const m of html.matchAll(engine.link)) {
+    const url = unwrapUrl(m[1])
+    const title = htmlToText(m[2])
+    if (!url.startsWith('http') || !title) continue
+    links.push({ url, title })
+    if (links.length >= limit) break
+  }
+  const snips: string[] = []
+  for (const m of html.matchAll(engine.snip)) {
+    const t = htmlToText(m[1])
+    if (t) snips.push(t)
+    if (snips.length >= limit) break
+  }
+  const n = Math.min(links.length, snips.length)
+  const out: WebHit[] = []
+  // 一条摘要都没有时也要把结果给出去：有标题和链接已经够模型去读了
+  for (let i = 0; i < (snips.length ? n : links.length); i += 1) {
+    out.push({ title: links[i].title, url: links[i].url, snippet: snips[i] ?? '' })
+  }
+  return out
+}
+
+ipcMain.handle(
+  'ai:websearch',
+  async (
+    _e,
+    query: string,
+    limit = 5,
+  ): Promise<{ ok: boolean; hits?: WebHit[]; engine?: string; error?: string }> => {
+    const q = String(query ?? '').trim()
+    if (!q) return { ok: false, error: '检索词是空的' }
+    const want = Math.max(1, Math.min(limit, 8))
+    let lastError = ''
+    for (const engine of SEARCH_ENGINES) {
+      const controller = new AbortController()
+      const timer = setTimeout(() => controller.abort(), WEB_TIMEOUT_MS)
+      try {
+        const res = await net.fetch(engine.build(q), {
+          method: 'GET',
+          headers: {
+            // 不伪装成浏览器，搜索页通常直接拒绝；这里只声明自己是普通 UA
+            'User-Agent':
+              'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36',
+            'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
+          },
+          signal: controller.signal,
+        })
+        if (!res.ok) {
+          lastError = `${engine.name} HTTP ${res.status}`
+          continue
+        }
+        const hits = parseEngine(await res.text(), engine, want)
+        if (hits.length) return { ok: true, hits, engine: engine.name }
+        lastError = `${engine.name} 没有解析到结果`
+      } catch (e) {
+        lastError = `${engine.name}：${aiError(e, WEB_TIMEOUT_MS)}`
+      } finally {
+        clearTimeout(timer)
+      }
+    }
+    return { ok: false, error: lastError || '联网检索失败' }
+  },
+)
+
 /**
  * 测试连接：拉一次 /models，顺带把可用模型列出来方便直接挑。
  *
@@ -854,6 +995,67 @@ ipcMain.handle(
   },
 )
 
+/**
+ * 把一张图直接存进工作区（粘贴或拖进来的那些）。
+ *
+ * 与 attach:import 的区别：那个是「人去挑文件」，这个是「编辑器自己接住」——
+ * 来源可能是剪贴板里的一张截图（磁盘上根本没有这个文件），所以除了
+ * 按路径复制，还要能吃一段字节。
+ *
+ * 落点统一是 attachments/，和手动导入的那批在一起 —— 分成两个目录的话，
+ * 「这篇笔记用到的图」就散在两处了。
+ */
+ipcMain.handle(
+  'media:save',
+  async (
+    _e,
+    root: string,
+    item: { srcPath?: string; bytes?: string; ext?: string },
+  ): Promise<{ rel: string; name: string; isVideo: boolean } | null> => {
+    if (!root) return null
+    const dir = path.join(root, ATTACH_DIR)
+    await fs.mkdir(dir, { recursive: true })
+
+    // 剪贴板里的截图没有文件名，用时间戳起一个，免得全叫 image.png 互相顶掉
+    const ext = (item.ext || path.extname(item.srcPath ?? '') || '.png').toLowerCase()
+    let base: string
+    if (item.srcPath) {
+      base = path.basename(item.srcPath, path.extname(item.srcPath)).replace(/[\\/:*?"<>|]/g, '-')
+    } else {
+      const d = new Date()
+      const p = (n: number) => String(n).padStart(2, '0')
+      base = `paste-${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`
+    }
+
+    let fileName = `${base}${ext}`
+    let target = path.join(dir, fileName)
+    let i = 1
+    while (existsSync(target)) {
+      fileName = `${base}-${i}${ext}`
+      target = path.join(dir, fileName)
+      i += 1
+    }
+
+    try {
+      if (item.srcPath) {
+        await fs.copyFile(item.srcPath, target)
+      } else if (item.bytes) {
+        await fs.writeFile(target, Buffer.from(item.bytes, 'base64'))
+      } else {
+        return null
+      }
+    } catch {
+      return null
+    }
+
+    return {
+      rel: `${ATTACH_DIR}/${fileName}`.replace(/\\/g, '/'),
+      name: fileName,
+      isVideo: /\.(mp4|webm|mov|m4v|ogv|mkv|avi)$/i.test(ext),
+    }
+  },
+)
+
 // 重命名
 ipcMain.handle('note:rename', async (_e, file: string, newName: string) => {
   const safe = newName.replace(/[\\/:*?"<>|]/g, '-').trim() || '未命名'
@@ -997,6 +1199,41 @@ ipcMain.handle(
       await fs.rm(tmp, { force: true })
     }
     return result.filePath
+  },
+)
+
+/* ── 节点图标 ──
+   给文件夹/笔记挑的图标存在工作区的 .nota/icons.json 里。
+
+   为什么跟笔记放一起而不是存进应用配置：图标是「这个工作区长什么样」的
+   一部分，换台机器把工作区拷过去，图标应该跟着走；反过来换工作区时
+   也不该继承上一个工作区的图标。
+   存的是**相对路径 → 图标 id**，不是绝对路径 —— 工作区整个挪个盘符
+   也不会全部失效。 */
+function iconsFileOf(root: string) {
+  return path.join(root, NOTA_DIR, 'icons.json')
+}
+
+ipcMain.handle('icons:read', async (_e, root: string): Promise<Record<string, string>> => {
+  if (!root) return {}
+  try {
+    return JSON.parse(await fs.readFile(iconsFileOf(root), 'utf8')) as Record<string, string>
+  } catch {
+    return {}
+  }
+})
+
+ipcMain.handle(
+  'icons:write',
+  async (_e, root: string, map: Record<string, string>): Promise<boolean> => {
+    if (!root) return false
+    try {
+      await fs.mkdir(path.join(root, NOTA_DIR), { recursive: true })
+      await fs.writeFile(iconsFileOf(root), JSON.stringify(map, null, 2), 'utf8')
+      return true
+    } catch {
+      return false
+    }
   },
 )
 

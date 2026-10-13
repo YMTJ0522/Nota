@@ -60,6 +60,24 @@ interface NoteApi {
     system: string
     temperature: number
   }): Promise<{ ok: boolean; models?: string[]; error?: string }>
+  /** 节点图标：相对路径 → 图标 id */
+  iconsRead(root: string): Promise<Record<string, string>>
+  iconsWrite(root: string, map: Record<string, string>): Promise<boolean>
+  /** 把粘贴 / 拖进来的图片存进工作区 attachments/，返回相对路径 */
+  mediaSave(
+    root: string,
+    item: { srcPath?: string; bytes?: string; ext?: string },
+  ): Promise<{ rel: string; name: string; isVideo: boolean } | null>
+  /** 联网检索：返回若干条「标题 / 链接 / 摘要」，给 agent 当参考资料 */
+  aiWebSearch(
+    query: string,
+    limit?: number,
+  ): Promise<{
+    ok: boolean
+    hits?: { title: string; url: string; snippet: string }[]
+    engine?: string
+    error?: string
+  }>
   appInfo(): Promise<{
     electron: string
     chrome: string

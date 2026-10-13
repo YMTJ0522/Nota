@@ -53,6 +53,10 @@ function transformCallouts(src: string): string {
  * 真正画图是异步的（mermaid 主包很大，只在真出现图表时才动态加载），
  * 所以这里只输出一个带 `data-graph` 的占位，由 `renderMermaidInHtml`
  * 在 DOM 挂上之后填充。
+ *
+ * 占位里那个 `.pv-mermaid-src` 是**加载中与出错时**才该露面的源码：
+ * 图还没画出来时它顶着位置，语法写错时它告诉你错在哪一行。
+ * 画成功之后必须摘掉 —— 见 `renderMermaidInHtml` 里的说明。
  */
 function transformMermaid(src: string): string {
   return src.replace(
@@ -596,8 +600,15 @@ let mermaidMod: { initialize: Function; render: Function } | null = null
  *
  * 失败（语法错、库没加载出来）时保留源码文本，不抛异常——
  * 一个写坏的图表不该让整篇预览白屏。
+ *
+ * `asImage` 是给 Word 导出用的：Word 的 HTML 解析器不认识行内 `<svg>`，
+ * 会整块丢掉 —— 导出的 .doc 里图表直接消失。所以那一路先光栅化成 PNG
+ * 再以 `<img src="data:...">` 放回去，Word 认图片。
  */
-export async function renderMermaidInHtml(root: HTMLElement): Promise<void> {
+export async function renderMermaidInHtml(
+  root: HTMLElement,
+  opts: { asImage?: boolean } = {},
+): Promise<void> {
   const targets = root.querySelectorAll<HTMLElement>('.pv-mermaid-graph[data-graph]')
   if (targets.length === 0) return
   try {
@@ -617,11 +628,65 @@ export async function renderMermaidInHtml(root: HTMLElement): Promise<void> {
     if (!code) continue
     try {
       const { svg } = (await mermaidMod.render(`pv-mmd-${Date.now()}-${n++}`, code)) as { svg: string }
-      el.innerHTML = svg
+      if (opts.asImage) {
+        const png = await svgToPng(svg)
+        // 光栅化失败就退回 SVG：Word 可能认不出它，但总比把图弄丢好
+        el.innerHTML = png
+          ? `<img src="${png}" alt="图表" style="max-width:100%">`
+          : svg
+      } else {
+        el.innerHTML = svg
+      }
       el.classList.add('is-rendered')
+      /* 画出来了就把那块源码摘掉。
+         以前它一直留在 DOM 里，于是每张图上面都挂着一段灰色的
+         `graph TD / A-->B` —— 预览里看得见，导出也照样带出去。
+         它是「还没画出来」和「画错了」时的替身，不是图注。
+         失败分支不动它：语法写错的人正需要看那几行。 */
+      el.parentElement?.querySelector('.pv-mermaid-src')?.remove()
     } catch {
       el.classList.add('is-error')
     }
+  }
+}
+
+/**
+ * mermaid 的 SVG → PNG data URI。
+ *
+ * 尺寸从 viewBox 里读：mermaid 默认 `useMaxWidth`，给出的 svg 上写的是
+ * `width="100%"`，`naturalWidth` 拿到的是 0，画出来会是一张空图。
+ * 底色铺白 —— Word 里透明 PNG 常常会连内容一起看不见。
+ */
+async function svgToPng(svg: string): Promise<string | null> {
+  const vb = /viewBox="([\d.\-\s]+)"/.exec(svg)?.[1]?.trim().split(/[\s,]+/).map(Number)
+  let w = vb && vb.length === 4 ? vb[2] : 0
+  let h = vb && vb.length === 4 ? vb[3] : 0
+  if (!w || !h) {
+    w = Number(/width="(\d+(?:\.\d+)?)/.exec(svg)?.[1] ?? 0)
+    h = Number(/height="(\d+(?:\.\d+)?)/.exec(svg)?.[1] ?? 0)
+  }
+  if (!w || !h) return null
+
+  const scale = 2 // 2 倍图，打印和缩放都不糊
+  const url = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`
+  try {
+    const img = new Image()
+    await new Promise<void>((resolve, reject) => {
+      img.onload = () => resolve()
+      img.onerror = () => reject(new Error('svg load failed'))
+      img.src = url
+    })
+    const c = document.createElement('canvas')
+    c.width = Math.round(w * scale)
+    c.height = Math.round(h * scale)
+    const ctx = c.getContext('2d')
+    if (!ctx) return null
+    ctx.fillStyle = '#ffffff'
+    ctx.fillRect(0, 0, c.width, c.height)
+    ctx.drawImage(img, 0, 0, c.width, c.height)
+    return c.toDataURL('image/png')
+  } catch {
+    return null
   }
 }
 
@@ -641,8 +706,16 @@ let katexFailed = false
  * 失败时保留源码文本——一个写错的公式不该把整篇预览拖白。
  * katex 本体连同它的 stylesheet 都是动态加载：文档里没有公式时，
  * 连一个字节都不会进主包。
+ *
+ * `output: 'mathml'` 是给 Word 导出用的：Word 不认 KaTeX 那套行内样式的
+ * span 布局（它没有 flex / inline-block 的排版语义），但认得 `<math>` ——
+ * 会当成一个真正的公式对象放进去。HTML / PDF 走默认的 html 输出，
+ * 那是浏览器的强项。
  */
-export async function renderMathInHtml(root: HTMLElement): Promise<void> {
+export async function renderMathInHtml(
+  root: HTMLElement,
+  opts: { output?: 'html' | 'mathml' } = {},
+): Promise<void> {
   const targets = root.querySelectorAll<HTMLElement>('.pv-math[data-tex], .pv-math-block[data-tex]')
   if (targets.length === 0) return
 
@@ -668,6 +741,7 @@ export async function renderMathInHtml(root: HTMLElement): Promise<void> {
         displayMode: el.classList.contains('pv-math-block'),
         throwOnError: false,
         strict: false,
+        ...(opts.output ? { output: opts.output } : {}),
       })
       el.classList.add('is-rendered')
     } catch {

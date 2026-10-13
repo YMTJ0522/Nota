@@ -300,7 +300,9 @@ const find = await evaluate(`(async () => {
   const bar = document.querySelector('.findbar')
   const input = document.querySelector('.fb-input')
   if (!bar || !input) return { err: 'no findbar', bar: !!bar, input: !!input }
-  const buttons = [...bar.querySelectorAll('button')].length
+  const btns = [...bar.querySelectorAll('button')]
+  const buttons = btns.length
+  const titles = btns.map((b) => b.getAttribute('title') || '')
   const native = document.querySelectorAll('.cm-panel.cm-search').length
   input.value = '标题'
   input.dispatchEvent(new Event('input', { bubbles: true }))
@@ -310,11 +312,17 @@ const find = await evaluate(`(async () => {
   input.dispatchEvent(new Event('input', { bubbles: true }))
   await new Promise(r => setTimeout(r, 400))
   const count2 = document.querySelector('.fb-count')?.textContent?.trim() ?? ''
-  return { buttons, native, count1, count2 }
+  return { buttons, titles, native, count1, count2 }
 })()`)
 ok(
   '7.Ctrl+F 是自绘查找条',
-  find.buttons === 3 && find.native === 0,
+  // 按钮数不写死（2.2.6 补了匹配开关与替换，3 → 7），
+  // 只保证自绘、没有原生面板、该有的键位都在
+  find.native === 0 &&
+    find.buttons >= 3 &&
+    ['区分大小写', '全字匹配', '正则表达式', '上一个', '下一个'].every((t) =>
+      (find.titles ?? []).some((x) => x.includes(t)),
+    ),
   find,
 )
 ok(

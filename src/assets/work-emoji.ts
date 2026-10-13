@@ -1,0 +1,96 @@
+/**
+ * 工作向表情。
+ *
+ * 挑的标准是「放在笔记/文件夹名字前面不违和」：
+ * 文具、文档、图表、工具、实验、日程这一类。
+ * 刻意不收笑脸、爱心、动物、食物 —— 那些在个人聊天里合适，
+ * 摆在目录树里会让整列显得不严肃，而且过一阵子自己都忘了当初为什么选它。
+ *
+ * name 是给搜索框用的：人想到的是「钉住」「报表」，不是 emoji 本身的名字。
+ */
+export interface WorkEmoji {
+  /** 存进 icons.json 的就是这个字符本身，不再另起 id */
+  char: string
+  name: string
+}
+
+export const WORK_EMOJI: WorkEmoji[] = [
+  { char: '📌', name: '图钉 置顶' },
+  { char: '📍', name: '定位 地点' },
+  { char: '📎', name: '回形针 附件' },
+  { char: '🖇', name: '别针 链接' },
+  { char: '📁', name: '文件夹' },
+  { char: '📂', name: '打开的文件夹' },
+  { char: '🗂', name: '索引 分类' },
+  { char: '🗃', name: '档案盒' },
+  { char: '🗄', name: '文件柜 归档' },
+  { char: '📦', name: '包裹 打包 依赖' },
+  { char: '📋', name: '剪贴板 清单' },
+  { char: '📝', name: '备忘录 笔记' },
+  { char: '📄', name: '文档' },
+  { char: '📃', name: '页面 文稿' },
+  { char: '📑', name: '书签 分页' },
+  { char: '📒', name: '账本 记录' },
+  { char: '📓', name: '笔记本' },
+  { char: '📚', name: '书 资料 学习' },
+  { char: '📖', name: '打开的书 阅读' },
+  { char: '📕', name: '红皮书 规范' },
+  { char: '📊', name: '柱状图 数据 报表' },
+  { char: '📈', name: '增长 趋势' },
+  { char: '📉', name: '下降 趋势' },
+  { char: '🗒', name: '便签 速记' },
+  { char: '✏️', name: '铅笔 草稿 编辑' },
+  { char: '🖊', name: '钢笔 写作' },
+  { char: '🔖', name: '书签 标记' },
+  { char: '🏷', name: '标签' },
+  { char: '💼', name: '公文包 工作' },
+  { char: '🗓', name: '日历 排期' },
+  { char: '📅', name: '日历 日期' },
+  { char: '⏰', name: '闹钟 提醒' },
+  { char: '⏱', name: '计时 性能' },
+  { char: '🎯', name: '目标 靶心' },
+  { char: '💡', name: '想法 点子' },
+  { char: '🔍', name: '查找 检索' },
+  { char: '🔎', name: '放大 排查' },
+  { char: '🔧', name: '扳手 配置 修复' },
+  { char: '🛠', name: '工具 构建' },
+  { char: '⚙️', name: '齿轮 设置' },
+  { char: '🧰', name: '工具箱' },
+  { char: '🧪', name: '实验 测试' },
+  { char: '🔬', name: '显微镜 分析' },
+  { char: '🔭', name: '望远镜 调研' },
+  { char: '🧬', name: '基因 结构' },
+  { char: '🧮', name: '算盘 计算' },
+  { char: '🧩', name: '拼图 模块' },
+  { char: '🧱', name: '砖块 基建' },
+  { char: '🏗', name: '施工 在建' },
+  { char: '🛡', name: '盾牌 安全' },
+  { char: '🔐', name: '锁 权限 密钥' },
+  { char: '🔑', name: '钥匙 凭据' },
+  { char: '💾', name: '软盘 存储 保存' },
+  { char: '🖥', name: '显示器 桌面' },
+  { char: '⌨️', name: '键盘 输入' },
+  { char: '🖱', name: '鼠标 交互' },
+  { char: '☁️', name: '云 云端' },
+  { char: '🌐', name: '网络 全球' },
+  { char: '🔗', name: '链接 关联' },
+  { char: '🧭', name: '指南针 方向' },
+  { char: '🗺', name: '地图 路线' },
+  { char: '📡', name: '信号 通信' },
+  { char: '🔌', name: '插头 接入' },
+  { char: '🔋', name: '电池 电量' },
+  { char: '🚀', name: '火箭 发布 上线' },
+  { char: '🧯', name: '灭火器 应急' },
+  { char: '🚧', name: '施工 未完成' },
+  { char: '✅', name: '完成 已验收' },
+  { char: '❗', name: '重要 注意' },
+  { char: '💬', name: '评论 讨论' },
+  { char: '📢', name: '公告 通知' },
+  { char: '📮', name: '收件 投稿' },
+  { char: '📤', name: '发送 上传' },
+  { char: '📥', name: '接收 下载' },
+  { char: '🤖', name: '机器人 自动化 AI' },
+  { char: '🏢', name: '公司 组织' },
+  { char: '🗳', name: '投票 决策' },
+  { char: '🧠', name: '大脑 思考 模型' },
+]

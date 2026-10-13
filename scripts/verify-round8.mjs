@@ -392,8 +392,13 @@ const shape = await evaluate(`(() => {
     send: !!q('.composer .send'),
     model: q('.ag-model-name')?.textContent?.trim() ?? '',
     session: (el?.querySelectorAll('.ag-sess .ag-mini').length ?? 0) >= 2,
-    // 空态也得有话说
-    emptyTitle: q('.ag-empty-title')?.textContent?.trim() ?? '',
+    // 空态：2.2.6 重做成「一句话 + 四枚现状胶囊 + 四张快捷指令卡 + 键位提示」，
+    // 类名从 .ag-empty-title 换成 .ae-title（.ag-empty 现在是整个空态区）
+    emptyTitle: q('.ag-empty .ae-title')?.textContent?.trim() ?? '',
+    emptySub: (q('.ag-empty .ae-sub')?.textContent ?? '').trim().length,
+    emptyFacts: el?.querySelectorAll('.ag-empty .ae-facts > *').length ?? 0,
+    emptyCards: el?.querySelectorAll('.ag-empty .ae-cards > *').length ?? 0,
+    emptyFoot: !!q('.ag-empty .ae-foot kbd'),
     height: Math.round(el?.getBoundingClientRect().height ?? 0),
   }
 })()`)
@@ -413,7 +418,11 @@ ok(
     shape.chipEven && shape.chipRowFull &&
     shape.input.includes('Enter 发送') && shape.send &&
     shape.model === 'llama3.2' &&
-    shape.emptyTitle === '让 AI 帮你写' && shape.height > 400,
+    shape.emptyTitle === '让 AI 帮你写' && shape.height > 400 &&
+    // 空态不能还是「一个标题孤零零挂中间」：得有副标题、现状胶囊、卡片和键位提示。
+    // 胶囊至少 3 枚（模型 / 上下文 / 设置），第 4 枚「联网」只在联网检索开着
+    // 时才出现 —— 关着的时候摆一枚「联网」是在骗人，所以这里按下限断言。
+    shape.emptySub > 0 && shape.emptyFacts >= 3 && shape.emptyCards >= 4 && shape.emptyFoot,
   shape,
 )
 

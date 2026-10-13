@@ -290,7 +290,8 @@ const actions = await evaluate(`(async () => {
   const hist = document.querySelector('.ea-btn[title="版本历史"]')
   if (!imp || !exp || !hist) return { err: 'missing buttons', imp: !!imp, exp: !!exp, hist: !!hist }
 
-  // 导出下拉里只剩导出两项，历史与导入都不在里面
+  // 导出下拉里只有导出，历史与导入都不在里面。
+  // 项数从 2 涨到 4：2.2.6 把右键菜单里才有的 PDF / Word 补到了顶栏。
   exp.click()
   await new Promise(r => setTimeout(r, 300))
   const menuItems = [...document.querySelectorAll('.ea-menu .ea-item')].map(b => b.textContent.trim())
@@ -312,8 +313,10 @@ const actions = await evaluate(`(async () => {
 })()`)
 ok(
   '5.导入 / 导出 / 版本历史各自独立，导入落到当前目录',
-  actions.menuItems?.length === 2 &&
-    actions.menuItems.join(',').includes('Markdown') &&
+  actions.menuItems?.length === 4 &&
+    ['Markdown', 'HTML', 'Word', 'PDF'].every((k) => actions.menuItems.join(',').includes(k)) &&
+    // 导入与历史**不**混进导出菜单 —— 这才是这条断言真正要看的
+    !actions.menuItems.join(',').match(/导入|历史/) &&
     actions.imp && actions.imp.root === '/ws' && actions.imp.dir === '/ws/工作' &&
     actions.after > actions.before &&
     actions.toast.includes('已导入 1 篇') &&

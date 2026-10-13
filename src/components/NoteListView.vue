@@ -17,6 +17,7 @@ import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { Search, Star, Trash2, X } from 'lucide-vue-next'
 import { store } from '@/store'
 import type { TreeNode } from '@/store'
+import NodeIcon from '@/components/NodeIcon.vue'
 import NoteContextMenu, { type NoteExportKind } from '@/components/NoteContextMenu.vue'
 import PromptDialog from '@/components/PromptDialog.vue'
 import FolderPicker from '@/components/FolderPicker.vue'
@@ -258,6 +259,7 @@ onBeforeUnmount(() => {
           @contextmenu.prevent="onContextMenu($event, f)"
         >
           <span class="nl-name">
+            <NodeIcon class="nl-ico" :path="f.path" type="file" :size="13" :fallback="false" />
             <span class="nl-text">{{ f.name.replace(/\.md$/i, '') }}</span>
           </span>
           <span v-if="f.excerpt" class="nl-excerpt">{{ f.excerpt }}</span>
@@ -642,6 +644,13 @@ onBeforeUnmount(() => {
   align-items: center;
   gap: 5px;
   min-width: 0;
+}
+
+/* 卡片上的图标：自定义过的（品牌 / 表情）才显示，默认文档图标在这里
+   纯属占位——一行卡片本来就窄，再挂一枚无意义的描边文档只会挤标题。 */
+.nl-ico {
+  flex: none;
+  color: var(--n-fg-faint);
 }
 
 .nl-text {

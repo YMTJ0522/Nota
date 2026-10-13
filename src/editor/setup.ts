@@ -35,6 +35,7 @@ import { codeLangChipExtensions } from "./code-lang-chip";
 import { fencedCodeBlockHighlighter } from "./code-languages";
 import { markdownCompletion } from "./completion";
 import { markdownLivePreview } from "./live-preview";
+import { mediaDrop } from "./media-drop";
 
 /**
  * 「视图偏好」类扩展：行号与自动换行。
@@ -101,6 +102,8 @@ export function baseExtensions(options: {
     // 补全：代码块里打字自动给候选，正文里 Ctrl+Space 手动唤出
     // （见 completion.ts —— 正文不自动弹，是为了不打断中文写作）
     markdownCompletion(),
+    // 粘贴 / 拖入图片：直接存进工作区 attachments/ 并写下相对引用
+    mediaDrop(),
     // 自绘查找条：Ctrl+F 直接交给外层那条输入框
     ...(onFind
       ? [

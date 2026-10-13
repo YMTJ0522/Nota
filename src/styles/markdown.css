@@ -135,17 +135,32 @@
   border-top: 1px solid var(--n-line);
   margin: 2em 0;
 }
+/* 表格走圆角：代码块、图片、callout 都是圆的，方框表格夹在中间像从别的
+   软件里贴进来的。
+   圆角必须靠外面那层 .pv-table-wrap 来裁——`border-collapse: collapse` 下
+   table 自己不吃 border-radius（边框是「共享」的，没有一个属于它的外框）。
+   所以改成 separate + 只画右/下两条边，最外圈那三面由 wrapper 的边框补上。 */
 .md-body table {
-  border-collapse: collapse;
+  border-collapse: separate;
+  border-spacing: 0;
   width: 100%;
   margin: 1em 0;
   font-size: 0.94em;
 }
 .md-body th,
 .md-body td {
-  border: 1px solid var(--n-line);
+  border-right: 1px solid var(--n-line);
+  border-bottom: 1px solid var(--n-line);
   padding: 7px 11px;
   text-align: left;
+}
+/* 最右一列不要竖线（wrapper 的边框已经在那里了），最后一行不要横线 */
+.md-body th:last-child,
+.md-body td:last-child {
+  border-right: none;
+}
+.md-body tbody tr:last-child td {
+  border-bottom: none;
 }
 .md-body th {
   background: var(--n-surface);
@@ -385,6 +400,15 @@
 }
 
 .md-body .pv-table-wrap {
-  overflow-x: auto;
+  /* overflow-x:auto 也会按圆角裁（滚动容器同样吃 border-radius），
+     所以「圆角」和「超宽可横滚」不用二选一。
+     圆角必须落在这层 wrapper 上而不是 table 上：`border-collapse: collapse`
+     时边框是相邻格子共享的，table 自己没有一条能带圆角的外框。 */
   margin: 1em 0;
+  border: 1px solid var(--n-line);
+  border-radius: var(--n-r-md);
+  overflow-x: auto;
+}
+.md-body .pv-table-wrap table {
+  margin: 0;
 }

@@ -1,27 +1,32 @@
 /**
- * 从 build/icon.svg 生成 build/icon.ico（多尺寸）+ build/icon.png。
+ * 从 build/icon-source.png 生成 build/icon.ico（多尺寸）+ build/icon.png。
  *
- * 思路：借 Electron 里的 Chromium 把 SVG 光栅化成每一档尺寸的 PNG，
- * 再按 ICO 格式手工打包（ICO 支持内嵌 PNG，无需任何额外依赖）。
+ * 母版是一张 1024×1024 的 RGBA PNG：奶油底 + 薄荷绿手写「Nota」的圆角方块，
+ * 四角已经是透明的（超椭圆轮廓，指数 6.3，4×4 超采样出的抗锯齿边）。
+ * 它由一版 AI 生成稿裁出来 —— 裁框取方块自身的边界、水印在框外，一并去掉。
+ * 换成矢量稿之前的旧版是 build/icon.svg，已经删掉：两个母版并存只会让人
+ * 分不清该改哪个。
+ *
+ * 光栅化交给页面里的 canvas：drawImage 会按目标尺寸重新采样，
+ * 每一档都从 1024 的母版直接缩，而不是「大图缩成小图再缩」。
  *
  * ⚠️ 这里**不能**用 `webContents.capturePage()` 截图。
  * 2.2.2 之前就是这么写的，结果生出来的 ico 一直是坏的：
- * capturePage 截的是**整页**，不是那个 16px 的 SVG —— 窗口内容区
+ * capturePage 截的是**整页**，不是那块 16px 的图标 —— 窗口内容区
  * 在 150% 缩放的显示器上是 770×770 设备像素，于是七个「尺寸」拿到的
  * 全是同一张 770×770、无 alpha、白底的整窗图，图标缩在左上角一点点。
  * ICO 目录里却按 16/24/32… 声明，Windows 按声明的尺寸去缩那张大图，
  * 最后任务栏上就是一块白方块边上挤着一个绿豆子。
  *
- * 正解是把光栅化交给页面里的 canvas：drawImage 会按目标尺寸重新
- * 光栅化矢量图（每一档都是清晰的，不是把大图缩下来），canvas 本来就带
- * alpha，toDataURL 出来的 PNG 尺寸严丝合缝，跟窗口缩放、DPR 全都无关。
+ * 正解是把光栅化交给页面里的 canvas：canvas 本来就带 alpha，
+ * toDataURL 出来的 PNG 尺寸严丝合缝，跟窗口缩放、DPR 全都无关。
  */
 const { app, BrowserWindow } = require('electron')
 const path = require('node:path')
 const fs = require('node:fs')
 
 const ROOT = path.join(__dirname, '..')
-const SVG = path.join(ROOT, 'build', 'icon.svg')
+const SRC = path.join(ROOT, 'build', 'icon-source.png')
 const ICO = path.join(ROOT, 'build', 'icon.ico')
 const PNG = path.join(ROOT, 'build', 'icon.png')
 
@@ -62,9 +67,13 @@ function buildIco(entries) {
 }
 
 app.whenReady().then(async () => {
-  const svg = fs.readFileSync(SVG, 'utf-8')
+  if (!fs.existsSync(SRC)) {
+    console.error(`找不到图标母版 ${SRC}`)
+    app.exit(1)
+    return
+  }
   /** 走 data URL 让浏览器当图片加载；base64 是为了躲开引号与 # 的转义坑 */
-  const src = 'data:image/svg+xml;base64,' + Buffer.from(svg, 'utf-8').toString('base64')
+  const src = 'data:image/png;base64,' + fs.readFileSync(SRC).toString('base64')
 
   const win = new BrowserWindow({
     width: 640,
@@ -86,13 +95,13 @@ window.renderAt = (sizes) => new Promise((resolve, reject) => {
       c.width = s; c.height = s;
       const ctx = c.getContext('2d');
       ctx.clearRect(0, 0, s, s);
-      // drawImage 会按目标尺寸重新光栅化矢量图，每一档都是清晰的原生渲染
+      // 母版带 alpha，直接drawImage 就保住透明四角
       ctx.drawImage(img, 0, 0, s, s);
       out[s] = c.toDataURL('image/png');
     }
     resolve(out);
   };
-  img.onerror = () => reject(new Error('SVG 载入失败'));
+  img.onerror = () => reject(new Error('图标母版载入失败'));
   img.src = SRC;
 });
 </script></body></html>`

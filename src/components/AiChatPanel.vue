@@ -25,6 +25,8 @@ import {
   CornerDownLeft,
   Cpu,
   FilePlus2,
+  FileText,
+  Globe,
   Languages,
   ListChecks,
   ListTree,
@@ -42,6 +44,7 @@ import { AI_PRESETS, store } from '@/store'
 import type { ChatMessage } from '@/store'
 import { markdownToHtml } from '@/editor/markdown'
 import { renderMathInHtml, renderMermaidInHtml } from '@/editor/preview-rich'
+import ConfirmDialog from '@/components/ConfirmDialog.vue'
 
 const { state } = store
 
@@ -180,13 +183,56 @@ const modelLoading = ref(false)
 const serverModels = ref<string[]>([])
 const modelsFetched = ref(false)
 
+/**
+ * 模型列表只列「这个接口真的有的」。
+ *
+ * 原来是把所有预设的模型一股脑混进来 —— 配的是 Ollama，下拉里却躺着
+ * gpt-4o-mini、deepseek-chat，选了必然 404。预设是**填设置时的快捷入口**，
+ * 不是「本接口可用模型」，这两件事不能混在一个下拉里。
+ *
+ * 于是在这里分两种情形：
+ *  · 拉到过 /models：只给它返回的那些（当前填的那个若不在其中也补在前面，
+ *    免得手写的模型名一点菜单就消失）；
+ *  · 没拉到：只给「当前接口地址对应的那个预设」的默认模型，外加当前填的。
+ *    别的预设一概不出现。
+ */
+function hostOf(url: string) {
+  return url
+    .trim()
+    .replace(/^https?:\/\//i, '')
+    .replace(/\/.*$/, '')
+    .toLowerCase()
+}
+
+/** 当前接口地址对应的预设。手写的本地地址通常匹配不到，那就是 null */
+const matchedPreset = computed(() => {
+  const h = hostOf(state.ai.baseUrl)
+  if (!h) return null
+  return AI_PRESETS.find((p) => hostOf(p.baseUrl) === h) ?? null
+})
+
 const modelOptions = computed(() => {
-  const set = new Set<string>()
+  const out: string[] = []
   const cur = state.ai.model.trim()
-  if (cur) set.add(cur)
-  for (const m of serverModels.value) if (m) set.add(m)
-  for (const p of AI_PRESETS) set.add(p.model)
-  return [...set]
+  if (cur) out.push(cur)
+  if (modelsFetched.value) {
+    for (const m of serverModels.value) if (m && !out.includes(m)) out.push(m)
+    return out
+  }
+  const pm = matchedPreset.value?.model
+  if (pm && !out.includes(pm)) out.push(pm)
+  return out
+})
+
+/** 下拉底部那行说明。不给提示的话，列表空着看着像软件坏了 */
+const modelHint = computed(() => {
+  if (modelLoading.value) return '正在读取模型列表…'
+  if (modelsFetched.value) {
+    return serverModels.value.length
+      ? `共 ${serverModels.value.length} 个模型 · ${matchedPreset.value?.label ?? state.ai.baseUrl}`
+      : '这个接口没有返回模型列表，可直接手写模型名'
+  }
+  return '未读到模型列表，去设置里检查接口地址与密钥'
 })
 
 async function loadModels(force = false) {
@@ -291,6 +337,36 @@ async function createSession() {
   box.value?.focus()
 }
 
+/* ── 删会话 ──
+   空的会话（一条消息都没有）直接删掉，问一句是打扰；
+   有过对话的要确认一次 —— 那是一段真的聊过的内容，没有回收站。 */
+const pendingSession = ref<number | null>(null)
+
+function askDeleteSession(id: number) {
+  const s = state.sessions.find((x) => x.id === id)
+  if (!s) return
+  if (!s.messages?.length) {
+    store.deleteSession(id)
+    return
+  }
+  pendingSession.value = id
+}
+
+const pendingSessionTitle = computed(
+  () => state.sessions.find((s) => s.id === pendingSession.value)?.title ?? '',
+)
+const pendingSessionCount = computed(
+  () => state.sessions.find((s) => s.id === pendingSession.value)?.messages.length ?? 0,
+)
+
+function doDeleteSession() {
+  const id = pendingSession.value
+  pendingSession.value = null
+  sessMenu.value = false
+  if (id == null) return
+  store.deleteSession(id)
+}
+
 
 /* ── 输入 ── */
 function autoGrow() {
@@ -321,12 +397,36 @@ function onKey(e: KeyboardEvent) {
 /** 快捷指令：点一下填进输入框而不是直接发送 —— 留一次反悔的机会。
     四条刚好一行排满：再多就得滚动或者换行，看着像一堆没整理的按钮。
     （原来还有一条「起标题」，跟上面那堆挤在一起挑不过来，撤了。） */
-const CHIPS: { label: string; icon: unknown; text: string }[] = [
-  { label: '总结全文', icon: Sparkles, text: '把当前这篇笔记总结成要点列表。' },
-  { label: '生成大纲', icon: ListTree, text: '给当前这篇笔记整理一份三级大纲。' },
-  { label: '润色', icon: Wand2, text: '润色当前笔记，使其更通顺、专业，保留原意。' },
-  { label: '译成英文', icon: Languages, text: '把当前笔记翻译成英文，保留 Markdown 结构。' },
+const CHIPS: { label: string; icon: unknown; text: string; desc: string }[] = [
+  {
+    label: '总结全文',
+    icon: Sparkles,
+    text: '把当前这篇笔记总结成要点列表。',
+    desc: '压成几条要点',
+  },
+  {
+    label: '生成大纲',
+    icon: ListTree,
+    text: '给当前这篇笔记整理一份三级大纲。',
+    desc: '理出层级结构',
+  },
+  {
+    label: '润色',
+    icon: Wand2,
+    text: '润色当前笔记，使其更通顺、专业，保留原意。',
+    desc: '改通顺、不动原意',
+  },
+  {
+    label: '译成英文',
+    icon: Languages,
+    text: '把当前笔记翻译成英文，保留 Markdown 结构。',
+    desc: '保留标题与代码块',
+  },
 ]
+
+function chipDesc(text: string) {
+  return CHIPS.find((c) => c.text === text)?.desc ?? ''
+}
 
 function useChip(text: string) {
   draft.value = text
@@ -386,6 +486,19 @@ function openAiSettings() {
   window.dispatchEvent(new CustomEvent('nota:settings', { detail: 'ai' }))
 }
 
+/* ── 联网来源 ──
+   列表里只显示域名：一整条 URL 又长又没信息量，而「这条来自哪个站」
+   才是判断能不能信的依据。完整地址留在 title 和 href 上。 */
+function hostLabel(url: string) {
+  try {
+    return new URL(url).hostname.replace(/^www\./, '')
+  } catch {
+    return url
+  }
+}
+
+/** 链接统一交给 App.vue 那个全局拦截（用系统浏览器开，别在应用内跳走） */
+
 /** 思考过程是一段一段流进来的，末尾跟着一个闪烁光标才像「正在想」 */
 const thinkingLive = computed(
   () => state.aiBusy && lastMsg.value?.role === 'assistant' && !!lastMsg.value?.thinking,
@@ -439,12 +552,27 @@ const thinkingLive = computed(
             <button
               v-for="s in sessions"
               :key="s.id"
-              class="n-menu-item"
+              class="n-menu-item ss-item"
               :class="{ on: s.id === state.activeSessionId }"
               @click="pickSession(s.id)"
             >
               <span class="n-menu-name">{{ s.title }}</span>
               <span class="n-menu-tail">{{ when(s.updatedAt) }}</span>
+              <!-- 删除就地给一枚：管理会话不该是「先切过去、再找到工具栏那个
+                   垃圾桶、再删」三步。点它自己这一行的叉就够了。
+                   整条是 button，这里再套一个 button 属于嵌套交互元素，
+                   所以改成 span + role，并在 stop 掉冒泡避免顺带切换会话。 -->
+              <span
+                class="ss-del"
+                role="button"
+                tabindex="0"
+                :title="`删除会话「${s.title}」`"
+                @click.stop="askDeleteSession(s.id)"
+                @keydown.enter.stop.prevent="askDeleteSession(s.id)"
+                @keydown.space.stop.prevent="askDeleteSession(s.id)"
+              >
+                <X :size="11" :stroke-width="2.2" />
+              </span>
             </button>
           </div>
         </div>
@@ -525,10 +653,47 @@ const thinkingLive = computed(
     <!-- ④ 消息流 -->
     <div ref="scroller" class="stream" @scroll.passive="onScroll">
       <div v-if="state.chat.length === 0" class="ag-empty">
-        <p class="ag-empty-title">让 AI 帮你写</p>
-        <p class="ag-empty-sub">
-          对话走本机配置的模型（{{ modelLabel }}），也可以接云端 —— 在
-          <button class="link" @click="openAiSettings">AI 编写设置</button> 里改。
+        <!-- 空态不是「没内容」，是这一轮对话还没开始。
+             所以这里把三件事说清楚：它是什么、它现在接的是谁、能让它干什么，
+             而不是只摆一行灰字让人自己猜能输入什么。 -->
+        <div class="ae-hero">
+          <span class="ae-badge"><Sparkles :size="17" :stroke-width="1.9" /></span>
+          <p class="ae-title">让 AI 帮你写</p>
+          <p class="ae-sub">
+            它能读当前这篇笔记，也能只当个聊天对象。下面的句子点一下就能改着发。
+          </p>
+        </div>
+
+        <!-- 状态：这三个值决定它会怎么答，所以摆在明处 -->
+        <div class="ae-facts">
+          <span class="ae-fact" :title="`模型：${modelLabel}`">
+            <Cpu :size="11" :stroke-width="1.9" />
+            <span class="ae-fact-v">{{ modelLabel }}</span>
+          </span>
+          <span class="ae-fact" :title="state.aiWithNote ? `上下文：${noteLabel}` : '不带笔记正文'">
+            <FileText :size="11" :stroke-width="1.9" />
+            <span class="ae-fact-v">{{ state.aiWithNote ? noteLabel : '不带笔记' }}</span>
+          </span>
+          <span v-if="state.aiWeb" class="ae-fact on" title="回答前会先联网查资料">
+            <Globe :size="11" :stroke-width="1.9" />
+            <span class="ae-fact-v">联网</span>
+          </span>
+          <button class="ae-fact link" title="改模型、密钥、系统提示词" @click="openAiSettings">
+            <Settings :size="11" :stroke-width="1.9" />
+            <span class="ae-fact-v">设置</span>
+          </button>
+        </div>
+
+        <div class="ae-cards">
+          <button v-for="c in CHIPS" :key="c.label" class="ae-card" @click="useChip(c.text)">
+            <span class="ae-card-ic"><component :is="c.icon" :size="14" :stroke-width="1.9" /></span>
+            <span class="ae-card-t">{{ c.label }}</span>
+            <span class="ae-card-d">{{ chipDesc(c.text) }}</span>
+          </button>
+        </div>
+
+        <p class="ae-foot">
+          <kbd>Enter</kbd> 发送 · <kbd>Shift</kbd>+<kbd>Enter</kbd> 换行 · 回答可以直接插进当前笔记
         </p>
       </div>
 
@@ -590,6 +755,25 @@ const thinkingLive = computed(
             <div v-else-if="state.aiBusy && m.id === lastId" class="thinking-hint">
               <Loader2 class="spin" :size="12" :stroke-width="2" />
               <span>{{ state.aiStage }}</span>
+            </div>
+
+            <!-- 联网来源：回答里标的 [1][2] 得有地方对得上，
+                 否则「参考了网上的资料」就是一句没法验证的话。 -->
+            <div v-if="m.sources?.length" class="srcs">
+              <span class="srcs-h">
+                <Globe :size="11" :stroke-width="1.9" />
+                <span>联网来源 {{ m.sources.length }} 条</span>
+              </span>
+              <a
+                v-for="(s, i) in m.sources"
+                :key="s.url"
+                class="src"
+                :href="s.url"
+                :title="s.url"
+              >
+                <span class="src-i">{{ i + 1 }}</span>
+                <span class="src-t">{{ hostLabel(s.url) }}</span>
+              </a>
             </div>
 
             <!-- 动作：一行图标，不写字 —— 窄栏里写字会把这一行撑爆 -->
@@ -666,9 +850,7 @@ const thinkingLive = computed(
               <span class="n-menu-name">{{ m }}</span>
               <Check v-if="m === state.ai.model" :size="12" :stroke-width="2.2" />
             </button>
-            <p v-if="serverModels.length === 0" class="n-menu-hint">
-              {{ modelLoading ? '正在读取接口…' : '没读到接口的模型列表，先列出预设' }}
-            </p>
+            <p class="n-menu-hint">{{ modelHint }}</p>
             <span class="n-menu-sep" />
             <button class="n-menu-item" @click="openAiSettings">
               <Settings :size="12" :stroke-width="1.9" />
@@ -677,11 +859,33 @@ const thinkingLive = computed(
           </div>
         </div>
 
+        <!-- 联网检索：开着时这一轮会先去查资料再回答。
+             放在模型左边而不是塞进菜单里，因为它是一个要随时看得见的状态。 -->
+        <button
+          class="web-toggle"
+          :class="{ on: state.aiWeb }"
+          :title="state.aiWeb ? '联网检索：开（回答前先查资料）' : '联网检索：关（只用模型自己的知识）'"
+          :aria-pressed="state.aiWeb"
+          @click="store.setAiWeb(!state.aiWeb)"
+        >
+          <Globe :size="13" :stroke-width="1.9" />
+        </button>
+
         <button class="send" :class="{ off: !canSend }" :disabled="!canSend" title="发送 (Enter)" @click="send">
           <ArrowUp :size="15" :stroke-width="2.2" />
         </button>
       </div>
     </div>
+
+    <ConfirmDialog
+      :open="pendingSession !== null"
+      title="删除这个会话？"
+      :message="`「${pendingSessionTitle}」里的 ${pendingSessionCount} 条对话会被清除，无法恢复。`"
+      confirm-text="删除"
+      danger
+      @confirm="doDeleteSession"
+      @cancel="pendingSession = null"
+    />
   </div>
 </template>
 
@@ -989,22 +1193,184 @@ const thinkingLive = computed(
   padding: 10px 10px 4px;
 }
 
+/* ══ 空态 ══
+   这一列本来就窄（中间栏默认 22% / 最小 340px），空态要是堆一大块实色卡
+   面会把整列压死。所以走「徽标 + 一句说明 + 一行状态 + 四张卡」，
+   卡片只给 1px 描边和淡底，深浅都靠得住。 */
 .ag-empty {
-  padding: 18px 4px 10px;
+  padding: 14px 6px 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
 }
 
-.ag-empty-title {
-  margin: 0 0 5px;
-  font-size: 13.5px;
+.ae-hero {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 7px;
+}
+
+/* 徽标用强调色做一层很淡的径向底：整块空态唯一的「重量」就落在它身上，
+   比给标题加粗或放大字号稳得多（字号一放大，窄栏里就折行）。 */
+.ae-badge {
+  width: 38px;
+  height: 38px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 12px;
+  color: var(--n-accent);
+  background: radial-gradient(
+    circle at 30% 25%,
+    color-mix(in srgb, var(--n-accent) 22%, transparent),
+    color-mix(in srgb, var(--n-accent) 7%, transparent) 70%
+  );
+  border: 1px solid color-mix(in srgb, var(--n-accent) 26%, transparent);
+}
+
+.ae-badge svg {
+  fill: none;
+  stroke: currentColor;
+}
+
+.ae-title {
+  margin: 0;
+  font-size: 14px;
   font-weight: 700;
   letter-spacing: -0.02em;
   color: var(--n-fg);
 }
 
-.ag-empty-sub {
+.ae-sub {
   margin: 0;
+  max-width: 30em;
   font-size: 11.5px;
   line-height: 1.7;
+  color: var(--n-fg-dim);
+}
+
+/* 状态行：模型 / 上下文 / 联网 / 设置。都是「影响它怎么答」的东西 */
+.ae-facts {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+}
+
+.ae-fact {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 100%;
+  height: 22px;
+  padding: 0 8px;
+  border: 1px solid var(--n-line);
+  border-radius: 999px;
+  background: var(--n-surface);
+  font-size: 10.5px;
+  color: var(--n-fg-dim);
+}
+
+.ae-fact svg {
+  flex: none;
+  fill: none;
+  stroke: currentColor;
+}
+
+/* 联网开着时它是「这一轮会多一步」的信号，给强调色 */
+.ae-fact.on {
+  color: var(--n-accent);
+  border-color: color-mix(in srgb, var(--n-accent) 40%, transparent);
+  background: color-mix(in srgb, var(--n-accent) 10%, transparent);
+}
+
+.ae-fact.link {
+  color: var(--n-accent);
+  text-decoration: none;
+  transition: background var(--n-dur) var(--n-ease);
+}
+
+.ae-fact.link:hover {
+  background: var(--n-raised);
+}
+
+.ae-fact-v {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 四张能力卡：窄栏两列刚好，宽栏也不会拉成一长条 */
+.ae-cards {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 7px;
+}
+
+.ae-card {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  padding: 9px 10px 10px;
+  border: 1px solid var(--n-line);
+  border-radius: var(--n-r-md);
+  background: var(--n-surface);
+  text-align: left;
+  transition: border-color var(--n-dur) var(--n-ease), background var(--n-dur) var(--n-ease),
+    transform var(--n-dur) var(--n-ease);
+}
+
+.ae-card:hover {
+  border-color: color-mix(in srgb, var(--n-accent) 45%, var(--n-line));
+  background: var(--n-raised);
+  transform: translateY(-1px);
+}
+
+.ae-card-ic {
+  color: var(--n-accent);
+  margin-bottom: 1px;
+}
+
+.ae-card-ic svg {
+  fill: none;
+  stroke: currentColor;
+}
+
+.ae-card-t {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--n-fg);
+  letter-spacing: -0.01em;
+}
+
+.ae-card-d {
+  font-size: 10.5px;
+  line-height: 1.5;
+  color: var(--n-fg-faint);
+}
+
+/* 键盘提示：只在这一屏说一次，别的地方不啰嗦 */
+.ae-foot {
+  margin: 0;
+  text-align: center;
+  font-size: 10.5px;
+  color: var(--n-fg-faint);
+}
+
+.ae-foot kbd {
+  display: inline-block;
+  padding: 0 4px;
+  border: 1px solid var(--n-line);
+  border-bottom-width: 2px;
+  border-radius: 4px;
+  background: var(--n-surface);
+  font-family: inherit;
+  font-size: 10px;
+  line-height: 15px;
   color: var(--n-fg-dim);
 }
 
@@ -1242,6 +1608,61 @@ const thinkingLive = computed(
 }
 
 /* 动作行：一行图标，悬停才明显 */
+/* 联网来源：一行小胶囊，序号与回答里的 [1] 对得上 */
+.srcs {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  margin-top: -1px;
+}
+
+.srcs-h {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10.5px;
+  color: var(--n-fg-faint);
+}
+
+.srcs-h svg {
+  fill: none;
+  stroke: currentColor;
+}
+
+.src {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 100%;
+  height: 19px;
+  padding: 0 7px;
+  border: 1px solid var(--n-line);
+  border-radius: 999px;
+  background: var(--n-surface);
+  font-size: 10.5px;
+  color: var(--n-fg-dim);
+  text-decoration: none;
+  transition: border-color var(--n-dur) var(--n-ease), color var(--n-dur) var(--n-ease);
+}
+
+.src:hover {
+  border-color: color-mix(in srgb, var(--n-accent) 45%, var(--n-line));
+  color: var(--n-accent);
+}
+
+.src-i {
+  flex: none;
+  font-variant-numeric: tabular-nums;
+  color: var(--n-fg-faint);
+}
+
+.src-t {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .acts {
   display: flex;
   align-items: center;
@@ -1394,6 +1815,39 @@ const thinkingLive = computed(
   opacity: 0.34;
 }
 
+/* 联网开关：关着时是一枚普通灰图标，开着时是强调色的实心胶囊
+   —— 这一轮会不会出去查资料，扫一眼就知道，不用去读 tooltip。 */
+.web-toggle {
+  padding: 0;
+  flex: none;
+  width: 26px;
+  height: 26px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid transparent;
+  border-radius: var(--n-r-md);
+  color: var(--n-fg-faint);
+  transition: background var(--n-dur) var(--n-ease), color var(--n-dur) var(--n-ease),
+    border-color var(--n-dur) var(--n-ease);
+}
+
+.web-toggle svg {
+  fill: none;
+  stroke: currentColor;
+}
+
+.web-toggle:hover {
+  background: var(--n-raised);
+  color: var(--n-fg-dim);
+}
+
+.web-toggle.on {
+  color: var(--n-accent);
+  border-color: color-mix(in srgb, var(--n-accent) 40%, transparent);
+  background: color-mix(in srgb, var(--n-accent) 12%, transparent);
+}
+
 .ag-model {
   display: inline-flex;
   align-items: center;
@@ -1486,5 +1940,39 @@ const thinkingLive = computed(
 .ss-menu .n-menu-item .n-menu-name {
   font-family: inherit;
   font-size: 12px;
+}
+
+/* 会话项右侧的删除。
+   平时藏着 —— 一列会话名旁边挂一排垃圾桶，视线全被吸走；
+   鼠标移到那一行（或键盘聚焦到它）才出现，位置还是占着的，
+   所以出现时不会把名字挤得跳一下。 */
+.ss-item .ss-del {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  margin-left: 2px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--n-r-sm);
+  color: var(--n-fg-faint);
+  opacity: 0;
+  transition: opacity var(--n-dur) var(--n-ease), background var(--n-dur) var(--n-ease),
+    color var(--n-dur) var(--n-ease);
+}
+
+.ss-item:hover .ss-del,
+.ss-item .ss-del:focus-visible {
+  opacity: 1;
+}
+
+.ss-item .ss-del:hover {
+  background: color-mix(in srgb, var(--n-danger) 16%, transparent);
+  color: var(--n-danger);
+}
+
+.ss-item .ss-del svg {
+  fill: none;
+  stroke: currentColor;
 }
 </style>

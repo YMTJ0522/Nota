@@ -199,8 +199,25 @@ export function makeInject(opts = {}) {
     '    return [{ name: "导入进来的.md", path: p }];' +
     '  },' +
     '  pickImage: async () => null, resolveMedia: async () => null,' +
-    '  exportSave: async (o) => { window.__exported = (window.__exported || []).concat(o.kind); return "/out/x." + o.kind },' +
-    '  exportPdf: async () => { window.__exported = (window.__exported || []).concat("pdf"); return "/out/x.pdf" },' +
+    /* 导出：把**内容**也存下来。断言要看的是导出的 HTML 里
+       图表到底渲染没渲染、公式是不是解析过的 —— 只看「调了哪个导出」不够。 */
+    '  exportSave: async (o) => { window.__exported = (window.__exported || []).concat(o.kind); window.__exportedData = (window.__exportedData || {}); window.__exportedData[o.kind] = o.data; return "/out/x." + o.kind },' +
+    '  exportPdf: async (o) => { window.__exported = (window.__exported || []).concat("pdf"); window.__exportedData = (window.__exportedData || {}); window.__exportedData.pdf = o.html; return "/out/x.pdf" },' +
+    /* 节点图标：存在内存里，写盘的内容能被断言看到 */
+    '  iconsRead: async () => window.__icons ?? {},' +
+    '  iconsWrite: async (root, map) => { window.__icons = map; return true },' +
+    /* 粘贴/拖入的图片落盘 */
+    '  mediaSave: async (root, item) => {' +
+    '    const rel = "attachments/粘贴进来的图.png";' +
+    '    window.__mediaSaved = (window.__mediaSaved || []).concat([item.srcPath || "clipboard"]);' +
+    '    return { rel, name: "粘贴进来的图.png", isVideo: false } },' +
+    /* 联网检索：给两条假结果 */
+    '  aiWebSearch: async (q, limit) => {' +
+    '    window.__searched = (window.__searched || []).concat(q);' +
+    '    return { ok: true, engine: "test", hits: [' +
+    '      { title: "检索到的第一篇文章", url: "https://example.com/a", snippet: "这是摘要一。" },' +
+    '      { title: "检索到的第二篇文章", url: "https://example.com/b", snippet: "这是摘要二。" },' +
+    '    ] } },' +
     '  historySave: async (ws, f, c) => {' +
     '    const l = (window.__hist[f] = window.__hist[f] || []);' +
     '    const stamp = new Date(Date.now() + l.length * 60000).toISOString();' +
