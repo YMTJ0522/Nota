@@ -465,9 +465,12 @@ function timeText(ms: number) {
   box-shadow: inset 0 0 0 1px var(--n-accent);
 }
 
-/* 勾选方块：状态就写在方块里，不用另起一列文字 */
+/* 勾选方块：状态就写在方块里，不用另起一列文字。
+   padding 显式写 0：这个方块只有 17px，浏览器默认的 1px 6px 内边距会把
+   里面那枚 11px 的勾压成 3px 宽的一条线（"勾没显示全"就是这个原因）。 */
 .tv-check {
   flex: none;
+  padding: 0;
   width: 17px;
   height: 17px;
   display: inline-flex;

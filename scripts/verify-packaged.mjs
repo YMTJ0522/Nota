@@ -124,6 +124,28 @@ out.assets = await ev(`(async () => {
 })()`)
 ok('3.入口脚本已加载', out.assets.entryScripts >= 1, out.assets)
 
+// 字体是随包走的（src/assets/fonts/*.woff2）。生产用 file:// 打开，
+// CSS 里的相对路径只要差一层就会静默退回系统字体 —— 不报错、也没有 JS 异常，
+// 肉眼看着「就是没换成功」。所以这里必须量：字体真进了 asar，并且在 file:// 下加载完了。
+out.font = await ev(`(async () => {
+  await document.fonts.ready
+  const faces = [...document.fonts].map(f => f.family + '/' + f.status)
+  const c = document.createElement('canvas').getContext('2d')
+  c.font = '20px NanxiXinyuanti'
+  const w1 = c.measureText('笔记 Nota 2026').width
+  c.font = '20px serif'
+  const w2 = c.measureText('笔记 Nota 2026').width
+  return { proto: location.protocol, faces, check: document.fonts.check('16px NanxiXinyuanti'),
+           w1: Math.round(w1 * 100) / 100, w2: Math.round(w2 * 100) / 100 }
+})()`)
+ok(
+  '4.随包字体在 file:// 下真的加载完成',
+  out.font.check === true &&
+    out.font.faces.some((f) => f.startsWith('NanxiXinyuanti/loaded')) &&
+    Math.abs(out.font.w1 - out.font.w2) > 1,
+  out.font,
+)
+
 console.log('\n--- JS ERRORS ---')
 console.log(errors.length ? errors.join('\n') : '(none)')
 

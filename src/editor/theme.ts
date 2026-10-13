@@ -30,7 +30,10 @@ export const notaTheme = EditorView.theme({
      正文列的宽度约束交给 .cm-content 自己（max-width + 左对齐）。
      这样行号归位到左边，正文也不会拉成一条超长的行。 */
   ".cm-scroller": {
-    fontFamily: "var(--n-font-mono)",
+    /* 正文用界面那一套圆体，跟右侧预览、侧栏是同一个字族 —— 左边写、右边看，
+       两边字形一样才像同一篇笔记。真正要等宽的地方（代码块、行内代码、行号）
+       下面各自另设，不受这里影响。 */
+    fontFamily: "var(--n-font-ui)",
     lineHeight: "var(--n-lh)",
     overflowY: "auto",
     overflowX: "hidden",
@@ -66,6 +69,9 @@ export const notaTheme = EditorView.theme({
     backgroundColor: "var(--n-bg)",
     color: "var(--n-fg-faint)",
     border: "none",
+    /* 行号是数字，要的是「每一位一样宽」——圆体是比例字体，写成 11 和 111
+       长度会不一样，右对齐也压不齐。所以这一条单独留在等宽栈里。 */
+    fontFamily: "var(--n-font-mono)",
     fontSize: "12px",
     paddingInlineStart: "2px",
     paddingInlineEnd: "6px",
@@ -87,17 +93,25 @@ export const notaTheme = EditorView.theme({
   },
   ".cm-editor:hover .cm-foldGutter .cm-gutterElement": { opacity: 1 },
 
-  /* ── 光标与选区 ──
-     选区除了给背景色，还要把文字压深（--n-selection-fg）。
-     只加背景的话，正文的灰字压在绿底上会"糊在一起"，看起来像没选中。 */
+  /* ── 光标与选区 ── */
   ".cm-cursor, .cm-dropCursor": {
     borderLeftColor: "var(--n-accent)",
     borderLeftWidth: "2px",
     borderRadius: "1px",
   },
-  "&.cm-focused .cm-selectionBackground, .cm-selectionBackground, .cm-content ::selection": {
-    backgroundColor: "var(--n-selection)",
-    color: "var(--n-selection-fg)",
+
+  /* 选区除了给背景色，还要把文字压深（--n-selection-fg）。
+     只加背景的话，正文的灰字压在绿底上会"糊在一起"，看起来像没选中。
+
+     选择器为什么写这么长、还带 !important：CodeMirror 的 baseTheme 里有一条
+     「&light.cm-focused > .cm-scroller > .cm-selectionLayer .cm-selectionBackground」
+     背景写死成 #d7d4f0（浅紫），展开后是六个类，比常规写法重得多 —— 光写
+     .cm-selectionBackground 压不过它，深色主题下就会一直是一块浅紫，白字压上去
+     直接看不清。这里用同样深的选择器再加上 !important 把它彻底盖掉：
+     选中的颜色只该有一个来源，就是 --n-selection。 */
+  "&.cm-focused > .cm-scroller > .cm-selectionLayer .cm-selectionBackground, .cm-selectionBackground, .cm-content ::selection": {
+    backgroundColor: "var(--n-selection) !important",
+    color: "var(--n-selection-fg) !important",
   },
   ".cm-selectionMatch": {
     backgroundColor: "var(--n-selection)",

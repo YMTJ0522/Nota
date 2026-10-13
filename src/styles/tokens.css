@@ -3,6 +3,21 @@
    命名前缀统一用 --n-，与任何外部项目无关
    ───────────────────────────────────────────── */
 
+/* ── 界面字体 ──
+   南西新圆体（简繁）随包一起走，不指望用户机器上正好装了它 —— 字体是界面的
+   一部分，不能靠运气。原始 TTF 4.31MB，转成 woff2 后 1.81MB，从本地磁盘解码，
+   没有网络往返，实测启动时几乎察觉不到。
+   font-weight 写成范围：这个字族只有一个字重，不声明范围的话，界面上那些
+   font-weight:600 的小标题会退回字体栈里的下一项（英文走 Inter、中文走系统字体），
+   同一行里就出现两套字形 —— 声明了范围才会由浏览器统一合成粗体。 */
+@font-face {
+  font-family: "NanxiXinyuanti";
+  src: url("../assets/fonts/nanxi-round.woff2") format("woff2");
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+
 :root {
   color-scheme: light;
 
@@ -88,8 +103,12 @@
   --n-block-head: #f0ede6;
 
   /* 排版 */
-  --n-font-ui: "Inter", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
-  --n-font-mono: "Cascadia Code", "SFMono-Regular", Consolas, monospace;
+  /* 界面字体栈：圆体排在最前，整个应用（侧栏、顶栏、设置、预览、提示）一起走它。
+     Inter 留在后面接着西文数字，万一圆体的拉丁字形在某个字号下发虚还有得退。
+     等宽那一条末尾也挂上圆体 —— 代码块里夹的中文不该掉回系统字体，
+     同一块代码里一行英文一行中文却像两个人写的，看着很散。 */
+  --n-font-ui: "NanxiXinyuanti", "Inter", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+  --n-font-mono: "Cascadia Code", "SFMono-Regular", Consolas, "NanxiXinyuanti", monospace;
   --n-fs-body: 15px;
   --n-lh: 1.75;
   /* 正文栏宽：长文档可读性上限 */
@@ -321,6 +340,11 @@ button {
   border: none;
   background: none;
   cursor: pointer;
+  /* 浏览器给的默认内边距是 1px 6px，定尺寸的小方框按钮最怕这个：
+     回收站那个 17px 的勾选框左右各被吃掉 6px，里面 11px 的勾被压成 3px 宽
+     的一条竖线 —— 看着就像「勾没显示全」。本项目每个按钮的 padding 都是
+     自己写的，这里一律归零。 */
+  padding: 0;
 }
 
 input,
