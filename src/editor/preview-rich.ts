@@ -448,21 +448,48 @@ export function headingSlug(text: string, seen: Map<string, number>): string {
   return n === 1 ? base : `${base}-${n}`
 }
 
+/**
+ * 行首的围栏记号。
+ *
+ * 允许引用前缀（`> ```bash`）与最多 3 个空格的缩进——4 个空格起是缩进式
+ * 代码块，不构成围栏（CommonMark 的规矩，顺手也避开列表续行的误判）。
+ * 返回开栏用的字符与长度，关栏要靠它们配对。
+ */
+function fenceMarkOf(line: string): { char: string; len: number } | null {
+  const m = /^(?:[ \t]*>[ \t]?)*([ \t]*)(`{3,}|~{3,})/.exec(line)
+  if (!m) return null
+  if (m[1].replace(/\t/g, '    ').length > 3) return null
+  return { char: m[2][0], len: m[2].length }
+}
+
 export function outlineFromSource(raw: string): HeadingItem[] {
   const out: HeadingItem[] = []
   const lines = raw.split('\n')
   const seen = new Map<string, number>()
-  let fence = false
+  /* 记的是「开栏记号」而不是一个布尔值。
+     原来写成 `fence = !fence` 的取反，只能应付最规矩的一对 ```
+     碰到这两类就整体错位，代码块里的 `# 注释` 会整段漏进大纲、被当成 H1：
+       · ````（四反引号）包着的块里出现 ``` 行——那是内容，不是关栏；
+       · 用 ~ 开的块里出现 ``` 行，反之亦然。
+     现在要求「同种字符 + 不短于开栏长度」才算关栏，对不上就一律当内容。
+     只认长度不小于、不认「恰好等于」，是为了永远不会卡在「开着的状态」里出不来：
+     万一用户手写的关栏多打了一个反引号，也应当正常收尾，而不是把后面半篇吞掉。 */
+  let open: { char: string; len: number } | null = null
   /** front matter 必须以首行的 --- 开头 */
   let front = lines[0]?.trim() === '---'
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i]
-    if (/^\s*(```|~~~)/.test(line)) {
-      fence = !fence
+    const mark = fenceMarkOf(line)
+    if (open) {
+      // 块内一律不看标题——这就是「代码块里的 # 注释不该出现在大纲里」的落点
+      if (mark && mark.char === open.char && mark.len >= open.len) open = null
       continue
     }
-    if (fence) continue
+    if (mark) {
+      open = mark
+      continue
+    }
     if (front) {
       // 结束分隔符顶多出现在第二行往后
       if (i > 0 && /^---\s*$/.test(line)) front = false

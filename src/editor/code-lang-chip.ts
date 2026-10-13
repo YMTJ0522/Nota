@@ -1,4 +1,4 @@
-import { syntaxTree } from "@codemirror/language";
+import { LanguageDescription, syntaxTree } from "@codemirror/language";
 import {
   Decoration,
   EditorView,
@@ -26,14 +26,33 @@ import { fencedCodeLanguages } from "./code-languages";
 /**
  * 下拉里的候选。
  *
- * 写进围栏的是语言的**正式名**（`python`、`javascript`、`shell`），不是别名里的
+ * 写进围栏的是语言的**正式名小写**（`python`、`javascript`、`shell`），不是别名里的
  * 第一个——别名的第一项往往是缩写（`py`、`js`），写出去别的渲染器不一定认，
  * 用户回头看源码也得多想一步。拿不准就用全名，这是最不容易出错的一种表示。
  */
-const LANG_OPTIONS: { label: string; token: string }[] = fencedCodeLanguages.map((l) => ({
+const LANG_OPTIONS = fencedCodeLanguages.map((l) => ({
   label: l.name,
   token: l.name.toLowerCase(),
+  desc: l,
 }));
+
+/**
+ * 围栏上写的东西 → 规范语言。
+ *
+ * 认大小写、也认别名：```` ```Bash ```` 和 ```` ```sh ```` 都是 Shell。
+ * 不认大小写这件事很实际——中文用户在编辑器里打出 ```` ```Bash ```` 太正常了，
+ * 而候选表里写的是 `shell`；只按字符串相等去比，就会出现「明明写了 Bash，
+ * 下拉里却一个都没被勾上，标签也一直显示 Bash」。
+ */
+function canonicalLang(token: string) {
+  if (!token) return null;
+  return LanguageDescription.matchLanguageName(fencedCodeLanguages, token, true) ?? null;
+}
+
+/** 标签上显示的字：认得出就显示规范名，认不出照实显示用户写的那个（不假装认识） */
+function displayLang(token: string) {
+  return canonicalLang(token)?.name ?? token;
+}
 
 let openMenu: HTMLElement | null = null;
 
@@ -48,6 +67,21 @@ function onDocKey(event: KeyboardEvent) {
   closeLangMenu();
 }
 
+/**
+ * 页面里任何一处滚动都值得把菜单收起来 —— 它是按 fixed 坐标摆的，
+ * 底下的东西一动位置就不对了。
+ *
+ * 但**菜单自己内部**的滚动不算：语言有十六项，`.cm-lang-list` 限高自滚，
+ * 打开时要先把当前语言滚进视野。而 `scrollIntoView` 派出的事件是**异步**的
+ * （排到下一次绘制之前），等它到达时监听已经装好了 —— 不过滤的话菜单
+ * 会「开一半自己关掉」，表现就是「点了没反应」，而且完全看不出原因。
+ */
+function onDocScroll(event: Event) {
+  const target = event.target as Node | null;
+  if (openMenu && target && openMenu.contains(target)) return;
+  closeLangMenu();
+}
+
 function closeLangMenu() {
   if (!openMenu) return;
   openMenu.remove();
@@ -55,7 +89,7 @@ function closeLangMenu() {
   document.removeEventListener("mousedown", onDocDown, true);
   document.removeEventListener("keydown", onDocKey, true);
   window.removeEventListener("resize", closeLangMenu);
-  window.removeEventListener("scroll", closeLangMenu, true);
+  window.removeEventListener("scroll", onDocScroll, true);
 }
 
 /** 围栏行上的语言 token。pos 给的是那一行的行首偏移 */
@@ -97,13 +131,14 @@ function menuRow(label: string, tail: string, active: boolean, onPick: () => voi
 function openLangMenu(view: EditorView, anchor: HTMLElement, pos: number) {
   closeLangMenu();
   const current = fenceLangAt(view, pos)?.token ?? "";
+  const matched = canonicalLang(current);
 
   const menu = document.createElement("div");
   menu.className = "n-menu";
 
   const head = document.createElement("div");
   head.className = "n-menu-head";
-  head.textContent = "代码语言";
+  head.textContent = current ? `代码语言 · ${displayLang(current)}` : "代码语言";
 
   const list = document.createElement("div");
   list.className = "cm-lang-list";
@@ -116,8 +151,9 @@ function openLangMenu(view: EditorView, anchor: HTMLElement, pos: number) {
     }),
   );
   for (const opt of LANG_OPTIONS) {
+    const active = !!matched && matched.name === opt.label;
     list.append(
-      menuRow(opt.label, opt.token, current === opt.token, () => {
+      menuRow(opt.label, opt.token, active, () => {
         applyLang(view, pos, opt.token);
         closeLangMenu();
       }),
@@ -136,11 +172,14 @@ function openLangMenu(view: EditorView, anchor: HTMLElement, pos: number) {
   menu.style.top = `${Math.round(top)}px`;
   menu.style.left = `${Math.round(left)}px`;
 
+  // 打开之后把当前语言那一项滚进视野：候选有十六项，超出一屏就得自己找
+  list.querySelector<HTMLElement>(".n-menu-item.on")?.scrollIntoView({ block: "nearest" });
+
   openMenu = menu;
   document.addEventListener("mousedown", onDocDown, true);
   document.addEventListener("keydown", onDocKey, true);
   window.addEventListener("resize", closeLangMenu);
-  window.addEventListener("scroll", closeLangMenu, true);
+  window.addEventListener("scroll", onDocScroll, true);
 }
 
 const CARET =
@@ -170,11 +209,12 @@ class CodeLangChip extends WidgetType {
     const btn = document.createElement("button");
     btn.type = "button";
     btn.className = "cm-code-lang-btn";
-    btn.title = "选择代码语言";
+    btn.title = this.lang ? `代码语言：${displayLang(this.lang)}` : "选择代码语言";
     btn.setAttribute("aria-label", "选择代码语言");
+    btn.setAttribute("aria-haspopup", "menu");
     btn.innerHTML = `<span></span>${CARET}`;
     const label = btn.firstElementChild as HTMLElement;
-    label.textContent = this.lang || "语言";
+    label.textContent = this.lang ? displayLang(this.lang) : "语言";
     if (this.lang) btn.classList.add("has-lang");
 
     // mousedown 拦掉：不让这一次按下参与选区计算

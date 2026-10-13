@@ -33,6 +33,7 @@ import { closeBrackets, closeBracketsKeymap } from "@codemirror/autocomplete";
 import { toolbarKeymap } from "./toolbar-keymap";
 import { codeLangChipExtensions } from "./code-lang-chip";
 import { fencedCodeBlockHighlighter } from "./code-languages";
+import { markdownCompletion } from "./completion";
 import { markdownLivePreview } from "./live-preview";
 
 /**
@@ -97,6 +98,9 @@ export function baseExtensions(options: {
     // 围栏右上角那枚「语言」标签：写完之后想改语言就点它，
     // 打字过程中不再弹任何东西（见 code-lang-chip.ts 顶上的说明）
     codeLangChipExtensions(),
+    // 补全：代码块里打字自动给候选，正文里 Ctrl+Space 手动唤出
+    // （见 completion.ts —— 正文不自动弹，是为了不打断中文写作）
+    markdownCompletion(),
     // 自绘查找条：Ctrl+F 直接交给外层那条输入框
     ...(onFind
       ? [

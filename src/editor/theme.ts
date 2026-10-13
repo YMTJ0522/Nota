@@ -228,6 +228,10 @@ export const notaTheme = EditorView.theme({
     borderRadius: "var(--n-r-md)",
     boxShadow: "var(--n-shadow-lg)",
     overflow: "hidden",
+    /* 弹层要压过内容里任何自己抬过 z-index 的东西（语言标签是 2）。
+       CodeMirror 自己没有给 .cm-tooltip 定层级，靠 DOM 顺序，
+       内容里一旦出现定位 + z-index 的元素就会被反过来盖住。 */
+    zIndex: "10",
   },
   ".cm-tooltip.cm-tooltip-autocomplete > ul": {
     maxHeight: "15em",
@@ -423,6 +427,13 @@ export const notaTheme = EditorView.theme({
   ".cm-code-lang": {
     height: "0",
     position: "relative",
+    /* 必须自己抬一层，否则这枚标签「看得见、点不到」：
+       .cm-md-codeblock 为了让底色和选区矩形对齐用了 position: relative，
+       于是代码块每一行也成了定位元素，和这个零高度包裹层同处一个层叠层；
+       按钮是绝对定位的、在 DOM 里又排在那一行**前面**，按顺序就被整行盖住了。
+       （所以症状很怪：颜色、位置都对，鼠标移上去 hover 也亮，就是点不动。）
+       只抬到 2：补全弹层是 10，仍在它上面。 */
+    zIndex: "2",
   },
   ".cm-code-lang-btn": {
     position: "absolute",
