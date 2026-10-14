@@ -1,7 +1,7 @@
 import { reactive, computed } from 'vue'
 import type { HeadingItem } from '@/editor/preview-rich'
 import {
-  stripFrontMatter,
+  prepareMarkdown,
   renderMathInHtml,
   renderMermaidInHtml,
   enhancePreview,
@@ -203,8 +203,6 @@ interface State {
   mainView: MainView
   /** 中间那一列在显示什么（主区与这一列的分工见 setColumnView） */
   columnView: ColumnView
-  /** 中间那一列是否可见 */
-  column: boolean
   /** 各栏宽度（拖动分隔线改的就是它们） */
   sidebarWidth: number
   columnWidth: number
@@ -323,7 +321,6 @@ const state = reactive<State>({
   lineNumbers: PREF_DEFAULTS.lineNumbers,
   mainView: 'note',
   columnView: 'notes',
-  column: true,
   sidebarWidth: 232,
   columnWidth: 296,
   outlineWidth: 176,
@@ -1193,31 +1190,58 @@ tbody tr:last-child td { border-bottom: none; }
 th { background: var(--surface); font-weight: 600; }
 thead { display: table-header-group; }
 tr { break-inside: avoid; page-break-inside: avoid; }
-/* Callout（> [!NOTE] 这类） */
+/* Callout（> [!NOTE] 这类）。与预览同一副样子：左侧色条 + 淡底，
+   标题与正文同一段流，没有那条把内容切成两截的深色标题带。
+   导出里不好用 color-mix（Word / 打印这条路不一定支持），
+   所以淡底用已经算好的 --accent-soft，不在这里现场再混一次。 */
 .pv-callout {
-  margin: 1em 0; border: 1px solid var(--code-line);
-  border-left: 3px solid var(--accent); border-radius: 8px;
-  background: var(--accent-soft); overflow: hidden;
+  margin: 1.15em 0; padding: .7em 14px .75em;
+  border: 1px solid var(--code-line); border-left: 4px solid var(--accent);
+  border-radius: 8px; background: var(--accent-soft);
 }
-.pv-callout-head { padding: 7px 12px; font-size: .86em; font-weight: 600; color: var(--accent);
-  background: color-mix(in srgb, var(--accent) 10%, #fff); }
-.pv-callout-body { padding: 2px 12px 8px; }
-.pv-callout-body > p:first-child { margin-top: .5em; }
-.pv-callout-body > p:last-child { margin-bottom: .5em; }
+.pv-callout-head { display: flex; align-items: baseline; gap: 6px;
+  font-size: .92em; font-weight: 600; line-height: 1.6; color: var(--accent); }
+.pv-callout-icon { color: var(--accent); font-size: 13px; line-height: 1.5; }
+.pv-callout-body { margin-top: .15em; }
+.pv-callout-body > p:first-child { margin-top: .3em; }
+.pv-callout-body > p:last-child { margin-bottom: 0; }
 /* 折叠块 / 分栏 / 嵌入：导出时全部摊平，不做交互 */
 .pv-fold > summary { cursor: default; font-weight: 600; }
 .pv-embed { display: inline-flex; gap: 5px; padding: 2px 9px 2px 7px;
   border: 1px solid var(--line); border-radius: 6px; background: var(--surface);
   font-size: .92em; color: var(--accent); }
+/* 双链：导出前一并有样。链接在这儿点不动（纸面/静态文件），但至少看得出
+   它是「指向另一篇」的词，而不是两个突兀的中括号。 */
+.pv-wlink { color: var(--accent); text-decoration: none;
+  border-bottom: 1px solid color-mix(in srgb, var(--accent) 40%, transparent); }
+.pv-wlink.is-missing, .pv-embed.is-missing { border-style: dashed; color: var(--fg-faint); }
+.pv-wlink-tag, .pv-embed-tag { margin-right: 4px; padding: 0 4px; border-radius: 3px;
+  background: color-mix(in srgb, var(--accent) 12%, transparent); color: var(--accent);
+  font-size: 10px; }
 /* 公式：katex 的样式不随导出走（那是一整份 CSS），
    所以导出时统一降级成等宽原文 —— 至少不会变成一堆乱字符。 */
 .pv-math, .pv-math-block { font-family: ui-monospace, Consolas, monospace;
   background: var(--code-bg); border-radius: 4px; padding: 0 .3em; }
 .pv-math-block { display: block; padding: .5em .7em; margin: .8em 0; text-align: center; }
-/* 脚注 */
+/* 脚注。以前这项等于不存在：marked 不认脚注语法，预览和导出里都躺着一串
+   中括号。现在 collectFootnotes 会把它们收拢到文末排成一张列表。 */
 .footnotes { margin-top: 2.5em; padding-top: 1em; border-top: 1px solid var(--line);
   font-size: .9em; color: var(--fg-dim); }
+.pv-fn-list { margin: 0; padding-left: 1.3em; }
+.pv-fn-n { color: var(--accent); font-weight: 600; }
+.pv-fnback { margin-left: 4px; text-decoration: none; color: var(--fg-faint); }
 sup a { text-decoration: none; }
+sup.pv-fnref { font-size: .75em; line-height: 0; vertical-align: super; }
+/* 高级代码块的外壳：标题条 + 行号 + 高亮行 */
+.pv-code-fig { margin: 1em 0; }
+.pv-code-fig > pre { margin: 0; }
+.pv-code-title { padding: 6px 14px; border: 1px solid var(--code-line); border-bottom: 0;
+  border-radius: 8px 8px 0 0; background: var(--surface);
+  font-size: .78em; font-weight: 600; color: var(--fg-dim); }
+/* 行内标签与块 ID：导出里也一样能认出它们是记号 */
+.pv-tag { padding: 0 .4em; border-radius: 6px; background: var(--accent-soft);
+  color: var(--accent); font-size: .92em; }
+.pv-bid { color: var(--fg-faint); font-size: .85em; }
 /* 代码高亮：与预览同一套类名 */
 .cm-hl-keyword { color: #8a4e30 } .cm-hl-string { color: #2d7a56 }
 .cm-hl-number { color: #b56a16 } .cm-hl-func { color: #3d5f8f }
@@ -1274,7 +1298,7 @@ async function renderExportBody(
   forWord = false,
 ): Promise<{ body: string; extraCss: string }> {
   const { marked } = await getMarked()
-  const raw = marked.parse(stripFrontMatter(md), { async: false }) as string
+  const raw = marked.parse(prepareMarkdown(md), { async: false }) as string
   let body = absolutizeMedia(enhancePreview(await highlightFences(raw)).html)
 
   const hasGraph = body.includes('pv-mermaid-graph')
@@ -1483,28 +1507,11 @@ export function sidebarNow(winW: number = window.innerWidth) {
   return Math.max(WIDTH_LIMITS.sidebar.min, Math.min(state.sidebarWidth, winW, cap))
 }
 
-/* ── 资料栏的收放 ──
-   收起之后不留「的那一个按钮都不知道去哪了」的死角：
-   它自己会缩成一条 34px 的窄轨，展开钮就长在那条窄轨上。
-
-   为什么不在收起时把开关挪到侧栏顶行：那样侧栏顶行就会同时出现
-   「收起侧边栏」和「展开资料栏」两枚 —— 一枚收自己、一枚开邻居，
-   并排看着像一对同级开关，其实谁跟谁都不是一回事（用户明确嫌过）。
-   侧栏自己收起时也是留一条窄轨，两栏用同一种语言，各有一枚，
-   永远不会撞在一起。
-
-   为什么不用「窄到放不下就自动收」那套：那是替人做决定。
-   窗口变宽时它该不该自动回来？回来，是把人已经习惯了的位置又改了；
-   不回来，人就得猜它去哪了。窄轨不需要回答这两个问题 —— 它一直在那儿。 */
-function setColumn(v: boolean) {
-  state.column = v
-  localStorage.setItem('nota-column-open', v ? '1' : '0')
-}
-
-function toggleColumn() {
-  setColumn(!state.column)
-}
-
+/* ── 资料栏常驻 ──
+   这一列没有收起：笔记列表、大纲、引用、AI 都长在这一列上，
+   收掉等于整个应用只剩一个编辑器 —— 放在 Note 里就没有「不要资料栏」的用法。
+   侧栏（工作区导航）才是有收放的那一个，因为它是「偶尔看一眼」的。
+   窄窗要让宽，靠的是拖中间的分割线（sidebarNow 会给侧栏收上限），不靠藏一整列。 */
 /** 中间那一列最多能占多少：先把侧栏和编辑区各自的那份让出来，剩下的才是它的。
     少了这一步，拖动 / 自适应都可能把编辑区压到没地方放顶行，最后挤出去的是窗口按钮。 */
 export function maxColumnWidth(winW: number = window.innerWidth) {
@@ -1513,7 +1520,7 @@ export function maxColumnWidth(winW: number = window.innerWidth) {
 
 /** 反过来给侧栏算上限（同一个道理，只是换一边让路） */
 export function maxSidebarWidth(winW: number = window.innerWidth) {
-  const colW = state.column ? Math.min(effectiveColumnWidth(winW), WIDTH_LIMITS.column.min) : 0
+  const colW = Math.min(effectiveColumnWidth(winW), WIDTH_LIMITS.column.min)
   return Math.max(WIDTH_LIMITS.sidebar.min, winW - colW - EDITOR_MIN_WIDTH)
 }
 
@@ -1611,11 +1618,8 @@ function initPrefs() {
   state.autoSave = localStorage.getItem('nota-autosave') !== '0'
   state.sidebar = localStorage.getItem('nota-sidebar') !== '0'
   state.outline = localStorage.getItem('nota-outline') !== '0'
-  // 资料栏收没收是**人的选择**，要记住：上次是专门为了看长文才收掉的，
-  // 重启后又出现在眼前等于没记。早先那一版不读这个键，是因为当时它有别的意思
-  // ——窄窗自动收的。现在自动收放那套已经删了，这个键只剩「人自己点的」，
-  // 所以可以放心恢复。
-  state.column = localStorage.getItem('nota-column-open') !== '0'
+  // 注意这里**不读** `nota-column-open`：资料栏已经改成常驻，没有收起一说。
+  // 留着那个键不读也不删 —— 万一哪天又想让它可收，旧用户的上次选择还在。
   const cv = localStorage.getItem(COLUMN_KEY)
   if (cv && (COLUMN_VIEWS as string[]).includes(cv)) {
     state.columnView = cv as ColumnView
@@ -2246,8 +2250,6 @@ export const store = {
   importNotes,
   toggleSidebar,
   setColumnView,
-  toggleColumn,
-  setColumn,
   NOTE_TABS,
   setWidth,
   autoColumnWidth,

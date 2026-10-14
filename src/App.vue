@@ -68,13 +68,9 @@ function onKey(e: KeyboardEvent) {
     e.preventDefault()
     store.openWorkspace()
   } else if (e.key === '\\') {
-    // 侧边栏折叠/展开
+    // 侧边栏折叠/展开。资料栏没有这个快捷键 —— 它一直开着。
     e.preventDefault()
     store.toggleSidebar()
-  } else if (e.shiftKey && e.key === '|') {
-    // 资料栏折叠/展开：Ctrl+Shift+\ 在物理键盘上打出来的就是这个键
-    e.preventDefault()
-    store.toggleColumn()
   }
 }
 
@@ -132,10 +128,9 @@ onBeforeUnmount(() => {
     <div class="body" :style="widthVars()">
       <SidePanel v-if="state.root" />
       <SplitHandle v-if="state.root && state.sidebar" target="sidebar" label="拖动调整侧边栏宽度" />
-      <!-- 资料栏常驻渲染：收起态是它自己的一条窄轨，不是被删掉。
-           删掉会让编辑区硬跳一截，而且那个「把它叫回来」的入口没地方放。 -->
+      <!-- 资料栏常驻：没有收起态，也就没有「叫它回来」的入口要放在别处。 -->
       <SideColumn v-if="state.root" />
-      <SplitHandle v-if="state.root && state.column" target="column" label="拖动调整资料栏宽度" />
+      <SplitHandle v-if="state.root" target="column" label="拖动调整资料栏宽度" />
 
       <main class="main">
         <!-- 右侧编辑区自己会画顶栏；没有打开笔记时它不出现，

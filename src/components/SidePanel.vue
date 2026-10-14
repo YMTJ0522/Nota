@@ -105,29 +105,21 @@ function commitFolder(e: Event) {
   store.commitNewFolder((e.target as HTMLInputElement).value)
 }
 
-/** 折叠态点搜索：先把中间那一列打开并切到笔记列表，再把焦点交给它的搜索框。
-    搜索框现在住在那一列的顶部（参考图的分布就是这样：侧栏负责去哪找，
-    那一列负责有哪些，搜索属于「有哪些」）。 */
+/** 折叠态点搜索：把焦点交给中间那一列顶部那条搜索框。
+    搜索框住在那一列的顶部（参考图的分布就是这样：侧栏负责去哪找，
+    那一列负责有哪些，搜索属于「有哪些」）。中间那一列一直开着，不需要先打开它。 */
 async function focusSearch() {
-  if (!state.column) store.setColumn(true)
   store.setColumnView('notes')
   await nextTick()
   window.dispatchEvent(new CustomEvent('nota:focus-search'))
 }
 
-/**
- * 附件库 / 回收站 / AI 编写的入口。
- *
- * 三样东西都住在中间那一列里。那一列收着的时候先把它拉开 ——
- * 用户点这个入口就是为了看它，「点了没反应」是最糟的交互。
- */
+/** 附件库 / 回收站 / AI 编写的入口：三样东西都住在中间那一列里。 */
 function openLibrary(tab: 'attach' | 'trash') {
-  if (!state.column) store.setColumn(true)
   store.setColumnView(tab)
 }
 
 function openAi() {
-  if (!state.column) store.setColumn(true)
   store.setMainView('ai')
 }
 
@@ -501,7 +493,7 @@ onBeforeUnmount(() => document.removeEventListener('pointerdown', onDocPointer))
         <nav class="nav nav-group">
           <button
             class="nav-item"
-            :class="{ on: state.mainView === 'note' && state.column && state.columnView === 'attach' }"
+            :class="{ on: state.mainView === 'note' && state.columnView === 'attach' }"
             @click="openLibrary('attach')"
           >
             <span class="nav-ico"><Paperclip :size="15" :stroke-width="1.9" /></span>
@@ -513,7 +505,7 @@ onBeforeUnmount(() => document.removeEventListener('pointerdown', onDocPointer))
         <nav class="nav nav-group">
           <button
             class="nav-item"
-            :class="{ on: state.mainView === 'note' && state.column && state.columnView === 'trash' }"
+            :class="{ on: state.mainView === 'note' && state.columnView === 'trash' }"
             @click="openLibrary('trash')"
           >
             <span class="nav-ico"><Trash2 :size="15" :stroke-width="1.9" /></span>
@@ -525,7 +517,7 @@ onBeforeUnmount(() => document.removeEventListener('pointerdown', onDocPointer))
         <nav v-if="state.ai.enabled" class="nav nav-group">
           <button
             class="nav-item"
-            :class="{ on: state.mainView === 'ai' && state.column }"
+            :class="{ on: state.mainView === 'ai' }"
             @click="openAi"
           >
             <span class="nav-ico"><Sparkles :size="15" :stroke-width="1.9" /></span>
@@ -702,7 +694,7 @@ onBeforeUnmount(() => document.removeEventListener('pointerdown', onDocPointer))
           v-for="t in railTools"
           :key="t.id"
           class="rail-btn"
-          :class="{ on: state.column && state.columnView === (t.id === 'ai' ? 'ai' : t.id) }"
+          :class="{ on: state.columnView === (t.id === 'ai' ? 'ai' : t.id) }"
           :data-tip="t.label"
           @click="t.id === 'ai' ? openAi() : openLibrary(t.id === 'attach' ? 'attach' : 'trash')"
         >

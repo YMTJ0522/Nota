@@ -82,7 +82,13 @@
   text-shadow: none;
 }
 
-/* 笔记嵌入：还没做真正的正文内联，先给一个能认出来的卡片 */
+/* ── 指向另一篇笔记的三种写法 ──
+   双链 `[[名字]]` 是一枚链接，点一下跳过去；
+   嵌入 `![[名字]]` 是一枚卡片，长得实一点，因为它是「另一篇要在这儿展开」；
+   两者都可能是 `[[#^块ID]]` —— 名字后面跟一个块锚点时，肩上贴一个小「块」字。
+   三者共用同一套「缺篇」表现：虚线 + 降饱和。 */
+
+/* 嵌入卡片 */
 .md-body .pv-embed {
   display: inline-flex;
   align-items: center;
@@ -95,6 +101,48 @@
   font-size: 0.92em;
   vertical-align: baseline;
 }
+
+/* 双链：不画框。它是正文里的一个词，不是插进来的一块东西。
+   有色（跟着强调色）说明它点得动，下划线只在悬停时出现 ——
+   正文里如果到处是下划线，读起来会像一整页超链接。 */
+.md-body .pv-wlink {
+  display: inline;
+  color: var(--n-accent);
+  cursor: pointer;
+  text-decoration: none;
+  border-bottom: 1px solid transparent;
+}
+
+.md-body .pv-wlink:hover {
+  border-bottom-color: currentColor;
+}
+
+/* 块引用的小记号：跟名字之间留一点点距离，不要贴上去 */
+.md-body .pv-wlink-tag,
+.md-body .pv-embed-tag {
+  flex: none;
+  margin-right: 4px;
+  padding: 0 4px;
+  border-radius: 3px;
+  background: var(--n-accent-soft);
+  color: var(--n-accent);
+  font-size: 10px;
+  line-height: 1.5;
+  vertical-align: 1px;
+}
+
+/* 没找到那篇：还叫那个名字，但明确表示「这条现在指不到东西」 */
+.md-body .pv-wlink.is-missing,
+.md-body .pv-embed.is-missing {
+  border-style: dashed;
+  color: var(--n-fg-faint);
+  cursor: not-allowed;
+}
+
+.md-body .pv-embed.is-missing .pv-embed-name {
+  color: var(--n-fg-faint);
+}
+
 .md-body .pv-embed-ico {
   font-size: 11px;
   line-height: 1;
@@ -111,6 +159,118 @@
 .md-body .pv-line {
   display: block;
   min-height: 1lh;
+}
+
+/* ── 高级代码块（info 串里写了 title / line-numbers / {行号} 的那一种）──
+   普通代码块已经存在了几百年，样式不要动它；这一层外壳只给「真的写了
+   title」的那些块加 —— 没写标题就不画那条空标题条，否则每一段代码顶上
+   都挂一道横线，整篇读起来像一列表格。 */
+.md-body figure.pv-code-fig {
+  margin: 1em 0;
+}
+.md-body figure.pv-code-fig > pre {
+  margin: 0;
+  border-top-left-radius: 0;
+  border-top-right-radius: 0;
+}
+.md-body .pv-code-title {
+  padding: 6px 14px;
+  border: 1px solid var(--n-code-line);
+  border-bottom: 0;
+  border-radius: 10px 10px 0 0;
+  background: color-mix(in oklab, var(--n-fg) 4%, var(--n-surface));
+  font-size: 0.78em;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  color: var(--n-fg-dim);
+}
+.md-body figure.pv-code-fig:not(:has(.pv-code-title)) > pre {
+  border-radius: 10px;
+}
+/* 行号：一道贴左边的窄轨，跟正文之间留一点点距离就够了。
+   行号是「指着某一行说话」时才看的东西，平时不该抢内容的位置。 */
+.md-body pre[data-line-numbers] > code {
+  counter-reset: n-line;
+}
+.md-body pre[data-line-numbers] > code > .pv-line {
+  position: relative;
+  padding-left: 3.2em;
+}
+.md-body pre[data-line-numbers] > code > .pv-line::before {
+  counter-increment: n-line;
+  content: counter(n-line);
+  position: absolute;
+  left: 0;
+  width: 2.4em;
+  text-align: right;
+  color: var(--n-fg-faint);
+  opacity: 0.7;
+  -webkit-user-select: none;
+  user-select: none;
+}
+/* 被点到名的高亮行：不换字色，只压一层极淡的底，
+   横跨整行让人一眼找到，又不至于把token配色搅了。 */
+.md-body .pv-line.is-hl {
+  display: block;
+  box-shadow: inset 3px 0 var(--n-accent);
+  background: var(--n-accent-soft);
+}
+
+/* ── 行内标签 `#标签` ──
+   正文中联机提到的记号，不是筛选器（那套在 frontmatter 里）。
+   做成一枚淡淡的chip：跟文字有区别，但不像链接那样像能点。 */
+.md-body .pv-tag {
+  padding: 0.05em 0.42em;
+  border-radius: 6px;
+  background: var(--n-accent-soft);
+  color: color-mix(in oklab, var(--n-accent) 78%, var(--n-fg));
+  font-size: 0.92em;
+  white-space: nowrap;
+}
+
+/* ── 块 ID `^名称` ──
+   给一段内容起的名字，别处用 `[[#^名称]]` 指过来。
+   比正文淡一号，既不抢眼也不会读着读着失踪。 */
+.md-body .pv-bid {
+  color: var(--n-fg-faint);
+  font-size: 0.85em;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+/* ── 脚注 ── */
+.md-body sup.pv-fnref {
+  font-size: 0.75em;
+  line-height: 0;
+  vertical-align: super;
+}
+.md-body sup.pv-fnref a {
+  padding: 0 0.15em;
+  text-decoration: none;
+  color: var(--n-accent);
+}
+.md-body section.footnotes {
+  margin-top: 2.2em;
+  padding-top: 0.9em;
+  border-top: 1px solid var(--n-line);
+  font-size: 0.9em;
+  color: var(--n-fg-dim);
+}
+.md-body .pv-fn-list {
+  margin: 0;
+  padding-left: 1.3em;
+}
+.md-body .pv-fn {
+  margin: 0.35em 0;
+}
+.md-body .pv-fn-n {
+  color: var(--n-accent);
+  font-weight: 600;
+}
+.md-body .pv-fnback {
+  margin-left: 4px;
+  text-decoration: none;
+  color: var(--n-fg-faint);
 }
 
 .md-body blockquote {
@@ -198,50 +358,53 @@
    这些结构由 preview-rich.ts 在 marked 产出之后补出来。 */
 /* 每个类型只改一个 --c（见下面 data-type 那一段），
    左边线、底色、头部、图标全由它派生 —— 以后换色只动一行。 */
+/* 提示块走大家认得的那副样子：一条左侧色条 + 一层几乎看不见的底色，
+   标题与图标同一行、紧跟正文，中间不再横一条比底色更深的「标题带」——
+   那条带子会把一块提示切成两截，读起来像表格的表头加单元格，
+   而它不是表格，只是一段带记号的正文。 */
 .md-body .pv-callout {
   --c: var(--n-accent);
-  margin: 1em 0;
-  border: 1px solid color-mix(in oklab, var(--c) 22%, var(--n-block-line));
-  border-left: 3px solid var(--c);
+  margin: 1.15em 0;
+  padding: 0.7em 14px 0.75em;
+  border: 1px solid color-mix(in oklab, var(--c) 14%, var(--n-block-line));
+  /* 左侧色条是提示块的「身份证」：全文往下扫的时候，
+     眼睛认的是这一道竖线，不是盒子形状 */
+  border-left: 4px solid var(--c);
   border-radius: var(--n-r-md);
-  background: color-mix(in oklab, var(--c) 7%, var(--n-bg));
-  overflow: hidden;
+  background: color-mix(in oklab, var(--c) 5%, var(--n-bg));
 }
 .md-body .pv-callout-head {
   display: flex;
-  align-items: center;
-  gap: 7px;
-  padding: 7px 12px;
-  background: color-mix(in oklab, var(--c) 12%, var(--n-bg));
-  font-size: 0.86em;
+  align-items: baseline;
+  gap: 6px;
+  font-size: 0.92em;
   font-weight: 600;
+  line-height: 1.6;
 }
 .md-body .pv-callout-title {
-  color: color-mix(in oklab, var(--c) 65%, var(--n-fg));
+  color: color-mix(in oklab, var(--c) 72%, var(--n-fg));
 }
-/* 图标装进一颗淡色圆片：比裸着一个字符更像「一块牌子」，
-   颜色又是纯 --c，所以类型之间一眼能分开。 */
+/* 图标不套圆片：圆片会把它变成一枚徽章，抢在标题前面；
+   这里它只是标题前面那个记号，跟着文字基线走就够了。 */
 .md-body .pv-callout-icon {
   flex: none;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 17px;
-  height: 17px;
-  border-radius: 50%;
-  background: color-mix(in oklab, var(--c) 18%, transparent);
   color: var(--c);
-  font-size: 10px;
-  line-height: 1;
+  font-size: 13px;
+  line-height: 1.5;
 }
 .md-body .pv-callout-body {
-  padding: 4px 12px;
+  /* 没有标题带，正文就从标题底下接着写，两者共用一个左边界 */
+  margin-top: 0.15em;
+}
+.md-body .pv-callout-body > :first-child {
+  margin-top: 0.3em;
 }
 .md-body .pv-callout-body > :last-child {
-  margin-bottom: 0.5em;
+  margin-bottom: 0;
 }
 .md-body .pv-badge {
   margin-left: auto;
+  align-self: center;
   padding: 1px 7px;
   border-radius: 9px;
   border: 1px solid var(--n-block-line);

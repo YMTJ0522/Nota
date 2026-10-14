@@ -42,19 +42,18 @@ import {
   enhancePreview,
   renderMermaidInHtml,
   renderMathInHtml,
-  stripFrontMatter,
+  prepareMarkdown,
   outlineFromSource,
 } from '@/editor/preview-rich'
 import type { HeadingItem } from '@/editor/preview-rich'
 import { getMarked, highlightFences } from '@/editor/markdown'
 import Toolbar from '@/components/Toolbar.vue'
-import NotePickerDialog from '@/components/NotePickerDialog.vue'
+import NotePickerDialog, { type PickMode } from '@/components/NotePickerDialog.vue'
 import SlashMenu from '@/components/SlashMenu.vue'
 import EditorActions from '@/components/EditorActions.vue'
 import WindowControls from '@/components/WindowControls.vue'
 import {
   toolbarInline,
-  toolbarWrap,
   toolbarInlineCode,
   toolbarBlockPrefix,
   toolbarHeading,
@@ -419,7 +418,7 @@ const saveLabel = computed(() => {
 /** 预览（阅读模式） */
 async function render() {
   const { marked } = await getMarked()
-  const raw = marked.parse(stripFrontMatter(state.draft), { async: false }) as string
+  const raw = marked.parse(prepareMarkdown(state.draft), { async: false }) as string
   // 先补高亮与媒体路径，再做富块增强——顺序有讲究：
   // 富块会重新包裹 HTML 结构，先高亮能保证代码块（含 mermaid）已被标记成 language-*。
   const lit = await highlightFences(raw)
@@ -432,6 +431,7 @@ async function render() {
   await nextTick()
   const pane = previewRef.value
   if (pane) {
+    markWikiLinks(pane)
     /**
      * 这两样都是**画完之后才把高度撑起来**的：公式从占位符变成排版好的
      * 行内盒子，图表从一段灰色源码变成一张 SVG。画完之前量出来的标题
@@ -917,22 +917,87 @@ const onPreviewScroll = () => {
   syncFromPreview()
 }
 
-/* ── 笔记嵌入 ── */
-const embedOpen = ref(false)
+/* ── 指向另一篇笔记的三种写法（嵌入 / 双链 / 块引用）──
+   都是同一个选择器，只是选完拼出来的那一串不一样。
+   以前这里只留笔记嵌入用选择器，「双链」「块引用」是把一对空括号塞给人，
+   名字得自己打 —— 而同一份工作区里重名的笔记很常见，打出来的常常不是想指的那篇。 */
+const pickerOpen = ref(false)
+const pickerMode = ref<PickMode>('embed')
 
-/** 把选中的笔记写成 `![[名字]]` 插到光标处 */
-function embedNote(rel: string) {
+function openNotePicker(mode: PickMode) {
+  pickerMode.value = mode
+  pickerOpen.value = true
+}
+
+/** 选完按 mode 拼那一串，光标落在它在正文里的位置 */
+function insertNoteRef(rel: string) {
   const v = view
   if (!v) return
   const name = rel.replace(/\.md$/i, '')
-  const snippet = `![[${name}]]`
+  const snippet =
+    pickerMode.value === 'embed' ? `![[${name}]]` : pickerMode.value === 'link' ? `[[${name}]]` : `[[${name}#^]]`
   const range = v.state.selection.main
   v.dispatch({
     changes: { from: range.from, to: range.to, insert: snippet },
+    // 块引用还没写完：选完要接着填块 ID，光标得停在 `^` 后面让人接着打
     selection: { anchor: range.from + snippet.length },
     userEvent: 'input.toolbar',
   })
   v.focus()
+}
+
+/**
+ * `[[名字]]` 里的名字对应工作区里哪一篇。
+ *
+ * 名字不带目录，所以按 Obsidian 那套顺次试：
+ *  1. 名字本身就是相对路径（`日记/2026-01`）—— 选择器给的正是这种，必中；
+ *  2. 全库只有一个叫这个名字的笔记 —— 就是它；
+ *  3. 重名且不止一个 —— 不许猜。猜错了跳到别的笔记上去，
+ *     人得回头翻半天才知道自己刚才去了哪儿，还不如明着说找不着。
+ */
+function resolveWikiNote(name: string): string | null {
+  const want = name.replace(/\\/g, '/').replace(/^\/+/, '').replace(/\.md$/i, '')
+  const root = (state.root ?? '').replace(/\\/g, '')
+  const files = store.allFiles.value
+  const full = root ? `${root}\\${want.replace(/\//g, '\\')}.md` : ''
+  if (full) {
+    const hit = files.find((f) => f.path === full || f.path.replace(/\//g, '\\') === full)
+    if (hit) return hit.path
+  }
+  const base = want.slice(want.lastIndexOf('/') + 1).toLowerCase()
+  const sameBase = files.filter((f) => f.name.replace(/\.md$/i, '').toLowerCase() === base)
+  return sameBase.length === 1 ? sameBase[0].path : null
+}
+
+/** 双链指向的那篇存不存在，要等 DOM 挂上去才好判断（参数带不过去，见 transformWikiLinks）。
+    找不到的标成虚线并给 title：链接照样写着名字，但它这会儿指向空处 ——
+    让人在按下去之前就知道，而不是按了之后莫名其妙什么都没发生。 */
+function markWikiLinks(pane: HTMLElement) {
+  for (const el of Array.from(pane.querySelectorAll<HTMLElement>('.pv-wlink, .pv-embed'))) {
+    const note = el.dataset.note
+    if (!note) continue
+    const missing = !resolveWikiNote(note)
+    el.classList.toggle('is-missing', missing)
+    if (missing) el.title = `工作区里还没有「${note}」这篇笔记`
+    else el.removeAttribute('title')
+  }
+}
+
+/** 在预览里点双链 / 嵌入卡 → 打开那一篇 */
+function onPreviewClick(e: MouseEvent) {
+  const el = (e.target as HTMLElement | null)?.closest?.('.pv-wlink, .pv-embed') as HTMLElement | null
+  if (!el) return
+  const note = el.dataset.note
+  if (!note) return
+  e.preventDefault()
+  const target = resolveWikiNote(note)
+  if (!target) {
+    window.dispatchEvent(
+      new CustomEvent('nota:toast', { detail: `没有找到笔记「${note}」` }),
+    )
+    return
+  }
+  void store.openNote(target)
 }
 
 
@@ -1005,10 +1070,10 @@ function runSlashFormat(id: SlashCommandId, v: EditorView) {
     case 'quote': toolbarBlockPrefix(v, 'quote'); break
     // 链接与引用
     case 'link': toolbarLink(v); break
-    case 'wikiLink': toolbarWrap(v, '[[', ']]'); break
-    // 嵌入要挑具体哪一篇，光打一对 ![[]] 还得手动填名字，直接弹选择器
-    case 'noteEmbed': embedOpen.value = true; break
-    case 'blockReference': toolbarWrap(v, '[[#^', ']]'); break
+    // 三种「指向另一篇」的写法都弹选择器：除了 noteEmbed，斜杠菜单里也有它们
+    case 'wikiLink': openNotePicker('link'); break
+    case 'noteEmbed': openNotePicker('embed'); break
+    case 'blockReference': openNotePicker('block'); break
     case 'footnote': toolbarFootnote(v); break
     case 'image': toolbarImage(v); break
     // 笔记
@@ -1424,6 +1489,23 @@ watch(
 )
 
 /**
+ * 换主题时重排预览。
+ *
+ * 界面那层换个 `data-theme` 就跟着变了，可**已经画出来的图表是烙 SVG 里的**：
+ * mermaid 的配色在 `render()` 那一刻就写死进了那一堆 `fill="rgb(...)"`，
+ * 之后 CSS 变量再怎么动都追不回来。于是切到深色之后正文是暗的、
+ * 图上的底色还停在浅色那一档，看着像别的软件里贴进来的一块。
+ *
+ * 所以要重画一遍，而不是把它交给 CSS。
+ */
+watch(
+  () => state.theme,
+  () => {
+    if (showPreview.value) void render()
+  },
+)
+
+/**
  * draft 是内容的唯一真相：它一变就把编辑器对齐过去。
  *
  * 只盯 activePath 是不够的——openNote 是「先读盘再赋值」，读盘那一下是异步的，
@@ -1594,7 +1676,7 @@ defineExpose({ getView: () => view })
       v-if="showEditor"
       :get-view="() => view"
       @toast="onToolbarToast"
-      @embed="embedOpen = true"
+      @pick-note="openNotePicker"
       @find="openFind"
     />
 
@@ -1707,16 +1789,17 @@ defineExpose({ getView: () => view })
         <div
           ref="previewRef"
           class="preview md-body"
+          @click="onPreviewClick"
           v-html="html"
         />
         <!-- 大纲已经挪到中间那一列的「大纲」页签里，右边不再重复出一份 -->
       </div>
 
       <NotePickerDialog
-        :open="embedOpen"
-        title="嵌入笔记"
-        @pick="embedNote"
-        @close="embedOpen = false"
+        :open="pickerOpen"
+        :mode="pickerMode"
+        @pick="insertNoteRef"
+        @close="pickerOpen = false"
       />
 
       <!-- 右键菜单：挂在 body 上，不受编辑区滚动与裁剪影响 -->

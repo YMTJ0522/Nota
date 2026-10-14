@@ -76,8 +76,10 @@ watch(
     iconFor.value = null
     // 每次开都从外面重新取：两次打开之间这一篇可能已经被别处改过
     mine.value = [...(props.tags ?? [])]
-    // 默认停在标签页：图标挑一次能用很久，标签才是隔三差五要动的东西
-    pane.value = 'tag'
+    // 默认停在标签页：图标挑一次能用很久，标签才是隔三差五要动的东西。
+    // 文件夹没有标签页可停 —— 硬停在那一页的话，眼前是空的搜索框和空列表，
+    // 图标那一片压根没渲染出来，看着就像「点了更换图标什么都没发生」。
+    pane.value = hasTags.value ? 'tag' : 'icon'
     await nextTick()
     searchInput.value?.focus()
   },
@@ -154,13 +156,15 @@ function onKey(e: KeyboardEvent) {
 <template>
   <Teleport to="body">
     <div v-if="open" class="ip-mask" @click.self="onClose" @keydown="onKey">
-      <div class="ip" role="dialog" aria-modal="true" aria-label="标记">
+      <div class="ip" role="dialog" aria-modal="true" :aria-label="hasTags ? '标记' : '更换图标'">
         <header class="ip-head">
           <span class="ip-ic">
             <Folder v-if="type === 'dir'" :size="14" :stroke-width="1.9" />
             <FileText v-else :size="14" :stroke-width="1.9" />
           </span>
-          <span class="ip-title">标记</span>
+          <!-- 标题跟着「这一次能改什么」走。文件夹叫「标记」名不副实：
+               点的是右键菜单里的「更换图标」，弹出来却写「标记」，人会对不上账。 -->
+          <span class="ip-title">{{ hasTags ? '标记' : '更换图标' }}</span>
           <span class="ip-name">{{ name }}</span>
           <button class="ip-x" title="关闭" @click="onClose">
             <X :size="15" :stroke-width="1.9" />
@@ -178,8 +182,8 @@ function onKey(e: KeyboardEvent) {
           </button>
         </div>
 
-        <!-- ── 标签页 ── -->
-        <div v-if="pane === 'tag'" class="ip-pane">
+        <!-- ── 标签页（只有笔记有） ── -->
+        <div v-if="pane === 'tag' && hasTags" class="ip-pane">
           <label class="ip-search ip-search-row">
             <Search :size="12" :stroke-width="2" />
             <input

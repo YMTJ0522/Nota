@@ -31,7 +31,6 @@ import {
 } from 'lucide-vue-next'
 import {
   toolbarInline,
-  toolbarWrap,
   toolbarInlineCode,
   toolbarBlockPrefix,
   toolbarHeading,
@@ -55,12 +54,15 @@ import {
   toolbarFrontMatter,
   pickImageAndInsert,
 } from '@/editor/toolbar-commands'
+import type { PickMode } from '@/components/NotePickerDialog.vue'
 
 const props = defineProps<{ getView: () => EditorView | null }>()
 const emit = defineEmits<{
   (e: 'toast', text: string): void
-  /** 笔记嵌入：要弹选择器，这件事编辑器才知道怎么做，交给外层 */
-  (e: 'embed'): void
+  /** 插入一段指向别的笔记的写法（笔记嵌入 / 双链 / 块引用）。
+      要弹选择器，这件事编辑器才知道怎么做，交给外层。
+      mode 决定语法，见 NotePickerDialog 的 PickMode。 */
+  (e: 'pickNote', mode: PickMode): void
   /** 查找：面板画在编辑区里（外层知道滚动容器在哪），工具栏只负责喊一声 */
   (e: 'find'): void
 }>()
@@ -217,10 +219,15 @@ function pick(fn: (view: EditorView) => void) {
   run(fn)
 }
 
-/** 嵌入要挑具体哪一篇，光打一对 ![[]] 还得手填名字，直接让外层弹选择器 */
-function pickEmbed() {
+/**
+ * 三种「指向另一篇」的写法都走同一个选择器 ——
+ * 光让编辑器插入一对空的 `[[]]` 等于把「这篇叫什么名字」扔回给人，
+ * 而名字在工作区里常常重名（两个文件夹各有一篇 README）。
+ * 这么做和笔记嵌入的手感完全一致：弹出来选择，选完直接成句。
+ */
+function pickNote(mode: PickMode) {
   close()
-  emit('embed')
+  emit('pickNote', mode)
 }
 
 function onDocPointer(e: PointerEvent) {
@@ -432,13 +439,13 @@ function insertTable(rows: number, cols: number) {
             <span>链接</span><span class="kbd">[]()</span>
           </button>
           <span class="tb-sep-h n-menu-sep" />
-          <button class="tb-item n-menu-item" @click="pick((v) => toolbarWrap(v, '[[', ']]'))">
+          <button class="tb-item n-menu-item" @click="pickNote('link')">
             <span>双链笔记</span><span class="kbd">[[ ]]</span>
           </button>
-          <button class="tb-item n-menu-item" @click="pickEmbed">
+          <button class="tb-item n-menu-item" @click="pickNote('embed')">
             <span>笔记嵌入</span><span class="kbd">![[ ]]</span>
           </button>
-          <button class="tb-item n-menu-item" @click="pick((v) => toolbarWrap(v, '[[#^', ']]'))">
+          <button class="tb-item n-menu-item" @click="pickNote('block')">
             <span>块引用</span><span class="kbd">[[#^ ]]</span>
           </button>
           <span class="tb-sep-h n-menu-sep" />

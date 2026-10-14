@@ -572,6 +572,10 @@ function decorateHeadings(html: string): { html: string; headings: HeadingItem[]
 /** 按顺序跑完所有预览增强，并顺带产出目录数据 */
 export function enhancePreview(html: string): { html: string; headings: HeadingItem[] } {
   let out = html
+  // 脚注的第一步必须最早：它要把 `[^1]: …` 那几段从正文里摘出来挪到文末，
+  // 晚一步的话那些段落已经被 tabs / details 当成自己的内容包走了。
+  const { html: fnOut, notes } = collectFootnotes(out)
+  out = fnOut
   out = transformCallouts(out)
   // tabs 必须先于 details：tabs 收尾是 4 个冒号、details 是 3 个，
   // 先把 tabs 整块替换成 <div class="pv-tabs">，details 才不会把它里面的
@@ -582,31 +586,223 @@ export function enhancePreview(html: string): { html: string; headings: HeadingI
   // 行内改写要在 mermaid 还原成容器之前做：那时候图表源码还在 <pre><code> 里，
   // protectCode 能挡住它，不会把 mermaid 里的 $ 或 == 当成公式和高亮。
   out = transformMark(out)
-  out = transformEmbeds(out)
+  out = transformWikiLinks(out)
   out = transformMath(out)
   // mermaid 必须先走：它要把 <pre><code> 还原成图表容器，
   // 晚一步的话会被下面的代码块包装当成普通代码框起来。
   out = transformMermaid(out)
+  out = enhanceCodeBlocks(out)
+  out = transformHashtags(out)
+  out = transformBlockIds(out)
+  out = appendFootnotes(out, notes)
   out = transformTables(out)
   return decorateHeadings(out)
 }
 
-/**
- * 笔记嵌入 `![[笔记名]]`。
- *
- * marked 不认这个写法，会原样输出成一串方括号文本。这里补成一个卡片：
- * 真正意义上的「把另一篇的正文拉进来渲染」要等双链那一版，
- * 现在先把它的样子和别的行内文本区分开，免得看着像没解析成功的乱码。
- */
-function transformEmbeds(src: string): string {
-  return protectCode(src, (s) =>
-    s.replace(/!\[\[([^\]\n]+)\]\]/g, (_w, name: string) => {
-      const label = escapeHtml(name.trim())
+/* ── 脚注 ──
+   marked 不带脚注（那是 GitHub 的 GFM 方言之一，得另装扩展）。
+   以前这里什么都没做，于是工具栏插出来的 `[^1]` 在预览里就是一串中括号，
+   文末那行 `[^1]: 说明` 也原样躺着——写了脚注看不见，等于没写。
+
+   两步走：先把定义段从正文里摘出来（同时把正文里的 `[^1]` 换成一个上标），
+   再统一append 到文末。分两步是因为②要落在所有富块包完之后——
+   否则 `::: details` 这类块会把脚注列表当成自己的一段内容卷进去。 */
+interface Footnote {
+  id: string
+  html: string
+}
+
+const FOOTNOTE_DEF_RE = /<p>\s*\[\^([^\]\n]+)\]:\s*([\s\S]*?)<\/p>/g
+
+function collectFootnotes(src: string): { html: string; notes: Footnote[] } {
+  const notes: Footnote[] = []
+  let html = src.replace(FOOTNOTE_DEF_RE, (_w, id: string, body: string) => {
+    notes.push({ id: id.trim(), html: body.trim() })
+    // 定义段要整段挪走：留在原地的话正文里会凭空多出一段「脚注说明」，
+    // 而它本该在文末那张列表里。
+    return ''
+  })
+  if (notes.length === 0) return { html: src, notes }
+  // 正文里那些 `[^1]`：只在标签之外的文字上改，`<a href>` 属性里的不改
+  const ids = new Set(notes.map((n) => n.id))
+  html = mapHtmlText(html, (s) =>
+    s.replace(/\[\^([^\]\n]+)\]/g, (whole, id: string) => {
+      if (!ids.has(id.trim())) return whole
+      const slug = `fn-${encodeURIComponent(id.trim())}`
       return (
-        `<span class="pv-embed" data-note="${escapeAttr(name.trim())}">` +
-        `<span class="pv-embed-ico">${'\u{1F4C4}'}</span>` +
-        `<span class="pv-embed-name">${label}</span>` +
-        `</span>`
+        `<sup class="pv-fnref" id="fnref-${slug}">` +
+        `<a href="#${slug}">${escapeHtml(id.trim())}</a></sup>`
+      )
+    }),
+  )
+  return { html, notes }
+}
+
+function appendFootnotes(src: string, notes: Footnote[]): string {
+  if (notes.length === 0) return src
+  const rows = notes
+    .map((n) => {
+      const slug = `fn-${encodeURIComponent(n.id)}`
+      const back =
+        `<a href="#fnref-${slug}" class="pv-fnback" aria-label="回到正文">↩</a>`
+      return (
+        `<li id="${slug}" class="pv-fn"><span class="pv-fn-n">${escapeHtml(n.id)}</span>` +
+        `<span class="pv-fn-body">${n.html}${back}</span></li>`
+      )
+    })
+    .join('')
+  return `${src}<section class="footnotes"><ol class="pv-fn-list">${rows}</ol></section>`
+}
+
+/* ── 高级代码块 ──
+   工具栏那一项插出来的是 ```text title="示例" line-numbers {2}``，
+   marked 只认第一个词当语言，其余全丢（这一步在 markdown.ts 里已经把整串
+   信息挂到 `data-info` 上带过来了）。这里把它兑现成三样东西：
+     · 标题 —— 块顶上一条细caption，说明这段是什么；
+     · 行号 —— 用来指着某一行说话（「看第 12 行」），装在左边一道窄轨里；
+     · 高亮行 —— `{2}` / `{2,4-6}`，把要人看的几行点出来。
+   三者都可缺省：没写就不画，不写一个空标题条在那里占位。 */
+function enhanceCodeBlocks(src: string): string {
+  return src.replace(
+    /<pre\b([^>]*)\bdata-info="([^"]*)"([^>]*)>([\s\S]*?)<\/pre>/g,
+    (whole, preA: string, rawInfo: string, preB: string, inner: string) => {
+      const info = decodeEntities(rawInfo).trim()
+      if (!info) return whole
+      const lang = info.split(/\s+/)[0] ?? ''
+      const title = /title\s*=\s*"([^"]*)"|title\s*=\s*'([^']*)'/.exec(info)
+      const caption = (title?.[1] ?? title?.[2] ?? '').trim()
+      const numbered = /\bline-?numbers\b/i.test(info)
+      const hl = /\{([\d,\s-]+)\}/.exec(info)
+      const lines = hl ? parseLineSpec(hl[1]) : null
+
+      let body = inner
+      if (lines && lines.size > 0) {
+        let at = 0
+        body = body.replace(/<span class="pv-line">/g, (tag) => {
+          at += 1
+          return lines.has(at) ? `<span class="pv-line is-hl">` : tag
+        })
+      }
+
+      // 注意前面那个空格不能省：属性串是直接拼在 `<pre` 后面的，
+      // trim 掉了 `<pre` 和 `class` 之间那道缝就变成 `<preclass=…`，
+      // 浏览器会当成一个叫 preclass 的陌生标签，整个代码块就没了。
+      const attrs =
+        ` ${preA}${preB}`.replace(/\s+/g, ' ') + (numbered ? ' data-line-numbers="1"' : '')
+      const head = caption
+        ? `<figcaption class="pv-code-title">${escapeHtml(caption)}</figcaption>`
+        : ''
+      return `<figure class="pv-code-fig" data-lang="${escapeAttr(lang)}">${head}<pre${attrs}>${body}</pre></figure>`
+    },
+  )
+}
+
+/** 把 `2,4-6` 这样的写法展开成行号集合 */
+function parseLineSpec(spec: string): Set<number> {
+  const set = new Set<number>()
+  for (const part of spec.split(',')) {
+    const m = /^\s*(\d+)(?:\s*-\s*(\d+))?\s*$/.exec(part)
+    if (!m) continue
+    const from = Number(m[1])
+    const to = m[2] ? Number(m[2]) : from
+    if (to < from) continue
+    for (let i = from; i <= to && i <= 9999; i += 1) set.add(i)
+  }
+  return set
+}
+
+/* ── 行内标签 `#标签` ──
+   工具栏「插入标签」写进正文的就是一个 `#` 加一串字。
+   不渲染的话它跟普通正文没区别，人看不出自己刚才那一下生效了没有。
+   这里给它一枚chip——注意它只是**长得像标签**，真正的标签在 frontmatter 里
+   （侧栏「标签」区读的是那儿）；这颗chip是正文中联机成提到的记号，不参与筛选。
+
+   两条边界：`# 后面要跟字`（单独的 `#` 是标点）；
+   改写只在标签之外的文字上进行（`<a href="#x">` 里的那是地址，不是标签）。 */
+function transformHashtags(src: string): string {
+  return mapHtmlText(src, (s) =>
+    s.replace(
+      /(^|[\s(（【「，。：；！？、])#([\p{L}\p{N}_][\p{L}\p{N}_/-]*)/gu,
+      (_w, lead: string, tag: string) => `${lead}<span class="pv-tag">#${escapeHtml(tag)}</span>`,
+    ),
+  )
+}
+
+/* ── 块 ID `^名称` ──
+   「块 ID」菜单项是给一块内容起个名字，好让别处的 `[[#^名称]]` 指过来。
+   不渲染的话它只是正文末尾一枚插入符，看不出那里挂着一个名字。
+   渲染成一枚淡淡的chip，同时给 `id`，将来跳转定位有地方可去。
+
+   `^` 前面必须是白或是行首 —— `x^2` 是数学里的乘幂，不是块名。 */
+function transformBlockIds(src: string): string {
+  return mapHtmlText(src, (s) =>
+    s.replace(
+      /(^|\s)\^([A-Za-z0-9_\u4e00-\u9fa5][\w\u4e00-\u9fa5-]{0,31})/g,
+      (_w, lead: string, id: string) =>
+        `${lead}<span class="pv-bid" id="^${escapeAttr(id)}">^${escapeHtml(id)}</span>`,
+    ),
+  )
+}
+
+/** 只在「标签之外的文字」上做改写：`<a href="#x">` 属性里的 `#x` 是地址，
+    代码块里写的东西是在讲语法。两者都不该被这些变换当成正文改写。 */
+function mapHtmlText(src: string, fn: (s: string) => string): string {
+  return protectCode(src, (s) =>
+    s
+      .split(/(<[^>]*>)/g)
+      .map((part, i) => (i % 2 === 1 ? part : fn(part)))
+      .join(''),
+  )
+}
+
+/**
+ * 指向另一篇笔记的三种写法，统一在这里变成 DOM。
+ *
+ *   `[[笔记名]]`        —— 双链：一枚链接，点了跳过去
+ *   `[[笔记名#^块ID]]`  —— 块引用：指向那一篇里的某个块
+ *   `![[笔记名]]`       —— 嵌入：把那一篇的正文拉进来显示
+ *   `[[#^块ID]]`        —— 本篇里的块（省掉笔记名）
+ *
+ * marked 不认任何一种，会原样输出成一串方括号。以前只处理了嵌入那一种，
+ * 于是「双链」在预览里是一串没人管的中括号，看着像没解析成功。
+ *
+ * 为什么都要经过 `protectCode`：代码块里写 `[[]]` 是在讲语法，不是要链接。
+ *
+ * 为什么解析出的名字先原样挂到 `data-note` 上、渲染成再看存不存在：
+ * 这里是纯粹的字符串变换，拿不到工作区里有哪些笔记。存不存在由编辑区
+ * 在 DOM 挂上去之后补一个 class（见 markWikiLinks）——那样本文还是纯函数，
+ * 导出 / 阅读模式都不需要额外的入参。
+ */
+function transformWikiLinks(src: string): string {
+  return protectCode(src, (s) =>
+    s.replace(/(!?)\[\[([^\]\n]*)\]\]/g, (whole, bang: string, inner: string) => {
+      const body = inner.trim()
+      if (!body) return whole
+      const at = body.indexOf('#')
+      const note = (at >= 0 ? body.slice(0, at) : body).trim()
+      const frag = at >= 0 ? body.slice(at + 1).trim() : ''
+      const isBlock = frag.startsWith('^')
+      const blockId = isBlock ? frag.slice(1) : ''
+      const label = note || (isBlock ? `^${blockId}` : body)
+      const data =
+        (note ? ` data-note="${escapeAttr(note)}"` : '') +
+        (blockId ? ` data-block="${escapeAttr(blockId)}"` : '')
+      const tag = isBlock ? '块' : ''
+
+      if (bang) {
+        return (
+          `<span class="pv-embed"${data}>` +
+          `<span class="pv-embed-ico">${'\u{1F4C4}'}</span>` +
+          `<span class="pv-embed-name">${escapeHtml(label)}</span>` +
+          (isBlock ? `<span class="pv-embed-tag">${tag}</span>` : '') +
+          `</span>`
+        )
+      }
+      return (
+        `<a class="pv-wlink"${data} role="link">` +
+        (isBlock ? `<span class="pv-wlink-tag">${tag}</span>` : '') +
+        `<span>${escapeHtml(label)}</span>` +
+        `</a>`
       )
     }),
   )
@@ -626,6 +822,173 @@ let mermaidMod: { initialize: Function; render: Function } | null = null
  * 会整块丢掉 —— 导出的 .doc 里图表直接消失。所以那一路先光栅化成 PNG
  * 再以 `<img src="data:...">` 放回去，Word 认图片。
  */
+/* ── 图表配色 ──
+   mermaid 默认的 default 主题是自己的一套蓝紫灰，跟界面的陶土纸色系
+   完全不是一家人：同一屏里正文写在暖底上、图表却是冷蓝细线，
+   深色模式下更是白生生一片，像从别的软件里贴进来的。
+
+   所以这里一律走 `theme: 'base'` + 自己给 themeVariables，颜色全部从
+   CSS 变量里读：强调色换6套色板中的任何一套、或者切到深色，图表跟着变。
+   这是别人也能够维修的颜色表 —— 不需要在这里重新维护一份十六进制常数。 */
+
+/** 把 `rgb(255 255 255)` / `#fff` 都拆成三个 0–255 的数；读不出来就当黑 */
+function parseColor(input: string): [number, number, number] {
+  const s = input.trim()
+  const hex = /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.exec(s)
+  if (hex) {
+    const h = hex[1]
+    const full = h.length === 3 ? h.split('').map((c) => c + c).join('') : h
+    return [
+      parseInt(full.slice(0, 2), 16),
+      parseInt(full.slice(2, 4), 16),
+      parseInt(full.slice(4, 6), 16),
+    ]
+  }
+  const nums = s.match(/-?\d+(\.\d+)?/g)
+  if (nums && nums.length >= 3) return [Number(nums[0]), Number(nums[1]), Number(nums[2])]
+  return [0, 0, 0]
+}
+
+/**
+ * 往底色里兑一点：`ratio` 是 `color` 占的比例，兑出来的是「淡得几乎看不见但有」的那种底。
+ *
+ * 输出写成十六进制而不是 `rgb(r g b)`：mermaid 内部会对主题色做二次加工
+ * （`darken()` / `lighten()` 那一类），它自己的颜色解析器只认 `#rrggbb` 和
+ * 逗号分隔的 `rgb(r, g, b)`。喂它空格分隔的现代写法，它解析失败之后不会报错，
+ * 而是默默退回一个深色，于是流程图里的节点全成了墨绿色的方块。
+ * —— 饼图那几张没受影响，是因为那些色它只当字符串直接填，不做加工。
+ */
+function mix(color: string, base: string, ratio: number): string {
+  const [r1, g1, b1] = parseColor(color)
+  const [r2, g2, b2] = parseColor(base)
+  const m = (a: number, b: number) => Math.round(a * ratio + b * (1 - ratio)).toString(16).padStart(2, '0')
+  return `#${m(r1, r2)}${m(g1, g2)}${m(b1, b2)}`
+}
+
+function readVar(name: string, fallback: string): string {
+  if (typeof document === 'undefined') return fallback
+  return getComputedStyle(document.documentElement).getPropertyValue(name).trim() || fallback
+}
+
+function mermaidThemeVariables(): Record<string, string> {
+  const dark = document.documentElement.getAttribute('data-theme') === 'dark'
+  const bg = readVar('--n-bg', dark ? '#16161a' : '#fbfaf6')
+  const surface = readVar('--n-surface', dark ? '#1c1d21' : '#fffefb')
+  const fg = readVar('--n-fg', dark ? '#eeedea' : '#2a2b28')
+  const fgDim = readVar('--n-fg-dim', dark ? '#a3a19b' : '#8b8880')
+  const line = readVar('--n-line', dark ? '#33343a' : '#e6e2da')
+  const accent = readVar('--n-accent', dark ? '#6fae8f' : '#3f6f5a')
+
+  /* 节点：不是纯 accent 的实色块（那会让整张图变成一片强调色），
+     而是 accent 兑进底淡淡的——形状还在，颜色是「我们家的」。
+     边上屋顶线也用淡深色；文字永远是正文色，深浅两套都读得清。 */
+  const node = mix(accent, bg, 0.16)
+  const nodeHeavy = mix(accent, bg, 0.34)
+  const edge = mix(fgDim, bg, 0.55)
+
+  /* 字体不能写成 `var(--n-font-ui)`：mermaid 把它塞进 SVG 的 font-family
+     属性里，那里没有 CSS 变量这个东西，写什么都认不出来 ——
+     所以这里把算好的那一串字符取出来给它。 */
+  const font = readVar('--n-font-ui', 'system-ui, sans-serif')
+
+  return {
+    /* 通用 */
+    background: 'transparent',
+    fontFamily: font,
+    /* mainBkg 才是流程图节点的底：只给 primaryColor 的话，
+       base 主题会自己从它推一份，推出什么全看它当时的心情 */
+    mainBkg: node,
+    primaryColor: node,
+    primaryTextColor: fg,
+    primaryBorderColor: nodeHeavy,
+    secondaryColor: mix(readVar('--n-info', '#34688f'), bg, 0.18),
+    secondaryTextColor: fg,
+    secondaryBorderColor: mix(readVar('--n-info', '#34688f'), bg, 0.4),
+    tertiaryColor: mix(readVar('--n-violet', '#6a5a9c'), bg, 0.18),
+    tertiaryTextColor: fg,
+    tertiaryBorderColor: mix(readVar('--n-violet', '#6a5a9c'), bg, 0.4),
+    lineColor: edge,
+    textColor: fg,
+    titleColor: fg,
+    /* 流程图：连线标签压在线上，给一层底色才读得出来 */
+    edgeLabelBackground: surface,
+    clusterBkg: mix(accent, bg, 0.05),
+    clusterBorder: mix(accent, bg, 0.28),
+    nodeBorder: nodeHeavy,
+    /* 时序图 */
+    actorBkg: node,
+    actorBorder: nodeHeavy,
+    actorTextColor: fg,
+    actorLineColor: edge,
+    signalColor: edge,
+    signalTextColor: fg,
+    labelBoxBkgColor: surface,
+    labelBoxBorderColor: line,
+    labelTextColor: fg,
+    loopTextColor: fg,
+    noteBkgColor: mix(readVar('--n-mark', '#f6e6a8'), bg, dark ? 0.22 : 0.4),
+    noteTextColor: fg,
+    noteBorderColor: line,
+    /* 类图 / 状态图 / 甘特图 */
+    classText: fg,
+    labelBackground: surface,
+    taskTextLightColor: fg,
+    taskTextColor: fg,
+    taskBkgColor: node,
+    taskBorderColor: nodeHeavy,
+    activeTaskBkgColor: nodeHeavy,
+    activeTaskBorderColor: accent,
+    gridColor: line,
+    sectionBkgColor: mix(accent, bg, 0.05),
+    /* 饼图：一圈用掉应用自己的语义色（蓝/绿/琥珀/紫/红），
+       而不是 mermaid 默认那套看不出关系的彩虹 */
+    pie1: mix(readVar('--n-info', '#34688f'), bg, 0.85),
+    pie2: mix(readVar('--n-ok', '#3f7d52'), bg, 0.85),
+    pie3: mix(readVar('--n-warn', '#9a6b1f'), bg, 0.85),
+    pie4: mix(readVar('--n-violet', '#6a5a9c'), bg, 0.85),
+    pie5: mix(readVar('--n-danger', '#c0503f'), bg, 0.85),
+    pie6: mix(accent, bg, 0.7),
+    pie7: mix(readVar('--n-info', '#34688f'), bg, 0.5),
+    pie8: mix(readVar('--n-ok', '#3f7d52'), bg, 0.5),
+    pieTitleTextSize: '15',
+    pieStrokeColor: surface,
+    pieOuterStrokeColor: line,
+    /* 象限 / Git 图 */
+    quadrant1Fill: mix(readVar('--n-info', '#34688f'), bg, 0.16),
+    quadrant2Fill: mix(readVar('--n-ok', '#3f7d52'), bg, 0.16),
+    quadrant3Fill: mix(readVar('--n-warn', '#9a6b1f'), bg, 0.16),
+    quadrant4Fill: mix(readVar('--n-violet', '#6a5a9c'), bg, 0.16),
+    git0: mix(readVar('--n-danger', '#c0503f'), bg, 0.85),
+    git1: mix(readVar('--n-info', '#34688f'), bg, 0.85),
+    git2: mix(readVar('--n-ok', '#3f7d52'), bg, 0.85),
+    git3: mix(readVar('--n-warn', '#9a6b1f'), bg, 0.85),
+    git4: mix(readVar('--n-violet', '#6a5a9c'), bg, 0.85),
+    gitBranchLabel: mix(accent, bg, 0.16),
+    commitLabelColor: fg,
+    commitLabelBackground: surface,
+  }
+}
+
+/** 上次喂给 mermaid 的是什么主题。读数是对不上桥的： --n-accent 会随色板变，
+    所以要把整份变量序列化之后比 —— 变了才重新 initialize，
+    不然每次渲染（哪怕同一篇笔记反复重排）都要走一遍全局初始化。 */
+let appliedThemeKey = ''
+
+function ensureMermaidTheme() {
+  const vars = mermaidThemeVariables()
+  const key = JSON.stringify(vars)
+  if (key === appliedThemeKey) return
+  mermaidMod?.initialize({
+    startOnLoad: false,
+    securityLevel: 'strict',
+    theme: 'base',
+    themeVariables: vars,
+    flowchart: { curve: 'basis' },
+    fontFamily: vars.fontFamily,
+  })
+  appliedThemeKey = key
+}
+
 export async function renderMermaidInHtml(
   root: HTMLElement,
   opts: { asImage?: boolean } = {},
@@ -638,8 +1001,9 @@ export async function renderMermaidInHtml(
         default: { initialize: Function; render: Function }
       }
       mermaidMod = mod.default
-      mermaidMod.initialize({ startOnLoad: false, securityLevel: 'strict' })
+      appliedThemeKey = ''
     }
+    ensureMermaidTheme()
   } catch {
     return
   }
@@ -782,6 +1146,97 @@ export async function renderMathInHtml(
  */
 export function stripFrontMatter(md: string): string {
   return md.replace(/^---[ \t]*\r?\n[\s\S]*?\r?\n---[ \t]*\r?\n?/, '')
+}
+
+/**
+ * 喂给 marked 之前的三步准备。
+ *
+ * 顺序是这样排的：先拆 frontmatter（它恒在文首，早拿早干净），
+ * 再删隐藏注释，最后**把脚注定义的那个 `[` 转义掉**。
+ *
+ * 最后一步不做不行，而且它是最反直觉的一条：
+ * `[^1]: 说明文字` 在 CommonMark 里**不是一个脚注，而是一条合法的链接引用定义**
+ * —— 中括号里是引用名，冒号后面是地址。marked 会按后者吃掉它，
+ * 于是定义段凭空消失，正文里的 `[^1]` 还顺手变成了一个指向「说明文字」的链接。
+ * 转义之后它只是一段普通文字，脚注就能按我们自己的规则收拢到文末了。
+ */
+export function prepareMarkdown(md: string): string {
+  return escapeFootnoteDefs(stripComments(stripFrontMatter(md)))
+}
+
+/** 脚注定义行：只在围栏外、且行首（允许缩进三格以内）才算 */
+const FOOTNOTE_DEF_LINE = /^[ \t]{0,3}\[\^([^\]\n]+)\]:[ \t]?(.*)$/
+
+function escapeFootnoteDefs(md: string): string {
+  return protectFences(md, (s) =>
+    s
+      .split('\n')
+      .map((line) => {
+        const m = FOOTNOTE_DEF_LINE.exec(line)
+        return m ? `\\[^${m[1]}]: ${m[2]}` : line
+      })
+      .join('\n'),
+  )
+}
+
+/**
+ * 隐藏注释 `%%写给自己看的%%`。
+ *
+ * marked 不认它，会把两个 `%%` 连同中间的字原样排进预览——
+ * 「隐藏」两个字就成了笑话：藏起来的东西正大光明地印在页面上。
+ *
+ * 在 Markdown 这一层删，而不是等 HTML 出来再删：那时候注释已经参与过
+ * 段落合并、标题判定（`%% # 假标题 %%` 会进大纲），再说什么也晚了。
+ *
+ * 代码块里不删：那里是在讲 `%%` 这个写法本身。
+ */
+export function stripComments(md: string): string {
+  return protectFences(md, (s) => s.replace(/%%[\s\S]*?%%/g, ''))
+}
+
+/**
+ * 让 `fn` 只在围栏之外的正文上生效。
+ *
+ * 和 `protectCode` 干的是同一件事，只是一个作用在 HTML 的 `<pre>` 上，
+ * 这个作用在 Markdown 源码的 ``` 围栏上。
+ */
+function protectFences(md: string, fn: (s: string) => string): string {
+  const lines = md.split('\n')
+  const out: string[] = []
+  let inFence = false
+  let fence = ''
+  let buf: string[] = []
+  const flush = () => {
+    if (!buf.length) return
+    out.push((inFence ? buf.join('\n') : fn(buf.join('\n'))))
+    buf = []
+  }
+  for (const line of lines) {
+    const m = /^ {0,3}(`{3,}|~{3,})/.exec(line)
+    if (m) {
+      const mark = m[1]
+      if (!inFence) {
+        // 开栏允许带 info string；关栏只能是纯围栏（CommonMark），
+        // 这条判定跟大纲那边那一处必须一致，否则代码块里的注释会漏出去
+        if (!/^ {0,3}(?:`{3,}|~{3,})[ \t]*$/.test(line)) {
+          flush()
+          inFence = true
+          fence = mark
+          buf.push(line)
+          continue
+        }
+      } else if (mark[0] === fence[0] && mark.length >= fence.length) {
+        buf.push(line)
+        flush()
+        inFence = false
+        fence = ''
+        continue
+      }
+    }
+    buf.push(line)
+  }
+  flush()
+  return out.join('\n')
 }
 
 function escapeHtml(s: string): string {

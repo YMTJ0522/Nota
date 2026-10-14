@@ -25,8 +25,10 @@ export const HORIZONTAL_RULE_CURSOR_OFFSET = 5;
 export const DETAILS_OPEN = "::: details []";
 export const DETAILS_CLOSE = ":::";
 
-/** Advanced code fence info string: language + title + line numbers + highlight. */
-export const ADVANCED_CODE_INFO = 'text title="" line-numbers {1}'
+/** Advanced code fence info string: language + title + line numbers + highlight.
+    标题给一个真名字而不是一对空引号：让它插出来当场就看得见效果，
+    人也就知道这一项跟普通「代码块」差在哪儿。 */
+export const ADVANCED_CODE_INFO = 'text title="示例脚本" line-numbers {2}'
 
 /* ── 图表模板 ──
    全部走 Mermaid：预览里由 preview-rich.ts 动态拉起 mermaid 渲染成 SVG。

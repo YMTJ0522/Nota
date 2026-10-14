@@ -185,10 +185,18 @@ export async function getMarked() {
   markedMod.marked.use({
     renderer: {
       code({ text, lang, escaped }) {
-        const first = (lang ?? '').trim().split(/\s+/)[0] ?? ''
+        const rawInfo = (lang ?? '').trim()
+        const first = rawInfo.split(/\s+/)[0] ?? ''
         const cls = first ? ` class="language-${escapeAttr(first)}"` : ''
         const body = escaped ? text : escapeCode(text)
-        return `<pre class="pv-code-pre"><code${cls}>${body}</code></pre>\n`
+        /* 整条 info 串要留着（`js title="示例" line-numbers {2}`）：
+           语言只是第一个词，后面那些是「高级代码块」的开关。
+           以前只取第一个词，于是工具栏插出来的高级代码块除了语言，
+           标题、行号全丢了 —— 看着跟普通代码块一模一样。 */
+        return (
+          `<pre class="pv-code-pre" data-info="${escapeAttr(rawInfo)}">` +
+          `<code${cls}>${body}</code></pre>\n`
+        )
       },
     },
   })

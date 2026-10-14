@@ -1,19 +1,21 @@
 /**
- * round21 —— 资料栏收 via 窄轨
+ * round21 —— 资料栏常驻
  *
- * 上一版（2.2.8）把资料栏做成常驻，理由是「两枚并排的收起钮不好看」。
- * 这条理由只说明了一半：不好看是因为它们并排，不是因为有两个。
- * 所以这一版把开关还回来，但让它长在资料栏**自己**的顶行；
- * 收起后资料栏缩成一条窄轨，展开钮就长在窄轨上。
- * 于是两栏各有一枚、各管自己，永远不会撞进同一行。
+ * 这一栏来回改过三回：最初可收（Ctrl+Shift+\），2.2.8 改成常驻，
+ * 2.3.0 又把收放还回来（窄轨方案），2.4.0 收到结论——它就不该能收。
+ *
+ * 理由不是「按钮好不好看」：笔记列表、大纲、引用、AI 全住在这一列上，
+ * 收掉它等于整个应用只剩一个编辑器，而「只想要一个编辑器」的用法在 Nota 里
+ * 不存在（那要么是阅读模式，要么是别的软件）。真正属于「偶尔看一眼」的是
+ * 侧栏（工作区导航），所以它保留收放，这一列不保留。
  *
  * 断言：
- * 1. 资料栏开着时，它自己顶行有一枚收起钮，侧栏顶行只有它自己那一枚
- * 2. 点收起 → 资料栏变成窄轨，编辑区变宽（宽度真的还给了正文）
- * 3. 窄轨上有且只有一枚展开钮，侧栏顶行仍然只有一枚
- * 4. 点展开 → 回来，宽度还原
- * 5. 状态写进 localStorage：重启不会丢
- * 6. 收着的时候点侧栏「AI 编写」这类入口，要顺手把它拉开
+ * 1. 默认开着，宽度正常
+ * 2. 全页一枚「收放资料栏」的钮都没有（也不可能有窄轨）
+ * 3. 旧版本写进 localStorage 的 nota-column-open='0' 必须被忽略
+ * 4. Ctrl+Shift+\ 不再有反应（旧快捷键彻底拆除）
+ * 5. Ctrl+\ 只收侧边栏，资料栏一动不动
+ * 6. 从侧栏点「AI 编写」仍然好使，资料栏还在原地
  * 7. 没有 console 报错
  */
 import { launch } from './cdp-harness.mjs'
@@ -30,31 +32,25 @@ const ok = (name, pass, data) => {
 const INJECT = makeInject({ notes: makeNotes(), tree: makeTree() })
 
 await send('Page.navigate', { url: `http://127.0.0.1:${PORT}/` })
-await sleep(1500)
+await sleep(1200)
 await evaluate(INJECT)
 await evaluate(`document.querySelector('.cta')?.click()`)
 await sleep(1200)
 await evaluate(INJECT)
 await sleep(700)
-await evaluate(`document.querySelector('.col-tab[data-view="notes"]')?.click()`)
-await sleep(600)
 
-/** 三栏宽度 + 各处按钮数量，一次量齐 */
+/** 一眼把「这一列还在不在、有没有收口」量齐 */
 const SHAPE = `(() => {
   var q = (s) => document.querySelector(s)
   var col = q('.col')
-  var sideHead = q('.panel .head-actions')
-  var main = q('.main')
   return JSON.stringify({
-    folded: !!col?.classList.contains('folded'),
+    hasCol: !!col,
     colW: col ? Math.round(col.getBoundingClientRect().width) : -1,
-    mainW: main ? Math.round(main.getBoundingClientRect().width) : -1,
-    sideBtns: sideHead ? sideHead.querySelectorAll('button').length : -1,
-    colToggleInRail: !!q('.col-fold [data-role="column-toggle"]'),
-    colToggleInHead: !!q('.col-flow [data-role="column-toggle"]'),
-    railBtns: document.querySelectorAll('.col-fold button').length,
-    sidebarToggleLeft: !!q('.panel .head-actions [data-role="sidebar-toggle"]'),
-    stored: localStorage.getItem('nota-column-open'),
+    hasTabs: !!q('.col-flow .col-tab'),
+    sideBtns: q('.panel .head-actions') ? q('.panel .head-actions').querySelectorAll('button').length : -1,
+    sidebarToggle: !!q('.panel .head-actions [data-role="sidebar-toggle"]'),
+    rail: document.querySelectorAll('.col-fold').length,
+    panelCollapsed: !!q('.panel.collapsed'),
   })
 })()`
 
@@ -62,61 +58,101 @@ async function shape() {
   return JSON.parse(await evaluate(SHAPE))
 }
 
-/* ── 1. 展开态：资料栏自己带一枚，侧栏只有它自己那一枚 ── */
-const open = await shape()
+/** 全页「收放资料栏」的钮总数。它应该是恒零的。 */
+async function toggleCount() {
+  return Number(await evaluate(`document.querySelectorAll('[data-role="column-toggle"]').length`))
+}
+
+/* ── 1. 默认开着 ── */
+const first = await shape()
 ok(
-  '1.资料栏开着：收起钮在它自己顶行，侧栏顶行只有「收起侧边栏」一枚',
-  !open.folded && open.colToggleInHead && !open.colToggleInRail && open.sideBtns === 1,
-  open,
+  '1.资料栏默认开着：准备渲染、宽度足够，三个页签都在',
+  first.hasCol && first.colW >= 200 && first.hasTabs,
+  first,
 )
 
-/* ── 2. 收起 → 变窄轨，宽度真的给了正文 ── */
-await evaluate(`document.querySelector('.col-flow [data-role="column-toggle"]')?.click()`)
-await sleep(500)
-const folded = await shape()
+/* ── 2. 全页零收放钮 ── */
+const toggles = await toggleCount()
 ok(
-  '2.点收起：资料栏缩成窄轨，正文变宽（省下的宽度真的还给它了）',
-  folded.folded && folded.colW < 60 && folded.mainW > open.mainW + 150,
-  { colBefore: open.colW, colNow: folded.colW, mainBefore: open.mainW, mainNow: folded.mainW },
+  '2.界面上一枚「收放资料栏」都没有（没有窄轨，也没有入口藏在别处）',
+  toggles === 0 && first.rail === 0,
+  { toggles, rail: first.rail },
 )
 
-/* ── 3. 窄轨上只有一枚展开钮，侧栏没被塞第二枚 ── */
-ok(
-  '3.窄轨上有且只有一枚展开钮，侧栏顶行仍然只有一枚（不再并排）',
-  folded.colToggleInRail && folded.railBtns === 1 && folded.sideBtns === 1 && folded.sidebarToggleLeft,
-  folded,
-)
-
-/* ── 4. 状态要能带过重启 ── */
-ok('4.收起状态写进了 localStorage', folded.stored === '0', { stored: folded.stored })
-
-/* ── 5. 点回展开 ── */
-await evaluate(`document.querySelector('.col-fold [data-role="column-toggle"]')?.click()`)
-await sleep(500)
-const back = await shape()
-ok(
-  '5.点展开：资料栏回来，正文宽度让回去',
-  !back.folded && Math.abs(back.colW - open.colW) <= 2 && Math.abs(back.mainW - open.mainW) <= 2,
-  { colW: back.colW, want: open.colW, mainW: back.mainW, wantMain: open.mainW },
-)
-
-/* ── 6. 收着的时候，从侧栏点入口要能把正文区那一列拉开 ── */
-await evaluate(`document.querySelector('.col-flow [data-role="column-toggle"]')?.click()`)
-await sleep(450)
-const beforeAi = await shape()
-/* AI 入口在侧栏底部 */
-await evaluate(`(() => {
-  var b = [...document.querySelectorAll('.panel .nav-item')]
-    .find(function (x) { return (x.textContent || '').indexOf('AI') >= 0; });
-  b && b.click();
-  void 0;
-})()`)
+/* ── 3. 旧数据不能把这一列带走 ──
+   2.3.0 那版会写 localStorage['nota-column-open']。用户升级上来时
+   里面留着 '0'（当年亲手收过），新版本必须无视它——
+   否则升级之后第一眼就是「我的资料栏呢」。 */
+await evaluate(`localStorage.setItem('nota-column-open', '0')`)
+await send('Page.navigate', { url: `http://127.0.0.1:${PORT}/` })
+await sleep(1000)
+await evaluate(INJECT)
+await evaluate(`document.querySelector('.cta')?.click()`)
+await sleep(1200)
+await evaluate(INJECT)
 await sleep(700)
-const afterAi = await shape()
+const afterOld = await shape()
 ok(
-  '6.收着的时候点侧栏入口（AI 编写）会顺手把资料栏拉开',
-  beforeAi.folded && !afterAi.folded,
-  { before: beforeAi.folded, after: afterAi.folded },
+  '3.旧版本留下的 nota-column-open=0 被忽略：资料栏照样开着',
+  afterOld.hasCol && afterOld.colW >= 200 && (await toggleCount()) === 0,
+  afterOld,
+)
+
+/* ── 4. Ctrl+Shift+\ 已经拆掉 ── */
+const widthBefore = afterOld.colW
+await evaluate(`
+  window.dispatchEvent(new KeyboardEvent('keydown', { key: '|', code: 'Backslash', ctrlKey: true, shiftKey: true, bubbles: true }));
+  void 0;
+`)
+await sleep(500)
+const afterKey = await shape()
+ok(
+  '4.Ctrl+Shift+\\ 不再有反应（资料栏既没收也没跑）',
+  afterKey.hasCol && Math.abs(afterKey.colW - widthBefore) <= 2,
+  { before: widthBefore, after: afterKey.colW },
+)
+
+/* ── 5. Ctrl+\ 只管侧边栏 ── */
+await evaluate(`
+  window.dispatchEvent(new KeyboardEvent('keydown', { key: '\\\\', code: 'Backslash', ctrlKey: true, bubbles: true }));
+  void 0;
+`)
+await sleep(600)
+const afterSide = await shape()
+ok(
+  '5.Ctrl+\\ 收的是侧边栏，资料栏一动不动',
+  afterSide.panelCollapsed && afterSide.hasCol && Math.abs(afterSide.colW - widthBefore) <= 2,
+  { sideCollapsed: afterSide.panelCollapsed, colW: afterSide.colW },
+)
+await evaluate(`
+  window.dispatchEvent(new KeyboardEvent('keydown', { key: '\\\\', code: 'Backslash', ctrlKey: true, bubbles: true }));
+  void 0;
+`)
+await sleep(500)
+
+/* ── 6. 侧栏入口照旧好使 ── */
+await evaluate(`
+  (() => {
+    var b = [...document.querySelectorAll('.panel .nav-item')]
+      .find(function (x) { return (x.textContent || '').indexOf('AI') >= 0 });
+    b && b.click();
+    void 0;
+  })()
+`)
+await sleep(900)
+const afterAi = JSON.parse(
+  await evaluate(`
+    (() => JSON.stringify({
+      ai: !!document.querySelector('.col[data-view="ai"], .col .chat-wrap, .col .cp'),
+      hasCol: !!document.querySelector('.col'),
+      colW: Math.round((document.querySelector('.col')?.getBoundingClientRect().width) ?? -1),
+    }))()
+  `),
+)
+ok(
+  '6.从侧栏点「AI 编写」仍然切得过去，资料栏还在原地',
+  afterAi.hasCol && afterAi.colW >= 200,
+  afterAi,
 )
 
 ok('7.过程中没有控制台报错', errors.length === 0, errors.slice(0, 4))

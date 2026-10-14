@@ -1,10 +1,15 @@
 <script setup lang="ts">
 /**
- * 笔记选择器：给「笔记嵌入」用。
+ * 笔记选择器：给「笔记嵌入」「双链笔记」「块引用」用。
  *
- * 嵌入语法 `![[笔记名]]` 只有名字，但工作区里同名笔记很常见
- * （两个文件夹下各有一篇「README」），所以列表里必须同时显示相对路径，
- * 让用户能分清自己选的是哪一篇。
+ * 之所以非它不可：`[[笔记名]]` 里只有名字，但工作区里同名笔记很常见
+ * （两个文件夹下各有一篇「README」），让人手打名字等于让他自己猜
+ * 打出来的到底是哪一个。列表里必须同时显示相对路径，才分得清。
+ *
+ * `mode` 决定插入的语法，也就决定了这里的文案：
+ *  - embed：`![[名字]]` —— 把那一篇的正文拉进来显示
+ *  - link：`[[名字]]` —— 只是一枚指向它的链接，点了跳过去
+ *  - block：`[[名字#^]]` —— 指向那一篇里的某个块，选完还得填块 ID
  *
  * 键盘全程可用：输入即过滤，↑↓ 移动，Enter 确认，Esc 取消。
  */
@@ -12,8 +17,25 @@ import { computed, nextTick, ref, watch } from 'vue'
 import { FileText, Search, X } from 'lucide-vue-next'
 import { store } from '@/store'
 
-const props = defineProps<{ open: boolean; title?: string }>()
+export type PickMode = 'embed' | 'link' | 'block'
+
+const props = defineProps<{
+  open: boolean
+  /** 选完要插入哪种写法。见文件头注释 */
+  mode?: PickMode
+  title?: string
+}>()
 const emit = defineEmits<{ pick: [path: string]; close: [] }>()
+
+/** 每种写法的文案。写在一处，标题、底部提示、 Enter 的说法都对得上账 */
+const COPY: Record<PickMode, { title: string; confirm: string }> = {
+  embed: { title: '选择要嵌入的笔记', confirm: '嵌入' },
+  link: { title: '选择要链接到的笔记', confirm: '链接' },
+  block: { title: '选择被引用的那一篇', confirm: '引用' },
+}
+
+const mode = computed<PickMode>(() => props.mode ?? 'embed')
+const modeCopy = computed(() => COPY[mode.value])
 
 const keyword = ref('')
 const cursor = ref(0)
@@ -106,7 +128,7 @@ function onKey(e: KeyboardEvent) {
     <div v-if="open" class="np-mask" @pointerdown.self="emit('close')">
       <div class="np" @keydown="onKey">
         <header class="np-head">
-          <span class="np-title">{{ title ?? '选择要嵌入的笔记' }}</span>
+          <span class="np-title">{{ title ?? modeCopy.title }}</span>
           <button class="np-x" title="关闭 (Esc)" @click="emit('close')">
             <X :size="14" :stroke-width="2.1" />
           </button>
@@ -130,7 +152,7 @@ function onKey(e: KeyboardEvent) {
             :key="it.rel"
             class="np-item"
             :class="{ on: i === cursor }"
-            @click="cursor = i"
+            @click="cursor = i; confirm()"
             @dblclick="confirm"
             @mouseenter="cursor = i"
           >
@@ -146,7 +168,7 @@ function onKey(e: KeyboardEvent) {
         </div>
 
         <footer class="np-foot">
-          <span>↑↓ 选择 · Enter 嵌入 · Esc 取消</span>
+          <span>↑↓ 选择 · Enter {{ modeCopy.confirm }} · Esc 取消</span>
           <span class="np-count">{{ items.length }} 篇</span>
         </footer>
       </div>

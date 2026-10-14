@@ -144,7 +144,7 @@ ok(
   endE,
 )
 
-/* ══ 4. 两栏各一枚：资料栏那枚长在资料栏自己身上 ══ */
+/* ══ 4. 资料栏常驻：界面上一枚「收放资料栏」都没有 ══ */
 const col = JSON.parse(
   await evaluate(`
     (() => JSON.stringify({
@@ -158,12 +158,12 @@ const col = JSON.parse(
   `),
 )
 ok(
-  '4.两栏各一枚：资料栏的开关在资料栏自己顶行，侧栏顶行只有「收起侧边栏」',
-  col.column && col.columnToggles === 1 && col.onColumnItself && !col.onSidebar && col.sideToggles === 1 && col.sideOwn,
+  '4.资料栏常驻：全页零收放钮，侧栏顶行仍只有「收起侧边栏」一枚',
+  col.column && col.columnToggles === 0 && !col.onColumnItself && !col.onSidebar && col.sideToggles === 1 && col.sideOwn,
   col,
 )
 
-/* ══ 5. 侧栏收成窄轨后，两栏各自的入口仍然各一枚 ══ */
+/* ══ 5. 侧栏收成窄轨后，资料栏照旧在那儿 ══ */
 await evaluate(`document.querySelector('.head-actions [data-role="sidebar-toggle"]')?.click()`)
 await sleep(800)
 const rail = JSON.parse(
@@ -178,8 +178,8 @@ const rail = JSON.parse(
   `),
 )
 ok(
-  '5.侧栏收成窄轨：展开入口一枚，资料栏那枚还在资料栏上（不会并排两枚）',
-  rail.rail && rail.railHeadBtns === 1 && rail.columnToggles === 1 && rail.onColumnItself && rail.column,
+  '5.侧栏收成窄轨：展开入口一枚，资料栏照旧在原地',
+  rail.rail && rail.railHeadBtns === 1 && rail.columnToggles === 0 && rail.column,
   rail,
 )
 
