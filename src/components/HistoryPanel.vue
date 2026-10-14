@@ -1,6 +1,13 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
-import { X, History as HistoryIcon, RotateCcw, GitCompareArrows, FileText } from 'lucide-vue-next'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import {
+  X,
+  ChevronDown,
+  History as HistoryIcon,
+  RotateCcw,
+  GitCompareArrows,
+  FileText,
+} from 'lucide-vue-next'
 import { store } from '@/store'
 import { diffLines, diffSummary, type DiffLine } from '@/utils/diff'
 
@@ -43,6 +50,33 @@ const baseOptions = computed(() => [
   { key: 'cur', label: '当前笔记（编辑器里的内容）' },
   ...items.value.map((it) => ({ key: it.path, label: fmt(it.mtime) })),
 ])
+
+/** 基准下拉的开关。这里原本是个原生 <select>，在深色下会露出系统那套
+    蓝底高亮，跟其它就地弹出的菜单两种语言，所以换成自绘的那一份。 */
+const baseMenu = ref(false)
+const baseLabel = computed(
+  () => baseOptions.value.find((o) => o.key === baseKey.value)?.label ?? '选择基准',
+)
+
+/* 就地弹出的菜单靠 pointerdown 收起：脚本发的 click / mousedown 关不掉它 */
+function onDocPointer(e: PointerEvent) {
+  const el = e.target as HTMLElement
+  if (!el.closest('.hp-base-pick')) baseMenu.value = false
+}
+
+function onEsc(e: KeyboardEvent) {
+  if (e.key === 'Escape') baseMenu.value = false
+}
+
+onMounted(() => {
+  document.addEventListener('pointerdown', onDocPointer)
+  document.addEventListener('keydown', onEsc)
+})
+
+onBeforeUnmount(() => {
+  document.removeEventListener('pointerdown', onDocPointer)
+  document.removeEventListener('keydown', onEsc)
+})
 
 const diffRows = computed<DiffLine[]>(() => {
   if (mode.value !== 'diff' || !active.value) return []
@@ -88,6 +122,7 @@ function setMode(m: 'view' | 'diff') {
 
 async function pickBase(key: string) {
   baseKey.value = key
+  baseMenu.value = false
   await loadBase()
 }
 
@@ -146,7 +181,7 @@ function fmtSize(n: number) {
           <HistoryIcon :size="15" :stroke-width="1.9" />
           <span class="hp-title">版本历史</span>
           <span class="hp-sub">{{ store.activeName.value || '未命名笔记' }}</span>
-          <button class="hp-x" title="关闭" @click="emit('close')">
+          <button class="hp-x" data-role="hp-close" title="关闭" @click="emit('close')">
             <X :size="15" :stroke-width="1.9" />
           </button>
         </header>
@@ -184,14 +219,33 @@ function fmtSize(n: number) {
               </div>
 
               <template v-if="mode === 'diff'">
-                <label class="hp-base">
+                <div class="hp-base">
                   <span>基准</span>
-                  <select :value="baseKey" @change="pickBase(($event.target as HTMLSelectElement).value)">
-                    <option v-for="o in baseOptions" :key="o.key" :value="o.key">
-                      {{ o.label }}
-                    </option>
-                  </select>
-                </label>
+                  <div class="hp-base-pick">
+                    <button
+                      class="hp-base-btn"
+                      data-role="base-pick"
+                      :class="{ on: baseMenu }"
+                      :title="baseLabel"
+                      @click="baseMenu = !baseMenu"
+                    >
+                      <span class="hp-base-name">{{ baseLabel }}</span>
+                      <ChevronDown :size="11" :stroke-width="2" />
+                    </button>
+                    <div v-if="baseMenu" class="n-menu n-menu-inline hp-base-menu">
+                      <div class="n-menu-head"><span>跟哪个版本比</span></div>
+                      <button
+                        v-for="o in baseOptions"
+                        :key="o.key"
+                        class="n-menu-item"
+                        :class="{ on: o.key === baseKey }"
+                        @click="pickBase(o.key)"
+                      >
+                        <span class="n-menu-name">{{ o.label }}</span>
+                      </button>
+                    </div>
+                  </div>
+                </div>
                 <span class="hp-sum">
                   <span class="hp-add">+{{ summary.add }}</span>
                   <span class="hp-del">−{{ summary.del }}</span>
@@ -377,17 +431,44 @@ function fmtSize(n: number) {
   color: var(--n-fg-faint);
 }
 
-.hp-base select {
+.hp-base-pick {
+  position: relative;
+  min-width: 0;
+}
+
+.hp-base-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
   max-width: 220px;
   height: 24px;
-  padding: 0 6px;
+  padding: 0 7px;
   border: 1px solid var(--n-line);
   border-radius: var(--n-r-sm);
   background: var(--n-surface);
   color: var(--n-fg);
   font-family: inherit;
   font-size: 11.5px;
-  outline: none;
+  transition: background var(--n-dur) var(--n-ease), border-color var(--n-dur) var(--n-ease);
+}
+
+.hp-base-btn:hover,
+.hp-base-btn.on {
+  background: var(--n-raised);
+  border-color: color-mix(in oklab, var(--n-accent) 40%, var(--n-line));
+}
+
+.hp-base-name {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.hp-base-menu {
+  min-width: 200px;
+  max-height: 260px;
+  overflow-y: auto;
 }
 
 .hp-sum {

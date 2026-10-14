@@ -25,6 +25,7 @@ import {
   FileText,
   ListTree,
   Loader2,
+  PanelRightClose,
   Paperclip,
   Quote,
   Sparkles,
@@ -43,14 +44,16 @@ import AiChatPanel from './AiChatPanel.vue'
 
 const { state } = store
 
-/* 顶行挤窄时的让位：这一排放着三个页签（带计数）和两枚入口按钮，
-   栏宽到 220 的下限时它们会互相挤到一起去。
-   先收掉页签上的计数、再把页签内边距压到最小；
-   入住时间最晚的两枚按钮一直留着。
+/* 顶行挤窄时的让位：这一排放着三个页签（带计数）和三枚入口按钮
+   （新建 / 导入 / 收起这一栏），栏宽到 220 的下限时它们会互相挤到一起去。
+   让位顺序：先收掉页签上的计数 → 再把页签内边距压到最小 →
+   最后连页签文字一起收掉，只留图标（有 title，鼠标停上去看得到名字）。
+   入口按钮一直留着：它们是这一栏唯一的新建 / 导入 / 收起入口，
+   收掉就等于这一栏在窄的时候干不了活。
    用哪一档由这一行自己试出来（见 useFitTiers）。 */
 const colEl = ref<HTMLElement | null>(null)
 const flowEl = ref<HTMLElement | null>(null)
-const { tier: flowTier } = useFitTiers(flowEl, colEl, 2)
+const { tier: flowTier } = useFitTiers(flowEl, colEl, 3)
 
 /**
  * 笔记这一类里的三种看法。
@@ -182,6 +185,19 @@ async function doImport() {
         <Loader2 v-if="importing" class="spinning" :size="14" :stroke-width="1.9" />
         <Upload v-else :size="14" :stroke-width="1.9" />
       </button>
+      <!-- 「收起这一栏」长在这一栏自己的顶行右端：
+           管的就是自己，跟新建/导入同属这一栏的操作。
+           以前它挂在侧栏顶行、跟「收起侧边栏」并排 —— 一枚收自己、一枚收邻居，
+           两枚看着像一对同级开关，其实谁跟谁都不是一回事。
+           收起后这一栏没了，入口退回侧栏顶行（见 SidePanel）。 -->
+      <button
+        class="col-act"
+        data-role="column-toggle"
+        data-tip="收起资料栏"
+        @click="store.toggleColumn()"
+      >
+        <PanelRightClose :size="14" :stroke-width="1.9" />
+      </button>
     </header>
 
     <div class="col-body">
@@ -226,23 +242,37 @@ async function doImport() {
 
 /* 挤窄时的让位顺序（档位由 useFitTiers 试出来，详见脚本上方的说明）：
    1 档 收掉页签上的计数 —— 它只是个数字，点开才知道有多少篇也不迟
-   2 档 再压页签的内边距与行间距 */
+   2 档 再压页签的内边距与行间距
+   3 档 连页签文字一起收掉，只留图标 —— 顶行宁可只剩三个图标也不能溢出，
+        溢出时最右边那枚「收起这一栏」会被切掉一半，那才是真的没法用 */
 .col-flow[data-crammed="1"],
-.col-flow[data-crammed="2"] {
+.col-flow[data-crammed="2"],
+.col-flow[data-crammed="3"] {
   padding: 0 4px 0 6px;
 }
 
-.col-flow[data-crammed="2"] {
+.col-flow[data-crammed="2"],
+.col-flow[data-crammed="3"] {
   gap: 0;
 }
 
 .col-flow[data-crammed="1"] .col-tab-n,
-.col-flow[data-crammed="2"] .col-tab-n {
+.col-flow[data-crammed="2"] .col-tab-n,
+.col-flow[data-crammed="3"] .col-tab-n {
   display: none;
 }
 
-.col-flow[data-crammed="2"] .col-tab {
+.col-flow[data-crammed="2"] .col-tab,
+.col-flow[data-crammed="3"] .col-tab {
   padding: 0 4px;
+}
+
+.col-flow[data-crammed="3"] .col-tab-label {
+  display: none;
+}
+
+.col-flow[data-crammed="3"] .col-tab {
+  padding: 0 5px;
 }
 
 .col-tab {

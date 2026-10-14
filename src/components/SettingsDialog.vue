@@ -33,6 +33,7 @@ import {
   X,
 } from 'lucide-vue-next'
 import { ACCENTS, ACCENT_SWATCH, AI_DEFAULTS, AI_PRESETS, BG_STYLES, DENSITY, MEASURES, store } from '@/store'
+import appIcon from '@/assets/app-icon.png'
 import type { AccentName, BgStyle, Density, MeasureName, SettingsSection, ViewMode } from '@/store'
 
 type SectionId = SettingsSection
@@ -766,28 +767,9 @@ async function changeWorkspace() {
               <div class="ab-hero">
                 <span class="ab-hero-glow" aria-hidden="true" />
                 <span class="ab-mark" aria-hidden="true">
-                  <svg viewBox="0 0 32 32" width="34" height="34" fill="none">
-                    <path
-                      d="M10 4.4h8.8L24 9.6v14.9a3.1 3.1 0 0 1-3.1 3.1H10a3.1 3.1 0 0 1-3.1-3.1V7.5A3.1 3.1 0 0 1 10 4.4Z"
-                      stroke="currentColor"
-                      stroke-width="2"
-                      stroke-linejoin="round"
-                    />
-                    <path
-                      d="M18.8 4.4v5.2H24"
-                      stroke="currentColor"
-                      stroke-width="2"
-                      stroke-linejoin="round"
-                    />
-                    <path
-                      d="M10.6 17.4h8.6M10.6 21.2h4.4"
-                      stroke="currentColor"
-                      stroke-width="2"
-                      stroke-linecap="round"
-                      opacity="0.72"
-                    />
-                    <path d="M17.4 21.2h3.4" stroke="#d98a4e" stroke-width="2" stroke-linecap="round" />
-                  </svg>
+                  <!-- 关于页这枚标用应用图标本身：它是「这个应用长什么样」
+                       的直接回答，52px 也足够撑住位图细节。 -->
+                  <img :src="appIcon" width="48" height="48" alt="Nota" />
                 </span>
                 <span class="ab-hero-meta">
                   <span class="ab-hero-name">
@@ -1462,9 +1444,13 @@ async function changeWorkspace() {
   width: 52px;
   height: 52px;
   border-radius: var(--n-r-lg);
-  background: color-mix(in oklab, var(--n-accent) 12%, var(--n-bg));
-  border: 1px solid color-mix(in oklab, var(--n-accent) 26%, transparent);
-  color: var(--n-accent);
+  overflow: hidden;
+}
+
+.ab-mark img {
+  width: 48px;
+  height: 48px;
+  border-radius: calc(var(--n-r-lg) - 2px);
 }
 
 .ab-hero-meta {

@@ -808,13 +808,54 @@ function startNewFolder(parent?: string) {
   state.newFolderIn = parent ?? state.root ?? ''
 }
 
+/** 目录在前、文件在后，各自按名称排 —— 跟主进程 walk() 里那份一致 */
+function sortNodes(a: TreeNode, b: TreeNode): number {
+  if (a.type !== b.type) return a.type === 'dir' ? -1 : 1
+  return a.name.localeCompare(b.name, 'zh-CN')
+}
+
+/**
+ * 先把新文件夹摆进树里，不等 IPC。
+ *
+ * 原来是「建 → 等 IPC 回来 → 重新扫整棵树」才画出来。扫树要为每个 .md
+ * 开一次文件读 frontmatter（`workspace:tree` 里的 readMeta），工作区一大
+ * 就是几百次 IO —— 于是点了确定、输入框收了、树里却半天不动，
+ * 看着像「没建上」或者「卡了一下」。
+ *
+ * 现在节点立刻出现，真的建好之后再让整棵树归位。摆的位置照主进程的
+ * 排序规则来，避免刷新完又跳一下。
+ */
+function insertDirOptimistic(parent: string, dirPath: string, name: string) {
+  const node: TreeNode = { type: 'dir', name, path: dirPath, children: [] }
+  const put = (list: TreeNode[]): boolean => {
+    for (const n of list) {
+      if (n.type !== 'dir') continue
+      if (n.path === parent) {
+        n.children = [...(n.children ?? []), node]
+        n.children.sort(sortNodes)
+        return true
+      }
+      if (n.children && put(n.children)) return true
+    }
+    return false
+  }
+  if (!parent || parent === state.root || !put(state.tree)) {
+    state.tree = [...state.tree, node]
+    state.tree.sort(sortNodes)
+  }
+}
+
 /** 提交新建文件夹 */
 async function commitNewFolder(name: string) {
   const parent = state.newFolderIn
   state.newFolderIn = null
-  if (!parent || !name.trim()) return
-  await window.api.createFolder(parent, name.trim())
+  const nm = name.trim()
+  if (!parent || !nm) return
   state.expanded[parent] = true
+  const guess = `${parent.replace(/[\\/]+$/, '')}/${nm}`
+  insertDirOptimistic(parent, guess, nm)
+  // 真名可能带序号（同名时主进程会落成「Wu 1」），建完再让整棵树归位
+  await window.api.createFolder(parent, nm)
   await refreshTree()
 }
 
@@ -1313,10 +1354,42 @@ function setColumnView(v: ColumnView) {
   localStorage.setItem(COLUMN_KEY, v)
 }
 
+/* ── 资料栏的收放 ──
+   收起是「把宽度还给正文」，但什么时候该收，以前全靠人自己判断。
+   给一条明确的规则：窗口窄到「给它最小宽度之后正文就站不住」时就自己收，
+   宽回来再自己还回去 —— 不用人去点。
+   系统因窄窗收的那次要单独记着：只有那一次才在窗口变宽时自动恢复。
+   人自己点收的不能自动弹回来，那等于替他把决定改了。 */
+let shrankByWindow = false
+
+function setColumn(v: boolean) {
+  state.column = v
+  localStorage.setItem('nota-column-open', v ? '1' : '0')
+}
+
 /** 中间那一列显不显示（AI 也能收起，把宽度还给正文） */
 function toggleColumn() {
-  state.column = !state.column
-  localStorage.setItem('nota-column-open', state.column ? '1' : '0')
+  shrankByWindow = false
+  setColumn(!state.column)
+}
+
+/** 这一刻窗口还放得下资料栏吗。
+    不写死「窗口小于 XXX 就收掉资料栏」这种像素阈值 —— 阈值会跟各栏宽度打架，
+    人把侧栏拖宽一点，阈值就不成立了。用跟拖动时同一套算法现算。 */
+function columnFits(winW: number = window.innerWidth) {
+  return winW - sidebarNow(winW) - EDITOR_MIN_WIDTH >= WIDTH_LIMITS.column.min
+}
+
+/** 窗口尺寸变了就照上面那条规则收放一次 */
+function fitColumnToWindow(winW: number) {
+  const fits = columnFits(winW)
+  if (!fits && state.column) {
+    shrankByWindow = true
+    setColumn(false)
+  } else if (fits && !state.column && shrankByWindow) {
+    shrankByWindow = false
+    setColumn(true)
+  }
 }
 
 /* ── 各栏宽度：拖动分隔线改的就是这几个值 ──
@@ -2074,6 +2147,7 @@ export const store = {
   toggleSidebar,
   setColumnView,
   toggleColumn,
+  fitColumnToWindow,
   NOTE_TABS,
   setWidth,
   autoColumnWidth,

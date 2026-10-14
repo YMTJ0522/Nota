@@ -111,6 +111,23 @@ const relPath = computed(() => {
   return rel.replace(/^[\\/]+/, '') || p
 })
 
+/** 预览里每个标题的纵向位置，用来把「源码行号」换成「预览该滚到哪」。
+    只在内容 / 标题结构 / 预览宽度变了才重建一次 —— 每帧去读三十个 rect
+    会强制浏览器布局，太重。 */
+interface HeadingMark {
+  line: number
+  top: number
+}
+/* 这两个必须声明在**第一次用到它们的 watcher 之前**。
+   下面那个算标题的 watcher 带 `immediate: true`，它在 setup 阶段就跑，
+   而 `let` 在声明语句执行之前一直处于 TDZ —— 声明要是写在文件后面，
+   那句 `marksDirty = true` 会在启动时直接抛
+   「Cannot access 'marksDirty' before initialization」，整个界面白屏。
+   `marksRo` 同理，一起放这儿。 */
+let headingMarks: HeadingMark[] = []
+let marksDirty = true
+let marksRo: ResizeObserver | null = null
+
 /**
  * 中间那一列「大纲」的数据源。
  *
@@ -122,6 +139,8 @@ watch(
   () => [state.activePath, state.draft] as const,
   ([p, raw]) => {
     state.headings = p ? outlineFromSource(raw) : []
+    // 标题结构一变，之前量好的位置就不再对应了
+    marksDirty = true
     // 标题结构一变，高亮回到第一个标题，再看滚动到哪再说
     state.activeHeading = state.headings[0]?.id ?? null
     requestAnimationFrame(markActiveHeading)
@@ -361,6 +380,8 @@ async function render() {
   const media = await resolveMediaInHtml(lit)
   const enhanced = enhancePreview(media)
   html.value = enhanced.html
+  // 预览换了一批 DOM，标题的纵向位置缓存作废
+  marksDirty = true
   // 异步填料的两种「重资产」：mermaid 画图、katex 排公式
   await nextTick()
   const pane = previewRef.value
@@ -561,12 +582,96 @@ const ECHO_MS = 160
 const echo = { editor: 0, preview: 0 }
 const landed = { editor: -1, preview: -1 }
 
-/** 编辑区当前看向文档的哪个位置（0~1） */
+/**
+ * 编辑区当前看向文档的哪个位置（0~1）。
+ *
+ * 这里必须是一个**连续**的量。早先取 `visibleRanges[0].from`（视口起点），
+ * 想法没错 —— 视口之外的行没有精确高度，只能拿到估算值。但视口是
+ * CodeMirror 按块维护的，要滚过一整个 viewportMargin 才会更新一次，
+ * 于是同步出来的预览是「滚了半天纹丝不动，然后猛跳一截」：
+ * 实测滚 25 格滚轮，预览前 24 帧全是 0，第 25 帧一次性跳 554px。
+ * 反过来（预览滚 → 编辑区跟）用的是 scrollIntoView，每帧都动，
+ * 所以那边一直是丝滑的 —— 卡顿只出现在这一个方向上。
+ *
+ * 改成「滚动位置落在哪一行 + 行内走到几成」：scrollTop 是连续的，
+ * 行块高度取自 CM 已经量好的数据，两者相除得到行内比例，
+ * 再按字符数插值进这一行。行粒度足够细，视觉上就是连续的。
+ */
 function editorRatio() {
   const v = view
   if (!v || v.state.doc.length === 0) return 0
-  const from = v.visibleRanges[0]?.from ?? 0
-  return from / v.state.doc.length
+  const scroller = v.scrollDOM
+  const block = v.lineBlockAtHeight(scroller.scrollTop)
+  const h = block.bottom - block.top
+  const inside = h > 0 ? Math.min(1, Math.max(0, (scroller.scrollTop - block.top) / h)) : 0
+  const pos = block.from + (block.to - block.from) * inside
+  return Math.min(1, Math.max(0, pos / v.state.doc.length))
+}
+
+/**
+ * 标题在预览里的纵向位置（相对预览**内容**顶端，不是视口）。
+ *
+ * 每帧去读三十个标题的 rect 太重 —— 读 rect 会强制浏览器布局。而预览
+ * 内容不变时这些位置根本不会动，所以只在内容或标题结构变了之后重建一次。
+ */
+function rebuildMarks() {
+  headingMarks = []
+  marksDirty = false
+  const p = previewRef.value
+  if (!p) return
+  const base = p.getBoundingClientRect().top - p.scrollTop
+  for (const h of state.headings) {
+    if (h.line == null) continue
+    const el = findHeadingEl(p, h)
+    if (!el) continue
+    headingMarks.push({ line: h.line, top: el.getBoundingClientRect().top - base })
+  }
+}
+
+/**
+ * 源码行号 → 预览里应该滚到的位置。
+ *
+ * 拿「字符比例 × 预览总高」直接算是错的：源码里一个标题只占十来个字符，
+ * 渲染出来却是一整块带上下留白的区域。实测按字符比例同步，编辑区滚到底
+ * 时预览才走到 65%。
+ *
+ * 所以拿标题当锚点：找到这一行夹在哪两个标题之间，按行号在它们的实际
+ * 渲染位置之间插值。两端因此严格对齐 —— 第 0 行落在 0，最后一行落在底部。
+ * 没有标题可依时（比如一篇纯正文）才退回字符比例。
+ */
+function previewTopForLine(line: number): number {
+  const p = previewRef.value
+  if (!p) return 0
+  if (marksDirty) rebuildMarks()
+  if (headingMarks.length === 0) return editorRatio() * p.scrollHeight
+
+  for (let i = 0; i < headingMarks.length; i++) {
+    const m = headingMarks[i]
+    if (m.line > line) {
+      const prev = i > 0 ? headingMarks[i - 1] : null
+      if (!prev) return m.line > 0 ? (line / m.line) * m.top : 0
+      const span = m.line - prev.line
+      const r = span > 0 ? (line - prev.line) / span : 0
+      return prev.top + (m.top - prev.top) * r
+    }
+  }
+  // 落在最后一个标题之后：从它插值到内容底部
+  const last = headingMarks[headingMarks.length - 1]
+  const total = p.scrollHeight
+  const totalLines = view ? view.state.doc.lines : last.line + 1
+  const span = Math.max(1, totalLines - last.line)
+  const r = Math.min(1, (line - last.line) / span)
+  return last.top + (total - last.top) * r
+}
+
+/** 编辑区当前顶行对应的源码行号（0 起） */
+function editorTopLine(): number {
+  const v = view
+  if (!v) return 0
+  const scroller = v.scrollDOM
+  const block = v.lineBlockAtHeight(scroller.scrollTop)
+  // CM 的行号从 1 起，大纲记的是 0 起
+  return Math.max(0, v.state.doc.lineAt(block.from).number - 1)
 }
 
 function syncFromEditor() {
@@ -575,7 +680,9 @@ function syncFromEditor() {
   if (!p) return
   const max = p.scrollHeight - p.clientHeight
   if (max <= 0) return
-  const next = Math.round(editorRatio() * max)
+  const next = Math.round(
+    Math.max(0, Math.min(max, previewTopForLine(editorTopLine()) - 12)),
+  )
   if (Math.abs(p.scrollTop - next) <= 1) return
   landed.preview = next
   echo.preview = performance.now() + ECHO_MS
@@ -1016,6 +1123,17 @@ onMounted(() => {
 watch(previewRef, (el, old) => {
   old?.removeEventListener('scroll', onPreviewScroll)
   el?.addEventListener('scroll', onPreviewScroll, { passive: true })
+
+  // 预览栏宽度一变（拖分栏、改窗宽），正文重新折行，标题的纵向位置
+  // 也跟着变 —— 缓存必须作废，否则同步会照着旧坐标走。
+  if (old && marksRo) marksRo.unobserve(old)
+  if (el) {
+    marksDirty = true
+    marksRo ??= new ResizeObserver(() => {
+      marksDirty = true
+    })
+    marksRo.observe(el)
+  }
 })
 
 /**
@@ -1119,6 +1237,7 @@ onBeforeUnmount(() => {
   if (timer) clearTimeout(timer)
   if (previewTimer) clearTimeout(previewTimer)
   previewRef.value?.removeEventListener('scroll', onPreviewScroll)
+  marksRo?.disconnect()
   destroyEditor()
   window.removeEventListener('keydown', onViewKey)
   window.removeEventListener('nota:insert', onInsertRequest)

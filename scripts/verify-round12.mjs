@@ -299,13 +299,17 @@ ok(
 /* ══ 6. 新建 / 导入在资料栏右上角 ══ */
 const actions = await evaluate(`(async () => {
   const wait = (ms) => new Promise(r => setTimeout(r, ms))
+  // 2.2.7 起这一组里多了「收起资料栏」那一枚（它管的就是这一栏自己），
+  // 所以不能写死两枚 —— 只认新建 / 导入这两枚在不在、贴不贴右边缘
   const inColumn = [...document.querySelectorAll('.col-flow .col-act')].map(b => ({
     role: b.getAttribute('data-role'), title: b.getAttribute('title'), w: Math.round(b.getBoundingClientRect().width),
   }))
   const inEditor = [...document.querySelectorAll('.ph-right .ea-btn')].map(b => b.getAttribute('title'))
-  // 右上角：两枚按钮的右边缘要贴近这一列的右边缘
+  // 右上角：这一组的右边缘要贴近这一列的右边缘。
+  // 取最后那一枚 —— 2.2.7 之后「收起资料栏」排在了导入后面，写死导入就不准了
   const colR = document.querySelector('.col')?.getBoundingClientRect()
-  const lastR = document.querySelector('.col-flow .col-act[data-role="import-note"]')?.getBoundingClientRect()
+  const acts = [...document.querySelectorAll('.col-flow .col-act')]
+  const lastR = acts.length ? acts[acts.length - 1].getBoundingClientRect() : null
   const rightGap = colR && lastR ? Math.round(colR.right - lastR.right) : null
   // 先到「笔记」页签记下篇数，再去「大纲」页签点新建 ——
   // 顺便验「在小众页签上点新建，会切回笔记页签」，不然新笔记等于白建
@@ -327,8 +331,7 @@ const actions = await evaluate(`(async () => {
 })()`)
 ok(
   '6.新建 / 导入住在资料栏右上角（贴着这一列右边缘）；在大纲页签下点新建会切回笔记页签，编辑区顶行不再有这两个重复入口',
-  actions.inColumn.length === 2 &&
-    actions.inColumn.some((b) => b.role === 'new-note') &&
+  actions.inColumn.some((b) => b.role === 'new-note') &&
     actions.inColumn.some((b) => b.role === 'import-note') &&
     actions.inColumn.every((b) => b.w === 26) &&
     actions.rightGap !== null && actions.rightGap >= 6 && actions.rightGap <= 14 &&
@@ -384,13 +387,14 @@ const collapse = await evaluate(`(async () => {
     }
     requestAnimationFrame(tick)
   })
+  // 2.2.7：收起那一半在资料栏自己顶行，展开那一半退回侧栏顶行
   const leaveP = seen()
-  document.querySelector('.mini[data-role="column-toggle"]')?.click()
+  document.querySelector('.col-flow [data-role="column-toggle"]')?.click()
   const leaveCls = await leaveP
   await wait(420)
   const gone = !document.querySelector('.col')
   const enterP = seen()
-  document.querySelector('.mini[data-role="column-toggle"]')?.click()
+  document.querySelector('.panel .head [data-role="column-toggle"]')?.click()
   const enterCls = await enterP
   await wait(420)
   return { leaveCls, gone, enterCls, back: !!document.querySelector('.col') }

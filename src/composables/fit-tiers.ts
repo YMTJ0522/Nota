@@ -15,10 +15,14 @@ import { ref, onMounted, onBeforeUnmount, type Ref } from 'vue'
 export function useFitTiers(rowEl: Ref<HTMLElement | null>, watchEl: Ref<HTMLElement | null>, maxTier = 4) {
   const tier = ref(0)
   let ro: ResizeObserver | null = null
+  let mo: MutationObserver | null = null
+  let queued = 0
+  let fitting = false
 
   function fit() {
     const el = rowEl.value
     if (!el) return
+    fitting = true
     let t = maxTier
     for (let i = 0; i <= maxTier; i++) {
       // 直接写 dataset 而不是改 ref：Vue 更新是异步的，这里需要写完立刻重排再量
@@ -29,6 +33,27 @@ export function useFitTiers(rowEl: Ref<HTMLElement | null>, watchEl: Ref<HTMLEle
       }
     }
     if (tier.value !== t) tier.value = t
+    fitting = false
+  }
+
+  /**
+   * 光看尺寸变化是不够的 —— **内容**变了而宽度没变时，原来那一档就不对了。
+   *
+   * 资料栏顶行最典型：在「AI 编写」这一屏上它只有一个名字加按钮，宽裕得很，
+   * 档位停在 0；切回「笔记」页签，同一行要塞三个页签，宽度一点没变，
+   * ResizeObserver 不会触发，于是顶行溢出 —— 960px 的窗口上，最右边那枚
+   * 「收起这一栏」会被切掉一半。
+   *
+   * 所以这里再挂一个 MutationObserver 看着这一行的子节点增删。
+   * 只听 childList / subtree，不听 attributes —— 上面 fit() 一上来就写
+   * dataset，听属性的话会自己把自己叫起来。
+   */
+  function refit() {
+    if (fitting || queued) return
+    queued = requestAnimationFrame(() => {
+      queued = 0
+      fit()
+    })
   }
 
   onMounted(() => {
@@ -36,12 +61,20 @@ export function useFitTiers(rowEl: Ref<HTMLElement | null>, watchEl: Ref<HTMLEle
     if (!target) return
     ro = new ResizeObserver(() => fit())
     ro.observe(target)
+    const row = rowEl.value
+    if (row) {
+      mo = new MutationObserver(refit)
+      mo.observe(row, { childList: true, subtree: true })
+    }
     fit()
   })
 
   onBeforeUnmount(() => {
     ro?.disconnect()
     ro = null
+    if (queued) cancelAnimationFrame(queued)
+    mo?.disconnect()
+    mo = null
   })
 
   return { tier, fit }

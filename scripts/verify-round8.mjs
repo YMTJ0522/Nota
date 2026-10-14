@@ -240,8 +240,10 @@ const top = await evaluate(`(() => {
     })(),
     // 侧栏顶行那枚开关还在（折叠后靠它回来）
     sidebarToggle: !!document.querySelector('.panel [data-role="sidebar-toggle"]'),
-    // 2.2：资料栏的收起开关并到侧栏顶行去了（跟侧边栏的收起并排），编辑区顶行只留本行的操作
-    columnToggle: !!document.querySelector('.panel [data-role="column-toggle"]'),
+    // 2.2 资料栏的收起开关挪到侧栏顶行；2.2.7 又挪回资料栏自己的顶行右端
+    // （跟「收起侧边栏」并排时，一枚收自己一枚收邻居，语义不是一回事）。
+    // 断言跟着改成「资料栏在的时候，开关在资料栏那一栏上」。
+    columnToggle: !!document.querySelector('.col-flow [data-role="column-toggle"]'),
     // 旧标题栏的品牌 logo 不该再出现；文件名也不该再糊在侧栏顶上（它现在归右侧那条）
     oldMark: !!document.querySelector('.bar .mark'),
     sideHeadText: document.querySelector('.panel .head .head-title')?.textContent?.trim() ?? '',

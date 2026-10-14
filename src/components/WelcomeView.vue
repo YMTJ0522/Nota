@@ -2,6 +2,7 @@
 import { computed } from 'vue'
 import { Folder } from 'lucide-vue-next'
 import { store } from '@/store'
+import appIcon from '@/assets/app-icon.png'
 
 const features = [
   ['纯本地', '文件躺在你自己的目录里，不联网、不上传'],
@@ -30,18 +31,11 @@ async function pickRoot(dir: string) {
 <template>
   <div class="welcome">
     <div class="inner">
-      <div class="logo">
-        <!-- 与侧栏顶栏同一套记号：页面 + 折角 + 两条文字行。
-             这里用细描边而非实心，跟应用内其它图标保持一致的克制感。
-             （应用图标是那张奶油底手写体的位图，见 build/icon-source.png，
-             不用在界面上：一张彩色位图放进正文里会跟这一页的描边语言打架。） -->
-        <svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M5 3.5A1.5 1.5 0 0 1 6.5 2h8L20 7.5v13A1.5 1.5 0 0 1 18.5 22h-12A1.5 1.5 0 0 1 5 20.5z" />
-          <path d="M14 2v6h6" />
-          <path d="M9 13h6" />
-          <path d="M9 17h4" />
-        </svg>
-      </div>
+      <!-- 首屏这枚标用**应用图标本身**（奶油底手写体那张）。
+           它够大（52px）不会糊，而这里是人第一次看到这个应用的地方，
+           应当让他一眼认出「这就是我在桌面点开的那个东西」。
+           侧栏顶栏仍留描边版 —— 那儿只有 18px，位图会糊成一格色块。 -->
+      <img class="logo" :src="appIcon" width="52" height="52" alt="Nota" />
 
       <h1>Nota</h1>
       <p class="sub">一个只做笔记的笔记应用</p>
@@ -88,15 +82,11 @@ async function pickRoot(dir: string) {
 }
 
 .logo {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 56px;
-  height: 56px;
+  display: block;
+  width: 52px;
+  height: 52px;
+  margin: 0 auto 16px;
   border-radius: var(--n-r-lg);
-  background: var(--n-accent-soft);
-  color: var(--n-accent);
-  margin-bottom: 18px;
 }
 
 h1 {

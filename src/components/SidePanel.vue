@@ -465,20 +465,20 @@ onBeforeUnmount(() => document.removeEventListener('pointerdown', onDocPointer))
           </svg>
         </span>
         <span class="head-title">资料库</span>
-        <!-- 两枚收起按钮：先收中间那一栏（资料栏），再收自己。
-             它们放一起是有道理的 —— 「哪一块要腾地方」是一个连续的判断题，
-             两枚开关挨着，视线不用在窗口两端来回跳。
-             2.1 之前「收起资料栏」孤零零地待在编辑区顶栏最右边，
-             跟窗口按钮挤在一起，既不像「视图」也不像「窗口」。 -->
+        <!-- 这里只放「收起/展开资料栏」的**展开**那一半，而且只在资料栏收着时出现。
+             规则是：开关永远长在最左边那条还站着的竖栏顶行 ——
+             资料栏在，开关就在资料栏自己顶行右端；资料栏收掉了，它没地方待，
+             才退回侧栏顶行。于是这一行平时就只剩「收起侧边栏」一枚，
+             不会出现两枚并排、一枚收自己一枚收邻居的怪样子。 -->
         <span class="head-actions">
           <button
+            v-if="!state.column"
             class="mini"
             data-role="column-toggle"
-            :data-tip="state.column ? '收起资料栏' : '展开资料栏'"
+            data-tip="展开资料栏"
             @click="store.toggleColumn()"
           >
-            <PanelRightClose v-if="state.column" :size="15" :stroke-width="1.9" />
-            <PanelRightOpen v-else :size="15" :stroke-width="1.9" />
+            <PanelRightOpen :size="15" :stroke-width="1.9" />
           </button>
           <button
             class="mini"

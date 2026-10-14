@@ -319,9 +319,14 @@ ok(
 )
 
 /* ── 5. 侧栏折叠按钮在「资料库」行 ──
-   2.2.2：顶行只剩两枚「收起」（资料栏在前、侧边栏在后）。
-   原来这里的「新建文件夹」已经并进文件夹右键菜单（见 round10 第 5 条），
-   入口不再一处一个——新建笔记住资料栏右上角，见 round10 第 8 条。 */
+   2.2.2 起顶行只剩「收起」这一类按钮；原来这里的「新建文件夹」已经并进
+   文件夹右键菜单（见 round10 第 5 条），入口不再一处一个 ——
+   新建笔记住资料栏右上角，见 round10 第 8 条。
+   2.2.7 又把「收起资料栏」从这一行挪走了：它管的那一栏在自己右边，
+   跟「收起侧边栏」并排时，一枚收自己、一枚收邻居，看着像一对同级开关。
+   现在的规则是「开关永远长在最左边那条还站着的竖栏顶行」——
+   资料栏在，开关在资料栏；资料栏收掉了，才退回侧栏。
+   于是资料栏开着时，这一行**只有一枚**。 */
 const headBtns = await evaluate(`(() => {
   const head = document.querySelector('.panel .head')
   if (!head) return { err: 'no head' }
@@ -331,12 +336,13 @@ const headBtns = await evaluate(`(() => {
   return { tips, roles,
            hasCollapse: roles.includes('sidebar-toggle'),
            hasColumn: roles.includes('column-toggle'),
+           colToggleInColumn: !!document.querySelector('.col-flow [data-role="column-toggle"]'),
            extras: tips.filter((t, i) => !roles[i]) }
 })()`)
 ok(
-  '5.侧栏顶行就两枚收起：资料栏在前、侧边栏在后',
-  headBtns.hasCollapse && headBtns.hasColumn &&
-    headBtns.roles.join(',') === 'column-toggle,sidebar-toggle' &&
+  '5.资料栏开着时侧栏顶行只有「收起侧边栏」一枚；资料栏那枚在它自己顶行',
+  headBtns.hasCollapse && !headBtns.hasColumn && headBtns.colToggleInColumn &&
+    headBtns.roles.join(',') === 'sidebar-toggle' &&
     headBtns.extras.length === 0,
   headBtns,
 )

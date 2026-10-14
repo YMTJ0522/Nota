@@ -342,13 +342,17 @@ async function createSession() {
    有过对话的要确认一次 —— 那是一段真的聊过的内容，没有回收站。 */
 const pendingSession = ref<number | null>(null)
 
+/**
+ * 点删除 → 一律先问一句。
+ *
+ * 早先空会话是「直接删掉，不弹窗」，想的是「一个空壳没什么可确认的」。
+ * 但真用它的时候，人分不清「没弹窗是因为它是空的」还是「这按钮是坏的」；
+ * 而且新建完手滑点一下就没了，连个反悔的机会都没有。
+ * 现在统一走确认，只是空会话把话说清楚：不会丢东西。
+ */
 function askDeleteSession(id: number) {
   const s = state.sessions.find((x) => x.id === id)
   if (!s) return
-  if (!s.messages?.length) {
-    store.deleteSession(id)
-    return
-  }
   pendingSession.value = id
 }
 
@@ -357,6 +361,12 @@ const pendingSessionTitle = computed(
 )
 const pendingSessionCount = computed(
   () => state.sessions.find((s) => s.id === pendingSession.value)?.messages.length ?? 0,
+)
+/** 空会话也是要删的，只是那句话说起来不一样 */
+const pendingSessionWarn = computed(() =>
+  pendingSessionCount.value > 0
+    ? `「${pendingSessionTitle.value}」里的 ${pendingSessionCount.value} 条对话会被清除，无法恢复。`
+    : `「${pendingSessionTitle.value}」还是空的，删掉不会丢失内容。`,
 )
 
 function doDeleteSession() {
@@ -582,8 +592,9 @@ const thinkingLive = computed(
         </button>
         <button
           class="ag-mini danger"
+          data-role="del-session"
           title="删除当前会话"
-          @click="store.deleteSession(state.activeSessionId)"
+          @click="askDeleteSession(state.activeSessionId)"
         >
           <Trash2 :size="12" :stroke-width="1.9" />
         </button>
@@ -880,7 +891,7 @@ const thinkingLive = computed(
     <ConfirmDialog
       :open="pendingSession !== null"
       title="删除这个会话？"
-      :message="`「${pendingSessionTitle}」里的 ${pendingSessionCount} 条对话会被清除，无法恢复。`"
+      :message="pendingSessionWarn"
       confirm-text="删除"
       danger
       @confirm="doDeleteSession"

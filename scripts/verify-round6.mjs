@@ -263,23 +263,27 @@ ok(
 
 /* ── 4. 资料栏收起展开 + 落盘 ──
    1.9.0：横贯整窗的标题栏去掉了，这枚开关跟着右侧编辑区走 ——
-   2.2.2 又把它从编辑区顶行并到侧栏顶行（和「收起侧边栏」排在一起），
-   收起之后这一组按钮还在窄轨上，所以自己也管得了自己的复原。 */
+   2.2.2 又把它并到侧栏顶行（和「收起侧边栏」排在一起），
+   2.2.7 再挪一次：收起那一半长在资料栏自己顶行右端（管的是自己），
+   收起之后这一栏没了，展开那一半才退回侧栏顶行。所以这里两步走：
+   收起点 `.col-flow` 里那枚，展开点 `.panel .head` 里那枚。 */
 const collapse = await evaluate(`(async () => {
-  const pick = () => document.querySelector('.panel .head [data-role="column-toggle"]')
-  const btn = pick()
+  const close = () => document.querySelector('.col-flow [data-role="column-toggle"]')
+  const open = () => document.querySelector('.panel .head [data-role="column-toggle"]')
+  const btn = close()
   if (!btn) return { err: 'no toggle' }
   btn.click()
   await new Promise(r => setTimeout(r, 400))
   const hidden = !document.querySelector('.col')
   const saved = localStorage.getItem('nota-column-open')
-  pick()?.click()
+  const backBtn = open()
+  backBtn?.click()
   await new Promise(r => setTimeout(r, 400))
-  return { hidden, saved, back: !!document.querySelector('.col') }
+  return { hidden, saved, back: !!document.querySelector('.col'), backBtn: !!backBtn, backTip: backBtn?.getAttribute('data-tip') ?? '' }
 })()`)
 ok(
   '4.资料栏可收起展开且状态落盘',
-  collapse.hidden && collapse.saved === '0' && collapse.back,
+  collapse.hidden && collapse.saved === '0' && collapse.back && collapse.backBtn,
   collapse,
 )
 
@@ -390,15 +394,23 @@ const sync = await evaluate(`(async () => {
 })()`)
 /* 这一条以前是自证循环：预览的位置本来就是从编辑区回写过去的，两边当然
    相等。现在改成四条能各自站住的契约：
-     · 编辑区动了，预览停在编辑区正在看的位置（不是随便挪一下）
+     · 编辑区动了，预览跟着动，方向一致、幅度也够（不是随便挪一下）
      · 预览往下走，编辑区跟着往下走；预览退回，编辑区也退回
      · 预览回到同一个位置时，编辑区落回同一处 —— 不是单向累加的漂移
-     · 预览自己停得住 —— 不会被回音在半路上拽回去 */
+     · 预览自己停得住 —— 不会被回音在半路上拽回去
+
+   第一条的判据 2.2.7 改过：原来是 `|pv - ed| < 0.02`，也就是拿预览的
+   **像素比例**去比编辑区的**字符位置比例**。这两个数本来就不该相等 ——
+   源码里一个标题只占十来个字符，渲染出来是一整块带上下留白的区域。
+   按字符比例同步，实测编辑区滚到底时预览只走到 65%。
+   现在对齐用的是标题锚点（源码行号 ↔ 预览里的实际位置），
+   所以这里只验「跟着动、方向对、幅度够」，两端到底对齐由 round16 第 2 条管。 */
 ok(
   '7.分栏时编辑区与预览区双向同步滚动',
   !sync.err &&
-    sync.fromEditor.every((s) => Math.abs(s.pv - s.ed) < 0.02) &&
+    sync.fromEditor.every((s) => s.pv > 0 && s.pv <= 1.02) &&
     sync.fromEditor[1].ed > sync.fromEditor[0].ed + 0.1 &&
+    sync.fromEditor[1].pv > sync.fromEditor[0].pv + 0.1 &&
     Math.abs(sync.deep.got - sync.deep.want) < 0.02 &&
     Math.abs(sync.backUp.got - sync.backUp.want) < 0.02 &&
     sync.deep.ed > sync.backUp.ed + 0.1 &&

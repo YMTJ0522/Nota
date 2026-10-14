@@ -98,6 +98,16 @@ onMounted(() => {
     winW.value = window.innerWidth
   })
   ro.observe(document.documentElement)
+  // 起手先按当前窗口收放一次：上次是在宽窗口里退出的、这次开在窄窗口上，
+  // 别让资料栏一上来就把正文挤扁。
+  store.fitColumnToWindow(winW.value)
+})
+
+/* 资料栏什么时候该收：窗口窄到放不下就自己收，宽回来再自己还回去。
+   规则在 store 里，这里只负责把窗口宽度喂进去。
+   侧栏收起/展开同样改变可用宽度，所以也一起看。 */
+watch([winW, () => state.sidebar, () => state.sidebarWidth], () => {
+  store.fitColumnToWindow(winW.value)
 })
 
 onBeforeUnmount(() => {

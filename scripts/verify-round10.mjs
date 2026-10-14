@@ -159,6 +159,8 @@ const side = await evaluate(`(async () => {
   })
   return {
     head, roles,
+    // 资料栏开着时，它的收起钮长在自己那一栏的顶行右端
+    colToggleInColumn: !!document.querySelector('.col-flow [data-role="column-toggle"]'),
     // 两枚按钮得是并排的：间距就是它们自己的宽度（±几像素的 gap），不是叠在一起
     sideBySide: boxes.length === 2 && boxes[0][1] === 26 &&
       boxes[1][0] - boxes[0][0] >= 26 && boxes[1][0] - boxes[0][0] <= 30,
@@ -169,12 +171,16 @@ const side = await evaluate(`(async () => {
     opacity: add ? getComputedStyle(add).opacity : '0',
   }
 })()`)
+/* 2.2.7：侧栏顶行的「收起资料栏」挪走了 —— 它管的那一栏在自己右边，
+   跟「收起侧边栏」并排时，一枚收自己一枚收邻居，看着像一对同级开关。
+   新规则：开关永远长在最左边那条还站着的竖栏顶行。资料栏在 → 在资料栏；
+   资料栏收掉了 → 才退回侧栏。所以开着时这一行只有「收起侧边栏」一枚，
+   「并排两枚」这个判据从此不再成立，改成查两处各司其职。 */
 ok(
-  '4.侧栏顶部并排两枚收起按钮（资料栏 / 侧边栏）；分区加号 26px / 图标 15px 且常显',
-  side.roles.includes('column-toggle') && side.roles.includes('sidebar-toggle') &&
-    side.head.some((t) => (t ?? '').includes('资料栏')) &&
+  '4.侧栏顶行只管自己那一枚收起；资料栏那枚在资料栏自己顶行；分区加号 26px / 图标 15px 且常显',
+  side.roles.includes('sidebar-toggle') && !side.roles.includes('column-toggle') &&
     side.head.some((t) => (t ?? '').includes('侧边栏')) &&
-    side.sideBySide &&
+    side.colToggleInColumn &&
     side.addW === 26 && side.addH === 26 && side.svgW === 15 && Number(side.opacity) === 1,
   side,
 )
@@ -479,7 +485,8 @@ const about = await evaluate(`(async () => {
   return {
     hero: !!q('.ab-hero'),
     glow: !!q('.ab-hero-glow'),
-    mark: !!q('.ab-mark svg'),
+    // 2.2.7：这枚标换成应用图标本身（位图），不再是界面那套描边 svg
+    mark: !!q('.ab-mark img') && !q('.ab-mark svg'),
     tag: q('.ab-hero-tag')?.textContent?.trim() ?? '',
     ver: q('.ab-hero-ver')?.textContent?.trim() ?? '',
     dot: !!q('.ab-dot'),

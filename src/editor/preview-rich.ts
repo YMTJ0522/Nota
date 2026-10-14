@@ -466,6 +466,25 @@ function fenceMarkOf(line: string): { char: string; len: number } | null {
   return { char: m[2][0], len: m[2].length }
 }
 
+/**
+ * 关栏行。按 CommonMark，关栏**只能是纯围栏**——除了空白不能再带东西，
+ * 带语言标记的那一行是开栏，不是关栏。
+ *
+ * 以前开栏关栏共用一个判定（就是上面那个 `fenceMarkOf`），于是代码块里
+ * 任何一行恰好以 ``` 开头都会被当成关栏：笔记在讲 Markdown 语法时很常见，
+ * 代码里嵌的三引号字符串、示例里贴的一段 fence 也是。那一行提前关栏，
+ * 后面整段代码就暴露在正文里，里面的 `# 注释` 顺理成章被收进了大纲——
+ * 「大纲尾部冒出代码块里的注释」就是这么来的。
+ *
+ * `\r?` 是给 CRLF 留的：按行切完末尾会剩一个回车，不算「栏里还有东西」。
+ */
+function fenceCloseOf(line: string): { char: string; len: number } | null {
+  const m = /^(?:[ \t]*>[ \t]?)*([ \t]*)(`{3,}|~{3,})[ \t]*\r?$/.exec(line)
+  if (!m) return null
+  if (m[1].replace(/\t/g, '    ').length > 3) return null
+  return { char: m[2][0], len: m[2].length }
+}
+
 export function outlineFromSource(raw: string): HeadingItem[] {
   const out: HeadingItem[] = []
   const lines = raw.split('\n')
@@ -487,7 +506,9 @@ export function outlineFromSource(raw: string): HeadingItem[] {
     const mark = fenceMarkOf(line)
     if (open) {
       // 块内一律不看标题——这就是「代码块里的 # 注释不该出现在大纲里」的落点
-      if (mark && mark.char === open.char && mark.len >= open.len) open = null
+      // 关栏要走更严的那条判定（纯围栏），见 fenceCloseOf
+      const close = fenceCloseOf(line)
+      if (close && close.char === open.char && close.len >= open.len) open = null
       continue
     }
     if (mark) {
