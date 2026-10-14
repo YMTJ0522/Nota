@@ -1,0 +1,409 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Nota — 一个只做笔记的笔记应用</title>
+<meta name="description" content="Nota 是一个纯本地的 Markdown 笔记应用：文件躺在你自己的目录里，不联网、不上传、不要账号。支持双链、关系图、提示块、图表、公式，可导出 Markdown / HTML / PDF / Word。">
+<link rel="icon" href="icon.png">
+<style>
+/* ══ 基础 ══
+   整套配色跟应用里那套一致：奶油纸底、墨色字、青绿强调。
+   官网是产品的第一张脸，它该长得像打开应用之后看到的东西，
+   而不是套一个跟产品毫无关系的模板。 */
+:root{
+  --paper:#fbfaf7; --paper-2:#f4f2ec; --ink:#24231f; --ink-2:#55534e; --ink-3:#8a867c;
+  --line:#e4e0d7; --line-2:#d6d1c6;
+  --accent:#2f6f52; --accent-2:#26604a; --accent-soft:#eaf2ec;
+  --radius:14px; --radius-lg:20px;
+  --font:"PingFang SC","Microsoft YaHei","Noto Sans CJK SC","Hiragino Sans GB",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --font-mono:"JetBrains Mono","Cascadia Code",ui-monospace,Consolas,monospace;
+  --shadow:0 1px 2px rgb(60 52 40 / .05), 0 8px 24px -12px rgb(60 52 40 / .18);
+  --shadow-lg:0 2px 4px rgb(60 52 40 / .06), 0 28px 60px -24px rgb(60 52 40 / .28);
+  --max:1120px;
+}
+*{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%;scroll-behavior:smooth}
+body{
+  margin:0;background:var(--paper);color:var(--ink);font-family:var(--font);
+  font-size:16px;line-height:1.75;-webkit-font-smoothing:antialiased;
+}
+img{max-width:100%;display:block}
+a{color:var(--accent);text-decoration:none}
+a:hover{text-decoration:underline}
+.wrap{max-width:var(--max);margin:0 auto;padding:0 24px}
+h1,h2,h3{margin:0;line-height:1.3;letter-spacing:-.015em;font-weight:700}
+p{margin:0}
+kbd{
+  font-family:var(--font-mono);font-size:.86em;padding:1px 6px;border-radius:5px;
+  border:1px solid var(--line-2);background:#fff;color:var(--ink-2);
+}
+
+/* ══ 顶栏 ══ */
+.nav{
+  position:sticky;top:0;z-index:50;
+  background:color-mix(in srgb, var(--paper) 86%, transparent);
+  backdrop-filter:saturate(180%) blur(12px);
+  border-bottom:1px solid var(--line);
+}
+.nav-in{display:flex;align-items:center;gap:20px;height:60px}
+.brand{display:flex;align-items:center;gap:9px;font-weight:700;font-size:17px;color:var(--ink)}
+.brand img{width:26px;height:26px;border-radius:6px}
+.nav-links{display:flex;gap:22px;margin-left:auto;align-items:center}
+.nav-links a{color:var(--ink-2);font-size:14.5px}
+.nav-links a:hover{color:var(--ink);text-decoration:none}
+.nav-cta{
+  padding:7px 15px;border-radius:9px;background:var(--accent);color:#fff!important;
+  font-size:14.5px;font-weight:600;
+}
+.nav-cta:hover{background:var(--accent-2);text-decoration:none}
+
+/* ══ 按钮 ══ */
+.btn{
+  display:inline-flex;align-items:center;justify-content:center;gap:8px;
+  padding:11px 20px;border-radius:11px;font-size:15px;font-weight:600;
+  border:1px solid transparent;cursor:pointer;transition:.15s;
+}
+.btn:hover{text-decoration:none;transform:translateY(-1px)}
+.btn-primary{background:var(--accent);color:#fff;box-shadow:0 6px 18px -8px rgb(47 111 82 / .7)}
+.btn-primary:hover{background:var(--accent-2)}
+.btn-ghost{background:#fff;border-color:var(--line-2);color:var(--ink)}
+.btn-ghost:hover{border-color:var(--ink-3)}
+.btn-sub{display:block;margin-top:8px;font-size:12.5px;color:var(--ink-3)}
+
+/* ══ 首屏 ══ */
+.hero{padding:74px 0 40px;text-align:center}
+.tag{
+  display:inline-flex;align-items:center;gap:7px;padding:5px 13px;border-radius:999px;
+  border:1px solid var(--line-2);background:#fff;font-size:12.5px;color:var(--ink-2);
+}
+.tag b{color:var(--accent);font-weight:600}
+.hero h1{font-size:clamp(34px,5.4vw,58px);margin:22px 0 0;letter-spacing:-.03em}
+.hero .lede{
+  max-width:620px;margin:18px auto 0;font-size:clamp(16px,2vw,18.5px);color:var(--ink-2);
+}
+.hero-btns{display:flex;gap:12px;justify-content:center;flex-wrap:wrap;margin-top:30px}
+.hero-note{margin-top:16px;font-size:13px;color:var(--ink-3)}
+
+/* 电脑外框：宣传图要给「它在笔记本上打开」这个语境，
+   直接贴一张窗口截图会看不出那是个应用还是张网页。 */
+.device{
+  margin:52px auto 0;max-width:1000px;
+  background:#2b2c2f;border-radius:18px 18px 10px 10px;padding:11px 11px 0;
+  box-shadow:var(--shadow-lg);
+}
+.device-screen{border-radius:9px 9px 0 0;overflow:hidden;background:#fff;line-height:0}
+.device-bar{
+  height:20px;display:flex;align-items:center;justify-content:center;
+  background:#3a3b3e;border-radius:0 0 8px 8px;
+}
+.device-bar i{width:44px;height:4px;border-radius:2px;background:#55565a}
+
+/* ══ 通用分区 ══ */
+.sec{padding:78px 0}
+.sec-head{text-align:center;margin-bottom:44px}
+.sec-head h2{font-size:clamp(24px,3.4vw,34px)}
+.sec-head p{margin-top:12px;color:var(--ink-2);font-size:16px}
+.eyebrow{
+  font-size:12.5px;font-weight:700;letter-spacing:.08em;color:var(--accent);
+  text-transform:uppercase;margin-bottom:10px;
+}
+
+/* ══ 特性卡 ══ */
+.cards{display:grid;grid-template-columns:repeat(3,1fr);gap:18px}
+.card{
+  padding:24px;border:1px solid var(--line);border-radius:var(--radius);
+  background:#fff;box-shadow:var(--shadow);
+}
+.card h3{font-size:16.5px;margin-bottom:8px}
+.card p{font-size:14.5px;color:var(--ink-2)}
+.card .ic{
+  width:34px;height:34px;border-radius:9px;background:var(--accent-soft);
+  display:flex;align-items:center;justify-content:center;margin-bottom:14px;
+  font-size:17px;
+}
+
+/* ══ 功能特写：一图一文，左右交替 ══ */
+.show{display:grid;grid-template-columns:1fr 1fr;gap:52px;align-items:center;padding:34px 0}
+.show + .show{border-top:1px solid var(--line)}
+.show.rev .show-shot{order:2}
+.show-copy h3{font-size:clamp(21px,2.6vw,27px);margin-bottom:12px}
+.show-copy p{color:var(--ink-2);font-size:15.5px}
+.show-copy ul{margin:16px 0 0;padding-left:0;list-style:none}
+.show-copy li{position:relative;padding-left:20px;margin:7px 0;font-size:14.5px;color:var(--ink-2)}
+.show-copy li::before{
+  content:"";position:absolute;left:2px;top:.62em;width:6px;height:6px;
+  border-radius:2px;background:var(--accent);
+}
+.show-shot img{
+  border-radius:var(--radius);border:1px solid var(--line-2);
+  box-shadow:var(--shadow-lg);width:100%;
+}
+
+/* ══ 下载 ══ */
+.dl{
+  padding:52px;border-radius:var(--radius-lg);border:1px solid var(--line-2);
+  background:linear-gradient(180deg,#fff,var(--paper-2));box-shadow:var(--shadow);
+  text-align:center;
+}
+.dl h2{font-size:clamp(22px,3vw,30px)}
+.dl p{margin-top:10px;color:var(--ink-2)}
+.dl-grid{
+  display:grid;grid-template-columns:1fr 1fr;gap:16px;max-width:620px;margin:30px auto 0;
+}
+.dl-item{padding:20px;border:1px solid var(--line-2);border-radius:var(--radius);background:#fff}
+.dl-item h4{margin:0 0 4px;font-size:15.5px}
+.dl-item .meta{font-size:13px;color:var(--ink-3)}
+.dl-item .btn{width:100%;margin-top:14px}
+.facts{
+  display:flex;flex-wrap:wrap;justify-content:center;gap:8px 26px;
+  margin-top:26px;font-size:13.5px;color:var(--ink-3);
+}
+
+/* ══ 页脚 ══ */
+.foot{border-top:1px solid var(--line);padding:34px 0;margin-top:40px}
+.foot-in{display:flex;align-items:center;gap:16px;flex-wrap:wrap;font-size:13.5px;color:var(--ink-3)}
+.foot-in a{color:var(--ink-2)}
+.foot-in .sp{margin-left:auto}
+
+@media (max-width:900px){
+  .cards{grid-template-columns:1fr 1fr}
+  .show{grid-template-columns:1fr;gap:26px}
+  .show.rev .show-shot{order:0}
+  .nav-links a:not(.nav-cta){display:none}
+}
+@media (max-width:600px){
+  .cards{grid-template-columns:1fr}
+  .dl{padding:30px 20px}
+  .dl-grid{grid-template-columns:1fr}
+  .hero{padding:48px 0 24px}
+  .sec{padding:52px 0}
+}
+</style>
+</head>
+<body>
+
+<header class="nav">
+  <div class="wrap nav-in">
+    <span class="brand"><img src="icon.png" alt="">Nota</span>
+    <nav class="nav-links">
+      <a href="#features">功能</a>
+      <a href="#shots">界面</a>
+      <a href="#download">下载</a>
+      <a class="nav-cta" href="#download">获取 Nota</a>
+    </nav>
+  </div>
+</header>
+
+<section class="hero">
+  <div class="wrap">
+    <span class="tag">v2.5.0 · <b>Windows</b> · 免费</span>
+    <h1>一个只做笔记的<br>笔记应用</h1>
+    <p class="lede">
+      文件躺在你自己的目录里，就是一份份普通的 Markdown。
+      不联网、不上传、不要账号 —— 换任何编辑器打开都还是你写的那些字。
+    </p>
+    <div class="hero-btns">
+      <a class="btn btn-primary" href="#download">下载安装包</a>
+      <a class="btn btn-ghost" href="https://github.com/YMTJ0522/Nota">在 GitHub 上看</a>
+    </div>
+    <p class="hero-note">Windows 10 / 11 · 安装版 76 MB，免安装版 70 MB</p>
+
+    <div class="device">
+      <div class="device-screen">
+        <img src="shots/hero.png" alt="Nota 的分栏视图：左边是 Markdown 源码，右边是实时渲染的结果" width="1440" height="900" loading="eager">
+      </div>
+      <div class="device-bar"><i></i></div>
+    </div>
+  </div>
+</section>
+
+<section class="sec" id="features">
+  <div class="wrap">
+    <div class="sec-head">
+      <div class="eyebrow">Why Nota</div>
+      <h2>它把注意力留给内容</h2>
+      <p>没有插件市场，没有云端同步，没有「工作区协作」。该有的编辑能力一个不少。</p>
+    </div>
+    <div class="cards">
+      <div class="card">
+        <div class="ic">🔒</div>
+        <h3>纯本地</h3>
+        <p>笔记就是你自己目录里的 .md 文件。断网照常写，换台机器拷走就行，谁也拿不走。</p>
+      </div>
+      <div class="card">
+        <div class="ic">✍️</div>
+        <h3>Markdown 源码即文件</h3>
+        <p>左写右看的分栏视图、行号、代码高亮、补全。写出去的是标准 Markdown，别的工具也认。</p>
+      </div>
+      <div class="card">
+        <div class="ic">🧭</div>
+        <h3>双链与关系图</h3>
+        <p>
+          <code>[[笔记]]</code> 指过去、<code>![[笔记]]</code> 拉进来、<code>[[笔记#^块]]</code> 指到某一段。
+          都能弹选择器选，不用手打。关系图把谁提到了谁画出来。
+        </p>
+      </div>
+      <div class="card">
+        <div class="ic">🎨</div>
+        <h3>提示块与图表</h3>
+        <p>十一种提示块各有各的颜色和记号；Mermaid 图表配色跟着深浅主题走，换主题会重画。</p>
+      </div>
+      <div class="card">
+        <div class="ic">📄</div>
+        <h3>四种导出</h3>
+        <p>Markdown / HTML / PDF / Word 都能导，排版跟屏幕上一模一样 —— 公式、图表、脚注都在。</p>
+      </div>
+      <div class="card">
+        <div class="ic">🤖</div>
+        <h3>可选的 AI 编写</h3>
+        <p>能接你自己的模型（Ollama 或任意兼容接口）。不填就不出现，绝不偷偷往外发一个字。</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="sec" id="shots" style="border-top:1px solid var(--line)">
+  <div class="wrap">
+    <div class="sec-head">
+      <div class="eyebrow">Screens</div>
+      <h2>它长什么样</h2>
+      <p>下面每一张都是真实界面，不是画出来的示意图。</p>
+    </div>
+
+    <div class="show">
+      <div class="show-copy">
+        <h3>左边写，右边看</h3>
+        <p>
+          分栏视图下源码和渲染结果同步滚动 —— 滚到哪儿，另一边就跟着到哪儿。
+          也有纯编辑和纯阅读两种模式，<kbd>Ctrl</kbd>+<kbd>/</kbd> 那一排按钮切。
+        </p>
+        <ul>
+          <li>标题锚点做双向映射，点大纲不会跳错位置</li>
+          <li>代码块右上角常驻语言标签，点它能换语言</li>
+          <li>行号、自动换行、字号行距都能自己调</li>
+        </ul>
+      </div>
+      <div class="show-shot">
+        <img src="shots/hero.png" alt="分栏视图：左边源码、右边渲染结果" width="1440" height="900" loading="lazy">
+      </div>
+    </div>
+
+    <div class="show rev">
+      <div class="show-copy">
+        <h3>十一种提示块，各有各的颜色</h3>
+        <p>
+          <code>&gt; [!TIP]</code> 这样的写法会被渲染成带记号的块。
+          提示、技巧、警告、危险…… 十一种类型各一个色相、一个图标，
+          一页扫下来轻重分明，不用读完才知道哪条要紧。
+        </p>
+        <ul>
+          <li>表格圆角、脚注、行内标签 <code>#标签</code>、块 ID <code>^块</code></li>
+          <li>Mermaid 图表配色跟深浅主题走，不再是那片蓝紫</li>
+          <li>高级代码块：加标题、加行号、高亮指定行</li>
+        </ul>
+      </div>
+      <div class="show-shot">
+        <img src="shots/callouts.png" alt="十一种提示块与图表在预览里的样子" width="1440" height="900" loading="lazy">
+      </div>
+    </div>
+
+    <div class="show">
+      <div class="show-copy">
+        <h3>关系图：谁提到了谁</h3>
+        <p>
+          列表能告诉你有 60 篇，但看不出哪篇是枢纽、哪几篇是孤岛。
+          关系图把 <code>[[双链]]</code> 画成连线 —— 空心的是还没跟任何东西连上的笔记，
+          它们通常最该被翻出来看看。
+        </p>
+        <ul>
+          <li>滚轮缩放、拖动平移、拖节点挪位置</li>
+          <li>点一下节点就打开那一篇</li>
+          <li>孤立笔记单独画成空心，一眼找得到</li>
+        </ul>
+      </div>
+      <div class="show-shot">
+        <img src="shots/graph.png" alt="关系图：笔记之间的双链连线" width="1440" height="900" loading="lazy">
+      </div>
+    </div>
+
+    <div class="show rev">
+      <div class="show-copy">
+        <h3>记得写了什么，忘了在哪一篇</h3>
+        <p>
+          <kbd>Ctrl</kbd>+<kbd>P</kbd> 只搜标题和路径，几十毫秒就有结果；
+          <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>F</kbd> 连正文一起搜，命中那一行直接给你看。
+          「引用」页签则是反过来：哪些笔记提到了当前这一篇。
+        </p>
+        <ul>
+          <li>结果分两段：先标题后正文</li>
+          <li>↑↓ 选择、Enter 打开，全程不用摸鼠标</li>
+          <li>正文搜索按修改时间缓存，只有改过的才重读</li>
+        </ul>
+      </div>
+      <div class="show-shot">
+        <img src="shots/search.png" alt="搜索面板：标题命中与正文命中分两段显示" width="1440" height="900" loading="lazy">
+      </div>
+    </div>
+
+    <div class="show">
+      <div class="show-copy">
+        <h3>深色模式不是把颜色反过来</h3>
+        <p>
+          深浅两套主题各自取过对比：纸张不是纯黑，强调色在暗底上单独调过亮度，
+          图表的颜色也会重新画一遍（它们是烙在 SVG 里的，不重画不会变）。
+        </p>
+        <ul>
+          <li>六套强调色可换</li>
+          <li>代码高亮在深色下另配了一组颜色</li>
+          <li>导出 PDF / Word 不受主题影响，永远是适合打印的浅色</li>
+        </ul>
+      </div>
+      <div class="show-shot">
+        <img src="shots/dark.png" alt="深色主题下的阅读模式" width="1440" height="900" loading="lazy">
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="sec" id="download" style="border-top:1px solid var(--line)">
+  <div class="wrap">
+    <div class="dl">
+      <h2>下载 Nota</h2>
+      <p>Windows 10 / 11，64 位。装上就能用，不需要账号，也不会往后台挂任何东西。</p>
+      <div class="dl-grid">
+        <div class="dl-item">
+          <h4>安装版</h4>
+          <div class="meta">Nota-Setup-2.5.0.exe · 76 MB</div>
+          <a class="btn btn-primary" href="https://github.com/YMTJ0522/Nota/releases/latest">下载安装版</a>
+          <span class="btn-sub">会写开始菜单与卸载入口，推荐</span>
+        </div>
+        <div class="dl-item">
+          <h4>免安装版</h4>
+          <div class="meta">Nota-Portable-2.5.0.exe · 70 MB</div>
+          <a class="btn btn-ghost" href="https://github.com/YMTJ0522/Nota/releases/latest">下载免安装版</a>
+          <span class="btn-sub">拷进 U 盘双击就跑，不写注册表</span>
+        </div>
+      </div>
+      <div class="facts">
+        <span>界面字体：南西新圆体（随包）</span>
+        <span>快捷键：<kbd>Ctrl</kbd>+<kbd>P</kbd> 跳转 · <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>F</kbd> 全文 · <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>G</kbd> 关系图</span>
+        <span>开源，MIT</span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<footer class="foot">
+  <div class="wrap foot-in">
+    <img src="icon.png" alt="" width="22" height="22" style="border-radius:5px">
+    <span>Nota · 一个只做笔记的笔记应用</span>
+    <span class="sp">
+      <a href="https://github.com/YMTJ0522/Nota">GitHub</a> ·
+      <a href="https://github.com/YMTJ0522/Nota/releases/latest">更新日志</a>
+    </span>
+  </div>
+</footer>
+
+</body>
+</html>
