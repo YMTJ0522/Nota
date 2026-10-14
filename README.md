@@ -12,6 +12,10 @@
 
 - **纯本地存储** — 笔记直接写进你选择的目录，没有数据库、没有云端
 - **Markdown** — 写作与预览双模式，源码即文件
+- **双链三件套** — `[[笔记]]` 指过去、`![[笔记]]` 拉进来、`[[笔记#^块]]` 指到某一段；三种都弹选择器选，不用手打
+- **关系图** — `Ctrl+Shift+G`，把「谁提到了谁」画成一张可缩放的图
+- **搜索面板** — `Ctrl+P` 按标题跳笔记，`Ctrl+Shift+F` 搜正文（带上下文片段）
+- **十一种提示块** — 每种一个色相 + 一枚描边记号；Mermaid 图表配色跟深浅主题走
 - **CodeMirror 6 编辑器** — 语法高亮、行号、折叠、多光标、搜索替换
 - **工具栏** — 7 个下拉菜单，按「搜索 / 标题 / 行内格式 / 列表 / 链接·图片·笔记 / 代码·表格·数学·内容块」分组，共 30 余种插入与格式命令
 - **斜杠命令** — 空行输入 `/` 唤出菜单，36 项与工具栏功能对齐，支持中文标签与英文别名过滤（`/标题`、`/h1`、`/kuai`）
@@ -20,17 +24,34 @@
 - **轻** — 没有账号、没有插件市场、没有同步服务
 - **深浅主题** — 跟随系统或手动切换
 - **无边框窗口** — 自绘标题栏，界面完全可控
-- **快捷键** — `Ctrl+O` 打开目录、`Ctrl+N` 新建、`Ctrl+S` 保存、`Ctrl+B/I/E` 格式、`Ctrl+1..6` 标题
+- **快捷键** — `Ctrl+O` 打开目录、`Ctrl+N` 新建、`Ctrl+S` 保存、`Ctrl+B/I/E` 格式、`Ctrl+1..6` 标题、
+  `Ctrl+P` 跳笔记、`Ctrl+Shift+F` 搜正文、`Ctrl+Shift+G` 关系图、`Ctrl+\` 收侧栏
+- **记住上次** — 退出时记住工作区和正在看的那篇，下次打开直接回到原处
+- **粘贴图片自动压缩** — 超过 1 MB 等比压到长边 1600，几十张截图也不会把目录撑爆
 
 ## 截图
 
-浅色：
+分栏视图（左写右看）：
 
-![浅色](./docs/screenshot-light.png)
+![分栏视图](./site/shots/hero.png)
+
+提示块与图表：
+
+![提示块与图表](./site/shots/callouts.png)
+
+关系图：
+
+![关系图](./site/shots/graph.png)
+
+搜索面板：
+
+![搜索面板](./site/shots/search.png)
 
 深色：
 
-![深色](./docs/screenshot-dark.png)
+![深色](./site/shots/dark.png)
+
+完整宣传页见 [`site/index.html`](./site/index.html)。
 
 ## 下载
 
@@ -106,8 +127,10 @@ src/
     code-languages.ts      语言注册与代码块行装饰
     markdown-snippets.ts   模板片段常量
     word-count.ts          中英混排字数统计
-  components/      界面组件（Toolbar / SlashMenu / EditorPane / SidePanel ...）
+  components/      界面组件（Toolbar / SlashMenu / EditorPane / SidePanel /
+                   SearchPalette 搜索面板 / GraphView 关系图 ...）
   styles/          设计 token 与全局样式
+site/              宣传页（index.html + shots/ 真实界面截图）
 build/
   icon-source.png  图标母版（1024×1024 RGBA，四角透明）
   icon.ico         打包用图标（多尺寸）

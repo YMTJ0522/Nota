@@ -201,6 +201,9 @@ interface State {
 
   /** 主区显示什么：笔记 / AI 编写 */
   mainView: MainView
+  /** 关系图开着没。它是主区的一次「换一个看法」，不是中间列的一个页签 ——
+      中间列只有 300px 宽，画不下几百个节点。 */
+  graphOpen: boolean
   /** 中间那一列在显示什么（主区与这一列的分工见 setColumnView） */
   columnView: ColumnView
   /** 各栏宽度（拖动分隔线改的就是它们） */
@@ -320,6 +323,7 @@ const state = reactive<State>({
   lineWrap: PREF_DEFAULTS.lineWrap,
   lineNumbers: PREF_DEFAULTS.lineNumbers,
   mainView: 'note',
+  graphOpen: false,
   columnView: 'notes',
   sidebarWidth: 232,
   columnWidth: 296,
@@ -465,6 +469,7 @@ async function openWorkspace() {
   state.tree = await window.api.readTree(dir)
   state.loading = false
   rememberRoot(dir)
+  rememberLast(dir)
   await loadIcons()
 }
 
@@ -497,6 +502,52 @@ function forgetRoot(dir: string) {
     localStorage.setItem(ROOTS_KEY, JSON.stringify(next))
   } catch {
     /* 同上 */
+  }
+}
+
+/**
+ * 启动时回到上次那个工作区。
+ *
+ * 每次都从欢迎页点一次目录，是这个应用最没道理的一个动作：
+ * 它是**笔记本**，不是一次性工具，打开就该落在上次写字的地方。
+ * 于是把「最后一次进入的工作区」单独记一个键（recentRoots 是列表，
+ * 它的第一项会被后来的排序翻动，不适合当「上次」）。
+ *
+ * 打不开（盘拔了、目录改名了）就安静地退回欢迎页，并把它从最近里去掉 ——
+ * 一个点进去必错的入口留在列表里，比没有更烦人。
+ */
+const LAST_ROOT_KEY = 'nota-last-root'
+const LAST_NOTE_KEY = 'nota-last-note'
+
+function rememberLast(dir: string) {
+  try {
+    localStorage.setItem(LAST_ROOT_KEY, dir)
+  } catch {
+    /* 同上 */
+  }
+}
+
+async function restoreLastWorkspace(): Promise<boolean> {
+  const dir = localStorage.getItem(LAST_ROOT_KEY)
+  if (!dir) return false
+  try {
+    const tree = await window.api.readTree(dir)
+    state.root = dir
+    state.tree = tree
+    rememberRoot(dir)
+    rememberLast(dir)
+    await loadIcons()
+    // 连上次在看的那篇一起回去：只回到目录、还得再找一遍笔记，等于只做了一半
+    const note = localStorage.getItem(LAST_NOTE_KEY)
+    if (note && note.startsWith(dir)) {
+      const hit = flattenFiles(tree).find((f) => f.path === note)
+      if (hit) await openNote(note)
+    }
+    return true
+  } catch {
+    localStorage.removeItem(LAST_ROOT_KEY)
+    forgetRoot(dir)
+    return false
   }
 }
 
@@ -544,6 +595,7 @@ async function switchWorkspace(dir: string): Promise<boolean> {
   state.tagIcons = {}
   state.loading = false
   rememberRoot(dir)
+  rememberLast(dir)
   await loadIcons()
   return true
 }
@@ -721,6 +773,12 @@ async function openNote(path: string) {
     state.activePath = path
     state.draft = raw
     state.savedDraft = raw
+    // 记下「上次在看哪一篇」，下次启动时直接回到它（见 restoreLastWorkspace）
+    try {
+      localStorage.setItem(LAST_NOTE_KEY, path)
+    } catch {
+      /* 落盘失败不影响这次打开 */
+    }
   } finally {
     opening = false
   }
@@ -1171,6 +1229,10 @@ blockquote p:last-child { margin-bottom: 0; }
 img, video { max-width: 100%; height: auto; border-radius: 8px; }
 img { display: block; margin: 1em auto; }
 figure { margin: 1em 0; text-align: center; }
+/* 代码块也是 figure（.pv-code-fig），跟着上面那条居中会把**代码**也居中 ——
+   导出来一眼看上去是乱的。代码块自己声明回左对齐，居中只留给真正的插图。 */
+figure.pv-code-fig { text-align: left; }
+pre, .pv-code-box { text-align: left; }
 figcaption { font-size: .88em; color: var(--fg-faint); margin-top: .4em; }
 /* 表格：圆角由外层裁（collapse 状态下 table 自己吃不到 border-radius），
    所以改成 separate、只画右/下两条边，最外圈交给 wrapper。 */
@@ -1199,12 +1261,37 @@ tr { break-inside: avoid; page-break-inside: avoid; }
   border: 1px solid var(--code-line); border-left: 4px solid var(--accent);
   border-radius: 8px; background: var(--accent-soft);
 }
-.pv-callout-head { display: flex; align-items: baseline; gap: 6px;
-  font-size: .92em; font-weight: 600; line-height: 1.6; color: var(--accent); }
-.pv-callout-icon { color: var(--accent); font-size: 13px; line-height: 1.5; }
-.pv-callout-body { margin-top: .15em; }
+.pv-callout-head { display: flex; align-items: center; gap: 7px;
+  font-size: .92em; font-weight: 600; line-height: 1.5; }
+.pv-callout-title { color: var(--accent); letter-spacing: .01em; }
+/* 图标是 SVG（用 currentColor），所以给它自己一个 color 就够了 */
+.pv-callout-icon { display: inline-flex; align-items: center; justify-content: center;
+  width: 20px; height: 20px; border-radius: 6px; color: var(--accent);
+  background: var(--accent-soft); }
+.pv-callout-icon svg { width: 14px; height: 14px; }
+.pv-callout-body { margin-top: .2em; }
 .pv-callout-body > p:first-child { margin-top: .3em; }
 .pv-callout-body > p:last-child { margin-bottom: 0; }
+/* 导出这份样式里**不能用 oklch**（Word 那条路不认），所以十一种类型
+   在这里逐个写成字面色：色条、标题、淡底三样一起给，跟预览那边的色相对得上。 */
+.pv-callout[data-type='note'] { --c: #5b60d6; --s: #eef0fb; }
+.pv-callout[data-type='info'] { --c: #2a7fc0; --s: #ecf4fb; }
+.pv-callout[data-type='tip'] { --c: #2c8f63; --s: #ecf6f1; }
+.pv-callout[data-type='success'] { --c: #3f8f3a; --s: #eef6ea; }
+.pv-callout[data-type='example'] { --c: #8a4fc9; --s: #f3edfb; }
+.pv-callout[data-type='important'] { --c: #b34bb0; --s: #f9edf9; }
+.pv-callout[data-type='question'] { --c: #cf4b86; --s: #fceef5; }
+.pv-callout[data-type='warning'] { --c: #a67c1a; --s: #fbf4e4; }
+.pv-callout[data-type='caution'] { --c: #b8641a; --s: #fcf0e6; }
+.pv-callout[data-type='danger'] { --c: #c33f2c; --s: #fceceb; }
+.pv-callout[data-type='quote'] { --c: #6f6c66; --s: #f4f3f0; }
+.pv-callout { border-left-color: var(--c); background: var(--s); }
+.pv-callout-title, .pv-callout-icon { color: var(--c); }
+.pv-callout-icon { background: #fff; }
+/* 待办：预览里那个勾是自己画的 span，导出里补成可见的方框字符 */
+.pv-task { display: inline-block; margin-right: .35em; color: var(--fg-dim); }
+.pv-task::after { content: "\\2610"; font-size: 1.05em; }
+.pv-task.on::after { content: "\\2612"; color: var(--accent); }
 /* 折叠块 / 分栏 / 嵌入：导出时全部摊平，不做交互 */
 .pv-fold > summary { cursor: default; font-weight: 600; }
 .pv-embed { display: inline-flex; gap: 5px; padding: 2px 9px 2px 7px;
@@ -1233,8 +1320,12 @@ tr { break-inside: avoid; page-break-inside: avoid; }
 sup a { text-decoration: none; }
 sup.pv-fnref { font-size: .75em; line-height: 0; vertical-align: super; }
 /* 高级代码块的外壳：标题条 + 行号 + 高亮行 */
-.pv-code-fig { margin: 1em 0; }
-.pv-code-fig > pre { margin: 0; }
+.pv-code-fig { margin: 1em 0; text-align: left; }
+.pv-code-fig > .pv-code-box > pre { margin: 0; border-top-left-radius: 0; border-top-right-radius: 0; }
+.pv-code-fig:not(:has(.pv-code-title)) > .pv-code-box > pre { border-radius: 10px; }
+/* 语言标签：导出里它只是一行说明，不再浮到右上角（打印时绝对定位会飘） */
+.pv-code-lang { display: block; text-align: right; margin: .3em 0 -.5em;
+  font-size: .72em; font-weight: 600; letter-spacing: .02em; color: var(--fg-faint); }
 .pv-code-title { padding: 6px 14px; border: 1px solid var(--code-line); border-bottom: 0;
   border-radius: 8px 8px 0 0; background: var(--surface);
   font-size: .78em; font-weight: 600; color: var(--fg-dim); }
@@ -1271,6 +1362,163 @@ sup.pv-fnref { font-size: .75em; line-height: 0; vertical-align: super; }
   .cm-hl-var { color: #a5a29a } .cm-hl-comment { color: #8a8780 }
 }`
 
+/**
+ * Word / WPS 那一份样式表。
+ *
+ * 为什么不复用上面那份：Word 打开 .doc 走的是**它自己的 HTML 引擎**，
+ * 它不认 CSS 变量（var(--fg)）、不认 color-mix、不认 oklch。上面那份里
+ * 凡是写成 var() 的地方，到了 Word 里一律等于没写 —— 字号、颜色、行距、
+ * 边框全线丢失，于是看上去就是「标题不比正文大、表格没有线、整篇挤在一起」，
+ * 也就是用户说的「很乱」。所以这一份里每个值都是字面量，并补上 Word 自己的
+ * mso 属性（行高规则、表格间距、图片边框）。
+ *
+ * 尺寸一律用 pt：Word 的排版单位是 pt，用 em/px 它换算出来的大小常常对不上。
+ */
+const WORD_CSS = `
+body { font-family: "等线","DengXian","Microsoft YaHei","PingFang SC",sans-serif;
+  font-size: 10.5pt; line-height: 1.72; color: #24231f; background: #ffffff;
+  margin: 0; padding: 0; }
+p { margin: 0 0 6pt; }
+p, li, td, th { mso-line-height-rule: exactly; }
+h1, h2, h3, h4, h5, h6 { font-weight: bold; color: #1e1d1a; margin: 14pt 0 6pt;
+  line-height: 1.35; }
+h1 { font-size: 20pt; margin-top: 0; }
+h2 { font-size: 16pt; }
+h3 { font-size: 14pt; }
+h4 { font-size: 12.5pt; }
+h5 { font-size: 11pt; color: #55534e; }
+h6 { font-size: 10.5pt; color: #8a867c; }
+ul, ol { margin: 0 0 8pt; padding-left: 22pt; }
+li { margin: 0 0 3pt; }
+a { color: #2f6f52; text-decoration: underline; }
+strong { font-weight: bold; }
+del { color: #8a867c; }
+mark { background: #f6e3a8; }
+hr { border: none; border-top: 1px solid #dedbd4; margin: 14pt 0; }
+blockquote { margin: 10pt 0; padding: 4pt 0 4pt 12pt; border-left: 3pt solid #2f6f52;
+  background: #f2f5f3; color: #55534e; }
+code { font-family: Consolas,"Courier New",monospace; font-size: 9.5pt;
+  background: #f4f2ec; padding: 0 2pt; }
+/* Word 里 div 的边框和底色彩色常常画不出来，所以代码块与提示块都在
+   wordify() 里换成了单格表格 —— 表格是 Word 最认的一种容器。 */
+table.wc-code { width: 100%; border-collapse: collapse; margin: 10pt 0; }
+table.wc-code td { border: 1px solid #e2ded4; background: #f7f6f2;
+  padding: 8pt 10pt; font-family: Consolas,"Courier New",monospace; font-size: 9pt;
+  line-height: 1.6; text-align: left; color: #3b3934; }
+table.wc-code td pre { margin: 0; padding: 0; border: 0; background: transparent;
+  white-space: pre-wrap; word-break: break-all; }
+table.wc-code td .pv-line { display: block; }
+table.wc-code td .pv-line.is-hl { background: #eef4f0; }
+/* 代码高亮走字面色（Word 不认 var） */
+.cm-hl-keyword { color: #8a4e30 } .cm-hl-string { color: #2d7a56 }
+.cm-hl-number { color: #b56a16 } .cm-hl-func { color: #3d5f8f }
+.cm-hl-type { color: #6a548f } .cm-hl-prop { color: #5c6848 }
+.cm-hl-operator { color: #8a4e30 } .cm-hl-punct { color: #6b6862 }
+.cm-hl-var { color: #6b6862 } .cm-hl-comment { color: #8d8a83; font-style: italic }
+table.wc-callout { width: 100%; border-collapse: collapse; margin: 12pt 0; }
+table.wc-callout td { padding: 8pt 11pt; font-size: 10pt; text-align: left;
+  border: 1px solid #dedbd4; background: #f7f6f3; }
+table.wc-callout[data-type='note'] td { border-left: 4.5pt solid #5b60d6; background: #eef0fb; }
+table.wc-callout[data-type='info'] td { border-left: 4.5pt solid #2a7fc0; background: #ecf4fb; }
+table.wc-callout[data-type='tip'] td { border-left: 4.5pt solid #2c8f63; background: #ecf6f1; }
+table.wc-callout[data-type='success'] td { border-left: 4.5pt solid #3f8f3a; background: #eef6ea; }
+table.wc-callout[data-type='example'] td { border-left: 4.5pt solid #8a4fc9; background: #f3edfb; }
+table.wc-callout[data-type='important'] td { border-left: 4.5pt solid #b34bb0; background: #f9edf9; }
+table.wc-callout[data-type='question'] td { border-left: 4.5pt solid #cf4b86; background: #fceef5; }
+table.wc-callout[data-type='warning'] td { border-left: 4.5pt solid #a67c1a; background: #fbf4e4; }
+table.wc-callout[data-type='caution'] td { border-left: 4.5pt solid #b8641a; background: #fcf0e6; }
+table.wc-callout[data-type='danger'] td { border-left: 4.5pt solid #c33f2c; background: #fceceb; }
+table.wc-callout[data-type='quote'] td { border-left: 4.5pt solid #6f6c66; background: #f4f3f0; }
+table.wc-callout[data-type='note'] .pv-callout-title { color: #4a4fc0 }
+table.wc-callout[data-type='info'] .pv-callout-title { color: #236ba4 }
+table.wc-callout[data-type='tip'] .pv-callout-title { color: #237553 }
+table.wc-callout[data-type='success'] .pv-callout-title { color: #337530 }
+table.wc-callout[data-type='example'] .pv-callout-title { color: #743faa }
+table.wc-callout[data-type='important'] .pv-callout-title { color: #973d94 }
+table.wc-callout[data-type='question'] .pv-callout-title { color: #af3e70 }
+table.wc-callout[data-type='warning'] .pv-callout-title { color: #8c6815 }
+table.wc-callout[data-type='caution'] .pv-callout-title { color: #9c5315 }
+table.wc-callout[data-type='danger'] .pv-callout-title { color: #a53425 }
+table.wc-callout[data-type='quote'] .pv-callout-title { color: #5d5a54 }
+.pv-callout-head { font-weight: bold; margin: 0 0 3pt; }
+.pv-callout-title { font-size: 10.5pt; }
+/* 图标是 SVG，Word 画不出来 —— 换成同色的一个实心方点当标记，
+   至少「这里有块带色的提示」这件事还在。 */
+.pv-callout-icon { display: none; }
+.pv-callout-body > p:first-child { margin-top: 0; }
+.pv-callout-body > p:last-child { margin-bottom: 0; }
+/* 表格：Word 认 collapse，边框写在单元格上 */
+table:not(.wc-code):not(.wc-callout) { border-collapse: collapse; width: 100%;
+  margin: 10pt 0; font-size: 10pt; mso-table-lspace: 0pt; mso-table-rspace: 0pt; }
+th, td { border: 1px solid #dedbd4; padding: 6pt 9pt; vertical-align: top;
+  text-align: center; }
+th[align='left'], td[align='left'] { text-align: left; }
+th[align='right'], td[align='right'] { text-align: right; }
+th { background: #f2f1ed; font-weight: bold; }
+img { max-width: 100%; border: 0; }
+figure { margin: 10pt 0; }
+figcaption { font-size: 9pt; color: #8a867c; margin-top: 4pt; }
+/* 待办的勾：预览里那个是 CSS 画的方框，Word 看不到 ::after，
+   所以 wordify() 直接把它换成了字符 ☐ / ☒。 */
+.pv-task { font-family: "Segoe UI Symbol",Arial,sans-serif; }
+.pv-embed { color: #2f6f52; border-bottom: 1px solid #dedbd4; }
+.pv-wlink { color: #2f6f52; text-decoration: underline; }
+.pv-wlink.is-missing, .pv-embed.is-missing { color: #8a867c; }
+.pv-tag { color: #2f6f52; }
+.pv-bid { color: #8a867c; font-size: 9pt; }
+.pv-code-title { font-weight: bold; font-size: 9.5pt; color: #55534e;
+  margin: 0 0 3pt; }
+.pv-code-lang { font-size: 8.5pt; color: #8a867c; font-weight: bold; }
+.pv-math, .pv-math-block { font-family: Consolas,monospace; background: #f4f2ec; }
+.footnotes { margin-top: 16pt; padding-top: 6pt; border-top: 1px solid #dedbd4;
+  font-size: 9pt; color: #55534e; }
+sup { vertical-align: super; font-size: 8pt; }
+sup a { text-decoration: none; }
+@page WordSection1 { size: A4; margin: 2.2cm 2cm; }
+div.WordSection1 { page: WordSection1; }
+`
+
+/**
+ * 把正文 HTML 改成 Word 认得的结构。
+ *
+ * 两处必须换掉，都是同一个原因：**Word 不画 div 的边框和底色**。
+ *   · 提示块 → 单格表格（左边那条 4.5pt 的粗边就是类型色）
+ *   · 代码块 → 单格表格（灰底 + 细框 + 等宽字）
+ * 另外待办那个方框是 CSS 画的（::after），Word 里看不见，换成 ☐ / ☒ 字符。
+ */
+function wordify(root: HTMLElement) {
+  const toCell = (el: Element, cls: string, attrs: string[] = []) => {
+    const table = document.createElement('table')
+    table.className = cls
+    for (const a of attrs) {
+      const v = el.getAttribute(a)
+      if (v) table.setAttribute(a, v)
+    }
+    const td = document.createElement('td')
+    while (el.firstChild) td.appendChild(el.firstChild)
+    const tr = document.createElement('tr')
+    tr.appendChild(td)
+    table.appendChild(tr)
+    el.replaceWith(table)
+  }
+
+  for (const el of Array.from(root.querySelectorAll('.pv-callout'))) {
+    toCell(el, 'wc-callout', ['data-type'])
+  }
+  for (const el of Array.from(root.querySelectorAll('figure.pv-code-fig'))) {
+    toCell(el, 'wc-code')
+  }
+  for (const el of Array.from(root.querySelectorAll('pre'))) {
+    toCell(el, 'wc-code')
+  }
+  for (const el of Array.from(root.querySelectorAll('.pv-task'))) {
+    el.textContent = el.classList.contains('on') ? '☒' : '☐'
+  }
+  for (const el of Array.from(root.querySelectorAll('.pv-mermaid'))) {
+    el.querySelectorAll('.pv-mermaid-src').forEach((n) => n.remove())
+  }
+}
+
 /** Markdown → 正文 HTML（和预览同一套解析与高亮） */
 /**
  * 把 Markdown 摊成导出用的 HTML 片段，外加这份笔记**额外需要**的样式。
@@ -1303,11 +1551,15 @@ async function renderExportBody(
 
   const hasGraph = body.includes('pv-mermaid-graph')
   const hasMath = body.includes('pv-math')
-  if (hasGraph || hasMath) {
+  // Word 那条路**总是**要把 HTML 挂上 DOM 过一遍：wordify 要靠 DOM 才能把
+  // 提示块和代码块换成表格。只挂「有图表/公式」的那些篇的话，
+  // 没有图表的笔记导出来就还是一堆 div，边框和底色全丢。
+  if (hasGraph || hasMath || forWord) {
     const host = document.createElement('div')
     host.innerHTML = body
     if (hasGraph) await renderMermaidInHtml(host, { asImage: forWord })
     if (hasMath) await renderMathInHtml(host, forWord ? { output: 'mathml' } : {})
+    if (forWord) wordify(host)
     body = host.innerHTML
   }
 
@@ -1357,14 +1609,7 @@ function wordDocument(title: string, body: string) {
 </xml>
 <![endif]-->
 <style>
-${EXPORT_CSS}
-/* Word 只认自己那一套：分区里显式声明纸张与页边距，
-   mso 的表格/段落默认行高也要压掉，否则粘贴进来的 HTML 会被撑开。 */
-@page WordSection1 { size: A4; margin: 2.2cm 2cm; }
-div.WordSection1 { page: WordSection1; }
-p, li, td, th { mso-line-height-rule: exactly; }
-table { mso-table-lspace: 0pt; mso-table-rspace: 0pt; }
-img { border: 0; }
+${WORD_CSS}
 </style>
 </head>
 <body>
@@ -1462,6 +1707,16 @@ const COLUMN_AUTO_KEY = 'nota-column-auto'
 const AI_NOTE_KEY = 'nota-ai-note'
 const AI_WITH_NOTE_KEY = 'nota-ai-withnote'
 const AI_WEB_KEY = 'nota-ai-web'
+
+/**
+ * 关系图的开关。
+ *
+ * 打开时主区换成关系图，但**不清掉当前打开的笔记** —— 从图上点一篇过去、
+ * 再回到正文，是它最主要的用法；关掉图就该还在原来那一篇上。
+ */
+function toggleGraph() {
+  state.graphOpen = !state.graphOpen
+}
 
 function setColumnView(v: ColumnView) {
   state.columnView = v
@@ -2213,6 +2468,8 @@ export const store = {
   visibleFiles,
   navTitle,
   allTags,
+  toggleGraph,
+  restoreLastWorkspace,
   openWorkspace,
   switchWorkspace,
   forgetRoot,

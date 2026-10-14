@@ -10,6 +10,7 @@ import {
   FolderOpen,
   FolderPlus,
   Inbox,
+  Network,
   Paperclip,
   PanelLeftClose,
   PanelLeftOpen,
@@ -121,6 +122,18 @@ function openLibrary(tab: 'attach' | 'trash') {
 
 function openAi() {
   store.setMainView('ai')
+}
+
+/** 关系图：主区换一种看法。再点一次回到正文。 */
+function toggleGraph() {
+  store.toggleGraph()
+}
+
+/** 全文搜索面板。两个入口共用同一个面板，区别只在搜不搜正文 */
+function openSearch(withBody: boolean) {
+  window.dispatchEvent(
+    new CustomEvent('nota:palette', { detail: withBody ? 'body' : 'name' }),
+  )
 }
 
 /* ── 新建标签 ──
@@ -523,6 +536,25 @@ onBeforeUnmount(() => document.removeEventListener('pointerdown', onDocPointer))
             <span class="nav-ico"><Sparkles :size="15" :stroke-width="1.9" /></span>
             <span class="nav-label">AI 编写</span>
             <span v-if="state.chat.length" class="nav-count">{{ state.chat.length }}</span>
+          </button>
+        </nav>
+
+        <!-- 关系图 / 全文搜索。
+             两个都是「换一种看法」而不是「去某个地方」，所以放在一起。
+             侧栏那个搜索框只比文件名，找「我记得写过但忘了在哪篇」得走这里。 -->
+        <nav class="nav nav-group">
+          <button class="nav-item" :class="{ on: state.graphOpen }" @click="toggleGraph">
+            <span class="nav-ico"><Network :size="15" :stroke-width="1.9" /></span>
+            <span class="nav-label">关系图</span>
+            <span class="nav-count nav-key">Ctrl+⇧G</span>
+          </button>
+        </nav>
+
+        <nav class="nav nav-group">
+          <button class="nav-item" @click="openSearch(true)">
+            <span class="nav-ico"><Search :size="15" :stroke-width="1.9" /></span>
+            <span class="nav-label">全文搜索</span>
+            <span class="nav-count nav-key">Ctrl+⇧F</span>
           </button>
         </nav>
 
@@ -1010,6 +1042,12 @@ onBeforeUnmount(() => document.removeEventListener('pointerdown', onDocPointer))
   font-size: 10px;
   font-variant-numeric: tabular-nums;
   color: color-mix(in oklab, var(--n-fg-faint) 80%, transparent);
+}
+/* 快捷键提示：不是计数，所以不排在数字那一列里，字也再淡一档 */
+.nav-key {
+  font-variant-numeric: normal;
+  letter-spacing: 0.02em;
+  opacity: 0.75;
 }
 
 .nav-item:hover {

@@ -44,6 +44,7 @@ import {
   renderMathInHtml,
   prepareMarkdown,
   outlineFromSource,
+  findTaskLine,
 } from '@/editor/preview-rich'
 import type { HeadingItem } from '@/editor/preview-rich'
 import { getMarked, highlightFences } from '@/editor/markdown'
@@ -983,11 +984,68 @@ function markWikiLinks(pane: HTMLElement) {
   }
 }
 
+/**
+ * 预览里点一下分栏标签 → 切到那一页。
+ *
+ * 之前标签只是几段静态 HTML：长得像页签，点下去却什么都没有，
+ * 因为它压根没接点击。切换只改 `.on` 落在第几个上 —— 序号存在 data-i 里，
+ * 标签和内容页按同一个号配对。
+ */
+function onTabClick(tab: HTMLElement) {
+  const box = tab.closest('.pv-tabs')
+  if (!box) return
+  const i = tab.dataset.i ?? '0'
+  for (const n of Array.from(box.querySelectorAll<HTMLElement>('.pv-tab'))) {
+    n.classList.toggle('on', (n.dataset.i ?? '') === i)
+  }
+  for (const n of Array.from(box.querySelectorAll<HTMLElement>('.pv-tab-pane'))) {
+    n.classList.toggle('on', (n.dataset.i ?? '') === i)
+  }
+}
+
+/**
+ * 预览里勾掉（或取消）一条待办 → 改的是**源码**，不是预览里的那个 span。
+ *
+ * 只改预览等于改了个影子：一滚动重渲染就复原，文件里也从来没变过。
+ * 所以这里照着序号回源码找到那一行，把 `[ ]` 和 `[x]` 互换一笔。
+ * 改动走 view.dispatch，于是 Ctrl+Z 能撤销、自动保存也会照常落盘。
+ */
+function onTaskClick(el: HTMLElement) {
+  const v = view
+  if (!v) return
+  const i = Number(el.dataset.task ?? -1)
+  if (!Number.isFinite(i) || i < 0) return
+  const doc = v.state.doc.toString()
+  const hit = findTaskLine(doc, i)
+  if (!hit) return
+  const done = !hit.done
+  v.dispatch({
+    changes: { from: hit.from, to: hit.from + 1, insert: done ? 'x' : ' ' },
+    userEvent: 'input.toggleTask',
+  })
+  // 预览是防抖重渲染的，这里先自己把勾画上，不等那一下 ——
+  // 否则点了要等零点几秒才有反应，手感像卡了。
+  el.classList.toggle('on', done)
+  el.setAttribute('aria-checked', done ? 'true' : 'false')
+}
+
 /** 在预览里点双链 / 嵌入卡 → 打开那一篇 */
 function onPreviewClick(e: MouseEvent) {
-  const el = (e.target as HTMLElement | null)?.closest?.('.pv-wlink, .pv-embed') as HTMLElement | null
-  if (!el) return
-  const note = el.dataset.note
+  const el = e.target as HTMLElement | null
+  const tab = el?.closest?.('.pv-tab') as HTMLElement | null
+  if (tab) {
+    onTabClick(tab)
+    return
+  }
+  const task = el?.closest?.('.pv-task') as HTMLElement | null
+  if (task) {
+    e.preventDefault()
+    onTaskClick(task)
+    return
+  }
+  const link = el?.closest?.('.pv-wlink, .pv-embed') as HTMLElement | null
+  if (!link) return
+  const note = link.dataset.note
   if (!note) return
   e.preventDefault()
   const target = resolveWikiNote(note)

@@ -5,6 +5,8 @@ import SidePanel from '@/components/SidePanel.vue'
 import SideColumn from '@/components/SideColumn.vue'
 import SplitHandle from '@/components/SplitHandle.vue'
 import EditorPane from '@/components/EditorPane.vue'
+import GraphView from '@/components/GraphView.vue'
+import SearchPalette from '@/components/SearchPalette.vue'
 import WelcomeView from '@/components/WelcomeView.vue'
 import WindowControls from '@/components/WindowControls.vue'
 import ToastHost from '@/components/ToastHost.vue'
@@ -19,6 +21,15 @@ function onLibrary(e: Event) {
   const which = (e as CustomEvent<'attach' | 'trash'>).detail
   store.setColumnView(which === 'trash' ? 'trash' : 'attach')
 }
+
+/**
+ * 搜索面板：一个面板两个快捷键。
+ *
+ * · Ctrl+P —— 只搜标题与路径（纯内存，几十毫秒）；
+ * · Ctrl+Shift+F —— 连正文一起搜（要读磁盘，所以另开一个键）。
+ * body 这个标记决定打开时搜不搜正文，面板自己按它改文案和提示。
+ */
+const search = ref<{ open: boolean; body: boolean }>({ open: false, body: false })
 
 /** 窗口宽度：中间那一列的「自适应」要跟着它走，所以得是个响应式的值。
     用 ResizeObserver 而不是 resize 事件 —— 窗口最大化、系统缩放、
@@ -71,6 +82,15 @@ function onKey(e: KeyboardEvent) {
     // 侧边栏折叠/展开。资料栏没有这个快捷键 —— 它一直开着。
     e.preventDefault()
     store.toggleSidebar()
+  } else if (e.key === 'p') {
+    e.preventDefault()
+    search.value = { open: true, body: false }
+  } else if (e.shiftKey && (e.key === 'F' || e.key === 'f')) {
+    e.preventDefault()
+    search.value = { open: true, body: true }
+  } else if (e.shiftKey && (e.key === 'G' || e.key === 'g')) {
+    e.preventDefault()
+    store.toggleGraph()
   }
 }
 
@@ -94,10 +114,20 @@ function onLinkClick(e: MouseEvent) {
   window.open(href, '_blank', 'noopener')
 }
 
-onMounted(() => {
+/** 侧栏的点「全文搜索」/「关系图」这类入口 → 打开搜索面板 */
+function onPalette(e: Event) {
+  const which = (e as CustomEvent<'name' | 'body'>).detail
+  search.value = { open: true, body: which === 'body' }
+}
+
+onMounted(async () => {
   store.initTheme()
   store.initPrefs()
+  // 回到上次那个工作区（与上次在看的那篇）。失败就退回欢迎页，不弹错误 ——
+  // 「盘不在了」这种事用户自己一看就明白，弹窗反而是打扰。
+  await store.restoreLastWorkspace()
   window.addEventListener('keydown', onKey)
+  window.addEventListener('nota:palette', onPalette)
   window.addEventListener('nota:library', onLibrary)
   document.addEventListener('click', onLinkClick)
   ro = new ResizeObserver(() => {
@@ -113,6 +143,7 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   window.removeEventListener('keydown', onKey)
+  window.removeEventListener('nota:palette', onPalette)
   window.removeEventListener('nota:library', onLibrary)
   document.removeEventListener('click', onLinkClick)
   ro?.disconnect()
@@ -141,12 +172,21 @@ onBeforeUnmount(() => {
         </header>
 
         <WelcomeView v-if="!state.root" />
+        <!-- 关系图占的是主区（中间那一列只有 300px，画不下几百个节点）。
+             它不是「关掉当前笔记」：从图上点一篇跳过去、再关掉图，正文还该在。 -->
+        <GraphView v-else-if="state.graphOpen" />
         <EditorPane v-else-if="state.activePath" />
         <div v-else class="idle">
           <p>从左侧选一篇笔记，或者<button class="link" @click="store.newNote()">新建一篇</button></p>
         </div>
       </main>
     </div>
+
+    <SearchPalette
+      :open="search.open"
+      :body="search.body"
+      @close="search.open = false"
+    />
 
     <!-- 全应用共用的轻提示：把各处抛出的 nota:toast 接住 -->
     <ToastHost />

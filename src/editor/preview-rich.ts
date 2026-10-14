@@ -12,21 +12,52 @@
  * 出错时最坏也就是退化成原文，不会整页渲染失败。
  */
 
+import { displayLangName } from './code-languages'
+
 const CALLOUT_RE =
   /<blockquote>\s*<p>\[!([A-Za-z]+)\]([+-]?)\s*([\s\S]*?)<\/p>([\s\S]*?)<\/blockquote>/g
 
+/**
+ * 提示块的图标一律是描边 SVG，不用字符。
+ *
+ * 字符看着省事，实际三种毛病：⚠ 在有些字体里会被画成彩色 emoji（一块
+ * 黄三角压在文里）、✦ ❝ 这类符号不同字体高矮不一、而且它们在深色下
+ * 跟着正文色走，根本分不出类型。SVG 用 currentColor，颜色由 --c 给，
+ * 深浅两套主题下都跟提示块自己的色走。
+ */
+function calloutIcon(paths: string): string {
+  return (
+    `<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" ` +
+    `stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${paths}</svg>`
+  )
+}
+
+const I = {
+  info: '<circle cx="12" cy="12" r="9"/><path d="M12 11.5V16"/><path d="M12 8h.01"/>',
+  doc: '<path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8Z"/><path d="M14 3v5h5"/><path d="M9 13h6"/><path d="M9 17h4"/>',
+  bulb: '<path d="M9.5 18h5"/><path d="M10.5 21h3"/><path d="M12 3a6 6 0 0 0-3.6 10.8c.5.4.8 1 .8 1.6v.6h5.6v-.6c0-.6.3-1.2.8-1.6A6 6 0 0 0 12 3Z"/>',
+  tri: '<path d="M10.3 4.3 2.7 17.4a2 2 0 0 0 1.7 3h15.2a2 2 0 0 0 1.7-3L13.7 4.3a2 2 0 0 0-3.4 0Z"/><path d="M12 9.5v3.5"/><path d="M12 16.5h.01"/>',
+  bang: '<circle cx="12" cy="12" r="9"/><path d="M12 7.5v5.5"/><path d="M12 16.5h.01"/>',
+  cross: '<circle cx="12" cy="12" r="9"/><path d="m9 9 6 6"/><path d="m15 9-6 6"/>',
+  check: '<circle cx="12" cy="12" r="9"/><path d="m8.2 12.4 2.6 2.6 5-5.4"/>',
+  star: '<path d="M12 3.2l2.6 5.5 6 .8-4.4 4.2 1.1 6-5.3-2.9-5.3 2.9 1.1-6L3.4 9.5l6-.8Z"/>',
+  ask: '<circle cx="12" cy="12" r="9"/><path d="M9.7 9.4a2.4 2.4 0 1 1 3.3 2.2c-.6.3-1 1-1 1.7"/><path d="M12 16.5h.01"/>',
+  code: '<rect x="3" y="4.5" width="18" height="15" rx="3"/><path d="m7.5 10 2.5 2.5-2.5 2.5"/><path d="M13 15h3.5"/>',
+  chat: '<path d="M20 11.5a7 7 0 0 1-7 7H9.5L5 21v-4.6A7 7 0 0 1 9 5h4a7 7 0 0 1 7 6.5Z"/>',
+}
+
 const CALLOUT_META: Record<string, { label: string; icon: string }> = {
-  note: { label: '提示', icon: 'ℹ' },
-  tip: { label: '技巧', icon: '✦' },
-  info: { label: '说明', icon: 'ℹ' },
-  warning: { label: '警告', icon: '⚠' },
-  caution: { label: '注意', icon: '⚠' },
-  danger: { label: '危险', icon: '⛔' },
-  success: { label: '成功', icon: '✓' },
-  important: { label: '重要', icon: '❕' },
-  question: { label: '疑问', icon: '?' },
-  example: { label: '示例', icon: '❯' },
-  quote: { label: '引用', icon: '❝' },
+  note: { label: '提示', icon: calloutIcon(I.info) },
+  tip: { label: '技巧', icon: calloutIcon(I.bulb) },
+  info: { label: '说明', icon: calloutIcon(I.doc) },
+  warning: { label: '警告', icon: calloutIcon(I.tri) },
+  caution: { label: '注意', icon: calloutIcon(I.bang) },
+  danger: { label: '危险', icon: calloutIcon(I.cross) },
+  success: { label: '成功', icon: calloutIcon(I.check) },
+  important: { label: '重要', icon: calloutIcon(I.star) },
+  question: { label: '疑问', icon: calloutIcon(I.ask) },
+  example: { label: '示例', icon: calloutIcon(I.code) },
+  quote: { label: '引用', icon: calloutIcon(I.chat) },
 }
 
 /** Callout：把 `> [!TYPE] 标题` 的引用块换成带类型的卡片 */
@@ -253,13 +284,19 @@ function buildTabsHtml(region: string): string {
 
   if (tabs.length === 0) return region
 
+  // data-i 是给点击接线用的：标签和它对应的内容页按同一个序号配对，
+  // 切换时只改两边 `.on` 落在第几个上。没有它就得靠 DOM 顺序去数，
+  // 一旦中间夹了别的节点数就错。
   const head = tabs
-    .map((t, k) => `<span class="pv-tab${k === 0 ? ' on' : ''}">${t.label}</span>`)
+    .map(
+      (t, k) =>
+        `<span class="pv-tab${k === 0 ? ' on' : ''}" data-i="${k}" role="tab" tabindex="0">${t.label}</span>`,
+    )
     .join('')
   const panes = tabs
     .map(
       (t, k) =>
-        `<div class="pv-tab-pane${k === 0 ? ' on' : ''}">${t.body.join('\n') || '<p></p>'}</div>`,
+        `<div class="pv-tab-pane${k === 0 ? ' on' : ''}" data-i="${k}">${t.body.join('\n') || '<p></p>'}</div>`,
     )
     .join('')
   return `<div class="pv-tabs"><div class="pv-tabbar">${head}</div>${panes}</div>`
@@ -594,6 +631,7 @@ export function enhancePreview(html: string): { html: string; headings: HeadingI
   out = enhanceCodeBlocks(out)
   out = transformHashtags(out)
   out = transformBlockIds(out)
+  out = markTaskCheckboxes(out)
   out = appendFootnotes(out, notes)
   out = transformTables(out)
   return decorateHeadings(out)
@@ -667,8 +705,9 @@ function enhanceCodeBlocks(src: string): string {
     /<pre\b([^>]*)\bdata-info="([^"]*)"([^>]*)>([\s\S]*?)<\/pre>/g,
     (whole, preA: string, rawInfo: string, preB: string, inner: string) => {
       const info = decodeEntities(rawInfo).trim()
-      if (!info) return whole
-      const lang = info.split(/\s+/)[0] ?? ''
+      const lang =
+        (info.split(/\s+/)[0] ?? '') ||
+        (/<code[^>]*class="[^"]*language-([^"\s]+)/.exec(inner)?.[1] ?? '')
       const title = /title\s*=\s*"([^"]*)"|title\s*=\s*'([^']*)'/.exec(info)
       const caption = (title?.[1] ?? title?.[2] ?? '').trim()
       const numbered = /\bline-?numbers\b/i.test(info)
@@ -692,9 +731,68 @@ function enhanceCodeBlocks(src: string): string {
       const head = caption
         ? `<figcaption class="pv-code-title">${escapeHtml(caption)}</figcaption>`
         : ''
-      return `<figure class="pv-code-fig" data-lang="${escapeAttr(lang)}">${head}<pre${attrs}>${body}</pre></figure>`
+      // 语言标签放在 pre **外面**：塞进 <pre> 里的话它就成了代码正文的一部分，
+      // 选中整块复制时会把「Python」两个字一起带走。
+      const chip = lang
+        ? `<span class="pv-code-lang">${escapeHtml(displayLangName(lang))}</span>`
+        : ''
+      const box = `<div class="pv-code-box">${chip}<pre${attrs}>${body}</pre></div>`
+      return caption
+        ? `<figure class="pv-code-fig" data-lang="${escapeAttr(lang)}">${head}${box}</figure>`
+        : box
     },
   )
+}
+
+/* ── 待办清单能勾选 ──
+   marked 把 `- [ ] 去买牛奶` 渲染成一个 **带 disabled 的复选框**：
+   它只是把源码里那对方括号画成一个勾，并不打算让人点。
+   可预览里的待办如果不能勾，它就只是一张画得好看的清单 ——
+   清单的全部价值恰恰在「做完一项划掉一项」这个动作上。
+
+   所以把那些 input 换成我们自己的 span，并按**出现顺序**编号（data-task）。
+   序号是两边对齐的唯一凭据：源码里第 n 个任务行 ↔ 预览里第 n 个勾。
+   两边都只数围栏之外的任务行，代码块里写的 `- [ ]` 不会被算进去，不会串号。 */
+function markTaskCheckboxes(src: string): string {
+  let n = 0
+  return src.replace(/<input\b[^>]*>/g, (tag) => {
+    if (!/type\s*=\s*["']?checkbox/i.test(tag)) return tag
+    const on = /\bchecked\b/i.test(tag)
+    const i = n++
+    return (
+      `<span class="pv-task${on ? ' on' : ''}" data-task="${i}" role="checkbox" ` +
+      `aria-checked="${on ? 'true' : 'false'}" tabindex="0"></span>`
+    )
+  })
+}
+
+const TASK_LINE_RE = /^([ \t]*(?:[-*+]|\d+[.)])[ \t]+)\[([ xX])\]/
+
+/**
+ * 源码里第 index 个待办行在哪（返回待切换的那个字符的位置）。
+ *
+ * 跳过的只有围栏代码块：里面的 `- [ ]` 只是示例文本，不是真待办。
+ * 和 markTaskCheckboxes 用同一套「围栏之外才计数」的规则，序号才对得上。
+ */
+export function findTaskLine(md: string, index: number): { from: number; done: boolean } | null {
+  let at = 0
+  let pos = 0
+  let fenceChar = ''
+  for (const line of md.split('\n')) {
+    const fence = /^[ \t]*(`{3,}|~{3,})/.exec(line)
+    if (fence) {
+      if (!fenceChar) fenceChar = fence[1][0]
+      else if (fence[1][0] === fenceChar) fenceChar = ''
+    } else if (!fenceChar) {
+      const t = TASK_LINE_RE.exec(line)
+      if (t) {
+        if (at === index) return { from: pos + t[1].length + 1, done: t[2].toLowerCase() === 'x' }
+        at += 1
+      }
+    }
+    pos += line.length + 1
+  }
+  return null
 }
 
 /** 把 `2,4-6` 这样的写法展开成行号集合 */
@@ -877,13 +975,39 @@ function mermaidThemeVariables(): Record<string, string> {
   const fg = readVar('--n-fg', dark ? '#eeedea' : '#2a2b28')
   const fgDim = readVar('--n-fg-dim', dark ? '#a3a19b' : '#8b8880')
   const line = readVar('--n-line', dark ? '#33343a' : '#e6e2da')
-  const accent = readVar('--n-accent', dark ? '#6fae8f' : '#3f6f5a')
 
-  /* 节点：不是纯 accent 的实色块（那会让整张图变成一片强调色），
-     而是 accent 兑进底淡淡的——形状还在，颜色是「我们家的」。
-     边上屋顶线也用淡深色；文字永远是正文色，深浅两套都读得清。 */
-  const node = mix(accent, bg, 0.16)
-  const nodeHeavy = mix(accent, bg, 0.34)
+  /* 图表自己带一套色板，不再跟着界面强调色走。
+   两条理由，都是挨过骂之后才定的：
+   ① 强调色是给按钮和链接用的，把它整块铺到图上，整张图就变成一片强调色，
+      而且用户换一次色板，所有图跟着换一种情绪 —— 图是内容，不该被主题绑架；
+   ② 之前那套是从强调色 + 语义色推出来的，推出来的结果偏蓝紫，
+      一整张图看过去发冷、发闷，被点名说丑。
+   现在这组是手挑的：青为主（节点）、琥珀与陶土作辅，橄榄/玫/石板蓝
+   留给饼图和多分支，冷暖搭着来，深浅两套各自取过对比。 */
+  const P = dark
+    ? {
+        a: '#5fb3a1',
+        b: '#e0b263',
+        c: '#e08a6e',
+        d: '#a3cb7e',
+        e: '#cb8bb2',
+        f: '#84a8cb',
+      }
+    : {
+        a: '#2e8c7e',
+        b: '#c98a2e',
+        c: '#bf5a3c',
+        d: '#6e8c46',
+        e: '#a44c74',
+        f: '#4a7ca6',
+      }
+
+  /* 节点：主色兑进底色，浅浅一层 —— 形状还在，颜色是「我们家的」。
+     描边取同色更深的一档，边上屋顶线用淡灰；文字永远是正文色，两套主题都读得清。 */
+  /* 深色下兑得要比浅色多：底色本身就暗，只兑两成的话节点几乎和背景同色，
+     整张图看上去像一堆描边空框。三成半才看得出「这是个有颜色的块」。 */
+  const node = mix(P.a, bg, dark ? 0.36 : 0.15)
+  const nodeHeavy = mix(P.a, bg, dark ? 0.6 : 0.46)
   const edge = mix(fgDim, bg, 0.55)
 
   /* 字体不能写成 `var(--n-font-ui)`：mermaid 把它塞进 SVG 的 font-family
@@ -901,19 +1025,19 @@ function mermaidThemeVariables(): Record<string, string> {
     primaryColor: node,
     primaryTextColor: fg,
     primaryBorderColor: nodeHeavy,
-    secondaryColor: mix(readVar('--n-info', '#34688f'), bg, 0.18),
+    secondaryColor: mix(P.b, bg, dark ? 0.24 : 0.16),
     secondaryTextColor: fg,
-    secondaryBorderColor: mix(readVar('--n-info', '#34688f'), bg, 0.4),
-    tertiaryColor: mix(readVar('--n-violet', '#6a5a9c'), bg, 0.18),
+    secondaryBorderColor: mix(P.b, bg, 0.46),
+    tertiaryColor: mix(P.c, bg, dark ? 0.24 : 0.16),
     tertiaryTextColor: fg,
-    tertiaryBorderColor: mix(readVar('--n-violet', '#6a5a9c'), bg, 0.4),
+    tertiaryBorderColor: mix(P.c, bg, 0.46),
     lineColor: edge,
     textColor: fg,
     titleColor: fg,
     /* 流程图：连线标签压在线上，给一层底色才读得出来 */
     edgeLabelBackground: surface,
-    clusterBkg: mix(accent, bg, 0.05),
-    clusterBorder: mix(accent, bg, 0.28),
+    clusterBkg: mix(P.a, bg, 0.05),
+    clusterBorder: mix(P.a, bg, 0.3),
     nodeBorder: nodeHeavy,
     /* 时序图 */
     actorBkg: node,
@@ -926,7 +1050,8 @@ function mermaidThemeVariables(): Record<string, string> {
     labelBoxBorderColor: line,
     labelTextColor: fg,
     loopTextColor: fg,
-    noteBkgColor: mix(readVar('--n-mark', '#f6e6a8'), bg, dark ? 0.22 : 0.4),
+    /* 便签沿用「便利贴是黄的」这个直觉：琥珀兑开，浅色下更淡一点 */
+    noteBkgColor: mix(P.b, bg, dark ? 0.22 : 0.32),
     noteTextColor: fg,
     noteBorderColor: line,
     /* 类图 / 状态图 / 甘特图 */
@@ -937,33 +1062,34 @@ function mermaidThemeVariables(): Record<string, string> {
     taskBkgColor: node,
     taskBorderColor: nodeHeavy,
     activeTaskBkgColor: nodeHeavy,
-    activeTaskBorderColor: accent,
+    activeTaskBorderColor: P.a,
     gridColor: line,
-    sectionBkgColor: mix(accent, bg, 0.05),
-    /* 饼图：一圈用掉应用自己的语义色（蓝/绿/琥珀/紫/红），
-       而不是 mermaid 默认那套看不出关系的彩虹 */
-    pie1: mix(readVar('--n-info', '#34688f'), bg, 0.85),
-    pie2: mix(readVar('--n-ok', '#3f7d52'), bg, 0.85),
-    pie3: mix(readVar('--n-warn', '#9a6b1f'), bg, 0.85),
-    pie4: mix(readVar('--n-violet', '#6a5a9c'), bg, 0.85),
-    pie5: mix(readVar('--n-danger', '#c0503f'), bg, 0.85),
-    pie6: mix(accent, bg, 0.7),
-    pie7: mix(readVar('--n-info', '#34688f'), bg, 0.5),
-    pie8: mix(readVar('--n-ok', '#3f7d52'), bg, 0.5),
+    sectionBkgColor: mix(P.a, bg, 0.05),
+    /* 饼图：同一组色按「实 → 淡」排两轮。八片里前六片各占一色
+       （够分清就行，第 7、8 片开始变淡，一眼看得出是次要的），
+       比 mermaid 默认那套看不出关系的彩虹好认得多。 */
+    pie1: mix(P.a, bg, 0.92),
+    pie2: mix(P.b, bg, 0.92),
+    pie3: mix(P.c, bg, 0.92),
+    pie4: mix(P.d, bg, 0.92),
+    pie5: mix(P.e, bg, 0.92),
+    pie6: mix(P.f, bg, 0.92),
+    pie7: mix(P.a, bg, 0.55),
+    pie8: mix(P.b, bg, 0.55),
     pieTitleTextSize: '15',
     pieStrokeColor: surface,
     pieOuterStrokeColor: line,
     /* 象限 / Git 图 */
-    quadrant1Fill: mix(readVar('--n-info', '#34688f'), bg, 0.16),
-    quadrant2Fill: mix(readVar('--n-ok', '#3f7d52'), bg, 0.16),
-    quadrant3Fill: mix(readVar('--n-warn', '#9a6b1f'), bg, 0.16),
-    quadrant4Fill: mix(readVar('--n-violet', '#6a5a9c'), bg, 0.16),
-    git0: mix(readVar('--n-danger', '#c0503f'), bg, 0.85),
-    git1: mix(readVar('--n-info', '#34688f'), bg, 0.85),
-    git2: mix(readVar('--n-ok', '#3f7d52'), bg, 0.85),
-    git3: mix(readVar('--n-warn', '#9a6b1f'), bg, 0.85),
-    git4: mix(readVar('--n-violet', '#6a5a9c'), bg, 0.85),
-    gitBranchLabel: mix(accent, bg, 0.16),
+    quadrant1Fill: mix(P.a, bg, 0.16),
+    quadrant2Fill: mix(P.b, bg, 0.16),
+    quadrant3Fill: mix(P.c, bg, 0.16),
+    quadrant4Fill: mix(P.d, bg, 0.16),
+    git0: mix(P.c, bg, 0.85),
+    git1: mix(P.a, bg, 0.85),
+    git2: mix(P.b, bg, 0.85),
+    git3: mix(P.d, bg, 0.85),
+    git4: mix(P.e, bg, 0.85),
+    gitBranchLabel: mix(P.a, bg, 0.16),
     commitLabelColor: fg,
     commitLabelBackground: surface,
   }
@@ -1144,8 +1270,20 @@ export async function renderMathInHtml(
  * 把 `title:` / `tags:` 那一整段渲染成一个巨大的二级标题——
  * 预览顶部会出现一段莫名其妙的元数据，这是最基础的渲染错误。
  */
+/**
+ * 剥掉文首的 frontmatter。
+ *
+ * 宽容三件事，都是真踩过的：
+ *  · BOM —— 有些编辑器存 UTF-8 会带，带了之后 `---` 就不在行首，整段漏进正文；
+ *  · 收尾那行 `---` 后面可以没有换行（文件只有 frontmatter 时）；
+ *  · 收尾行允许前后有空格。
+ * 反过来不宽容：必须是文件的**最开头**，正文中间的 `---`（分隔线）不算。
+ */
 export function stripFrontMatter(md: string): string {
-  return md.replace(/^---[ \t]*\r?\n[\s\S]*?\r?\n---[ \t]*\r?\n?/, '')
+  return md.replace(
+    /^\uFEFF?[ \t]*---[ \t]*\r?\n[\s\S]*?\r?\n[ \t]*---[ \t]*(?:\r?\n|$)/,
+    '',
+  )
 }
 
 /**

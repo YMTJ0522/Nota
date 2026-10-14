@@ -168,7 +168,35 @@
 .md-body figure.pv-code-fig {
   margin: 1em 0;
 }
-.md-body figure.pv-code-fig > pre {
+/* 代码块的定位容器：语言标签挂在它的右上角。
+   标签必须待在 <pre> 外面 —— 在里面的话它就属于代码正文，
+    整块选中复制时会连「Python」这个词一起复制走。 */
+.md-body .pv-code-box {
+  position: relative;
+}
+.md-body .pv-code-lang {
+  position: absolute;
+  top: 6px;
+  right: 9px;
+  padding: 1px 7px;
+  border-radius: 6px;
+  background: color-mix(in oklab, var(--n-fg) 7%, var(--n-code-surface));
+  color: var(--n-fg-faint);
+  font-family: var(--n-font-ui);
+  font-size: 0.7em;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  line-height: 1.6;
+  opacity: 0.75;
+  pointer-events: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+/* 右侧让出标签的位置，否则第一行长一点就会被它压住 */
+.md-body .pv-code-box:has(.pv-code-lang) > pre {
+  padding-right: 5.6em;
+}
+.md-body figure.pv-code-fig > .pv-code-box > pre {
   margin: 0;
   border-top-left-radius: 0;
   border-top-right-radius: 0;
@@ -184,7 +212,7 @@
   letter-spacing: 0.01em;
   color: var(--n-fg-dim);
 }
-.md-body figure.pv-code-fig:not(:has(.pv-code-title)) > pre {
+.md-body figure.pv-code-fig:not(:has(.pv-code-title)) > .pv-code-box > pre {
   border-radius: 10px;
 }
 /* 行号：一道贴左边的窄轨，跟正文之间留一点点距离就够了。
@@ -354,47 +382,63 @@
   background: #000;
 }
 
-/* ── 富块：Callout / 折叠 / 分栏 / Mermaid ──
-   这些结构由 preview-rich.ts 在 marked 产出之后补出来。 */
-/* 每个类型只改一个 --c（见下面 data-type 那一段），
-   左边线、底色、头部、图标全由它派生 —— 以后换色只动一行。 */
-/* 提示块走大家认得的那副样子：一条左侧色条 + 一层几乎看不见的底色，
-   标题与图标同一行、紧跟正文，中间不再横一条比底色更深的「标题带」——
-   那条带子会把一块提示切成两截，读起来像表格的表头加单元格，
-   而它不是表格，只是一段带记号的正文。 */
+/* ── 提示块 ──
+   十一种类型，每种一个自己的色相（--hue）。颜色不写死，而是由
+   亮度 / 彩度 / 色相三个变量现算：亮度与彩度两套主题各给一组值
+   （深色要亮一档、彩度降一点，否则在暗底上发灰），色相表只写一遍。
+   于是换主题时颜色跟着变，而「哪一种是什么颜色」不会因为换主题而乱。
+
+   为什么不让类型共用一个色：以前十一种挤在五个色里（提示/说明同蓝、
+   技巧/成功/示例同绿、警告/注意同琥珀），一页提示块扫下来分不出轻重，
+   看上去就只是「一块块带竖线的方框」——这正是它显得单调的来处。
+   色相铺开之后，红色那一块自己就会喊「这里有危险」。 */
+.md-body {
+  --co-l: 56%;
+  --co-c: 0.15;
+}
+[data-theme='dark'] .md-body {
+  --co-l: 78%;
+  --co-c: 0.13;
+}
 .md-body .pv-callout {
-  --c: var(--n-accent);
+  --hue: 258;
+  --c: oklch(var(--co-l) var(--co-c) var(--hue));
   margin: 1.15em 0;
-  padding: 0.7em 14px 0.75em;
-  border: 1px solid color-mix(in oklab, var(--c) 14%, var(--n-block-line));
-  /* 左侧色条是提示块的「身份证」：全文往下扫的时候，
-     眼睛认的是这一道竖线，不是盒子形状 */
-  border-left: 4px solid var(--c);
-  border-radius: var(--n-r-md);
-  background: color-mix(in oklab, var(--c) 5%, var(--n-bg));
+  padding: 0.72em 14px 0.8em;
+  border: 1px solid color-mix(in oklab, var(--c) 18%, var(--n-block-line));
+  /* 左侧色条是提示块的「身份证」：全文往下扫的时候眼睛认的是这一道竖线 */
+  border-left: 3px solid var(--c);
+  border-radius: 12px;
+  background: color-mix(in oklab, var(--c) 7%, var(--n-bg));
 }
 .md-body .pv-callout-head {
   display: flex;
-  align-items: baseline;
-  gap: 6px;
+  align-items: center;
+  gap: 7px;
   font-size: 0.92em;
   font-weight: 600;
-  line-height: 1.6;
-}
-.md-body .pv-callout-title {
-  color: color-mix(in oklab, var(--c) 72%, var(--n-fg));
-}
-/* 图标不套圆片：圆片会把它变成一枚徽章，抢在标题前面；
-   这里它只是标题前面那个记号，跟着文字基线走就够了。 */
-.md-body .pv-callout-icon {
-  flex: none;
-  color: var(--c);
-  font-size: 13px;
   line-height: 1.5;
 }
+.md-body .pv-callout-title {
+  color: var(--c);
+  letter-spacing: 0.01em;
+}
+/* 图标装在一枚小圆角方片里：片底是同色更淡的一层，图标本身用实色。
+   这样十一种类型除了色相不同，形状上也有各自的记号 —— 色弱或者扫读时，
+   靠形状也能分出来（三角＝警告、叉＝危险、勾＝成功）。 */
+.md-body .pv-callout-icon {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 6px;
+  background: color-mix(in oklab, var(--c) 15%, var(--n-bg));
+  color: var(--c);
+}
 .md-body .pv-callout-body {
-  /* 没有标题带，正文就从标题底下接着写，两者共用一个左边界 */
-  margin-top: 0.15em;
+  margin-top: 0.2em;
 }
 .md-body .pv-callout-body > :first-child {
   margin-top: 0.3em;
@@ -402,6 +446,7 @@
 .md-body .pv-callout-body > :last-child {
   margin-bottom: 0;
 }
+/* 「可折叠」那枚小徽标：这类标记不跟着类型走色，它是元信息不是内容 */
 .md-body .pv-badge {
   margin-left: auto;
   align-self: center;
@@ -413,31 +458,24 @@
   font-weight: 600;
   color: var(--n-fg-dim);
 }
+
 /* ── 按类型定色 ──
-   蓝＝说明类，绿＝正向类，琥珀＝需要留意，紫＝重要/疑问，红＝危险，灰＝引用。
-   五种颜色在浅色与深色下都各自取过对比，不是同一组值硬套两套主题。 */
-.md-body .pv-callout[data-type='note'],
-.md-body .pv-callout[data-type='info'] {
-  --c: var(--n-info);
-}
-.md-body .pv-callout[data-type='tip'],
-.md-body .pv-callout[data-type='success'],
-.md-body .pv-callout[data-type='example'] {
-  --c: var(--n-ok);
-}
-.md-body .pv-callout[data-type='warning'],
-.md-body .pv-callout[data-type='caution'] {
-  --c: var(--n-warn);
-}
-.md-body .pv-callout[data-type='important'],
-.md-body .pv-callout[data-type='question'] {
-  --c: var(--n-violet);
-}
-.md-body .pv-callout[data-type='danger'] {
-  --c: var(--n-danger);
-}
+   蓝＝说明类，绿＝正向类，黄橙＝需要留意，红＝危险，紫＝重要/疑问，灰＝引用。
+   十一个色相（oklch 的 H）均匀铺开，相邻两个不至于认成同一个色。 */
+.md-body .pv-callout[data-type='note'] { --hue: 258; }
+.md-body .pv-callout[data-type='info'] { --hue: 232; }
+.md-body .pv-callout[data-type='tip'] { --hue: 152; }
+.md-body .pv-callout[data-type='success'] { --hue: 138; }
+.md-body .pv-callout[data-type='example'] { --hue: 288; }
+.md-body .pv-callout[data-type='important'] { --hue: 312; }
+.md-body .pv-callout[data-type='question'] { --hue: 340; }
+.md-body .pv-callout[data-type='warning'] { --hue: 78; }
+.md-body .pv-callout[data-type='caution'] { --hue: 48; }
+.md-body .pv-callout[data-type='danger'] { --hue: 25; }
+/* 引用是唯一「没颜色」的一种：本来就该是灰的，压成灰而不是去抢一个色相 */
 .md-body .pv-callout[data-type='quote'] {
-  --c: var(--n-fg-dim);
+  --hue: 265;
+  --co-c: 0.02;
 }
 
 .md-body .pv-details {
@@ -487,12 +525,21 @@
   padding: 6px 10px 0;
   border-bottom: 1px solid var(--n-block-line);
 }
+/* 标签是能点的，所以要有「能点」的样子：光标变了、悬停有反应。
+   cursor 保持 default 是最糟的一种暗示 —— 它长得像页签，却什么都不做。 */
 .md-body .pv-tab {
   padding: 5px 12px;
   border-radius: var(--n-r-sm) var(--n-r-sm) 0 0;
   font-size: 0.88em;
   color: var(--n-fg-dim);
-  cursor: default;
+  cursor: pointer;
+  transition: color 0.14s ease;
+  -webkit-user-select: none;
+  user-select: none;
+}
+.md-body .pv-tab:hover {
+  color: var(--n-fg);
+  background: color-mix(in oklab, var(--n-fg) 5%, transparent);
 }
 .md-body .pv-tab.on {
   background: var(--n-block-bg);
@@ -506,6 +553,52 @@
 }
 .md-body .pv-tab-pane.on {
   display: block;
+}
+
+/* ── 待办清单的勾 ──
+   自己画而不用原生 checkbox：原生那个在预览里是 disabled 的（点了没反应），
+   而且它的方框尺寸、圆角、勾选色都随浏览器和深色模式变，跟界面不是一套。
+   15px 的圆角方框 + 悬停时描边转强调色，跟侧栏那些勾选框看得出来是一家人。 */
+.md-body .pv-task {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 15px;
+  height: 15px;
+  margin-right: 0.45em;
+  border: 1.5px solid var(--n-line-strong);
+  border-radius: 4px;
+  background: var(--n-surface);
+  vertical-align: -2px;
+  cursor: pointer;
+  transition:
+    border-color 0.14s ease,
+    background 0.14s ease;
+}
+.md-body .pv-task:hover {
+  border-color: var(--n-accent);
+}
+.md-body .pv-task::after {
+  content: '';
+  width: 7px;
+  height: 4px;
+  border-left: 2px solid #fff;
+  border-bottom: 2px solid #fff;
+  border-radius: 1px;
+  transform: rotate(-45deg) scale(0.6);
+  opacity: 0;
+  transition:
+    opacity 0.14s ease,
+    transform 0.14s ease;
+}
+.md-body .pv-task.on {
+  border-color: var(--n-accent);
+  background: var(--n-accent);
+}
+.md-body .pv-task.on::after {
+  opacity: 1;
+  transform: rotate(-45deg) scale(1);
 }
 
 .md-body .pv-mermaid {

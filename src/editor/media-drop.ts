@@ -47,6 +47,78 @@ function readAsBase64(file: File): Promise<string | null> {
   })
 }
 
+/**
+ * 粘贴进来的截图先压一道再存。
+ *
+ * 一张 4K 截图 3–5MB 起步。几十张下去，一个纯文本的笔记目录能撑到几百 MB，
+ * 备份、同步、用别的编辑器打开都跟着变慢 —— 而这些图在笔记里最多也就显示成
+ * 一栏宽，4000px 的原始像素一个也不会被看见。
+ *
+ * 三条边界，都是为了让这件事只发生在「确实该压」的时候：
+ *  · 小于 1MB 不动 —— 压它省不下什么，还多一次有损编码；
+ *  · 动图与矢量不动 —— GIF 一动就只剩第一帧，SVG 压了反而变大；
+ *  · 压完不比原图小就还用原图 —— 有些 PNG 已经是压到极限的。
+ */
+const SHRINK_MIN_BYTES = 1024 * 1024
+const SHRINK_MAX_EDGE = 1600
+
+async function shrink(file: File): Promise<File> {
+  if (!file.type.startsWith('image/')) return file
+  // GIF 一动就死，SVG 转位图只会更大，两者都不该碰
+  if (/gif|svg/i.test(file.type)) return file
+  if (file.size < SHRINK_MIN_BYTES) return file
+
+  let bmp: ImageBitmap
+  try {
+    bmp = await createImageBitmap(file)
+  } catch {
+    return file
+  }
+  const long = Math.max(bmp.width, bmp.height)
+  const k = long > SHRINK_MAX_EDGE ? SHRINK_MAX_EDGE / long : 1
+  const w = Math.max(1, Math.round(bmp.width * k))
+  const h = Math.max(1, Math.round(bmp.height * k))
+
+  const cv = document.createElement('canvas')
+  cv.width = w
+  cv.height = h
+  const ctx = cv.getContext('2d')
+  if (!ctx) {
+    bmp.close()
+    return file
+  }
+  ctx.drawImage(bmp, 0, 0, w, h)
+  bmp.close()
+
+  /* 有透明通道的图不能转成 JPEG（透明的地方会变黑），所以先扫一遍 alpha。
+     扫的是**缩小后**的画布，代价很小。 */
+  let hasAlpha = false
+  try {
+    const data = ctx.getImageData(0, 0, w, h).data
+    for (let i = 3; i < data.length; i += 4) {
+      if (data[i] < 250) {
+        hasAlpha = true
+        break
+      }
+    }
+  } catch {
+    hasAlpha = true
+  }
+
+  const type = hasAlpha ? 'image/png' : 'image/jpeg'
+  const blob = await new Promise<Blob | null>((resolve) =>
+    cv.toBlob(resolve, type, hasAlpha ? undefined : 0.85),
+  )
+  if (!blob || blob.size >= file.size) return file
+
+  const base = file.name.replace(/\.[^.]+$/, '') || 'image'
+  const ext = hasAlpha ? '.png' : '.jpg'
+  toast(
+    `截图已压缩：${(file.size / 1024 / 1024).toFixed(1)}MB → ${(blob.size / 1024 / 1024).toFixed(1)}MB`,
+  )
+  return new File([blob], `${base}${ext}`, { type })
+}
+
 async function ingest(file: File, srcPath?: string): Promise<Saved | null> {
   const root = store.state.root
   if (!root) {
@@ -58,8 +130,10 @@ async function ingest(file: File, srcPath?: string): Promise<Saved | null> {
     return window.api.mediaSave(root, { srcPath })
   }
   // 剪贴板里的截图常常连文件名都没有（name 是 "image.png"），
-  // 主进程那边会用时间戳另起一个，这里把扩展名给准就行
-  const bytes = await readAsBase64(file)
+  // 主进程那边会用时间戳另起一个，这里把扩展名给准就行。
+  // 走 base64 这条路的就是粘贴进来的图，先压一道（见 shrink 的注释）；
+  // 拖进来的文件走上面那条路按原样复制 —— 那是你已有的文件，不该动它。
+  const bytes = await readAsBase64(await shrink(file))
   if (!bytes) {
     toast('这张图读不出来')
     return null

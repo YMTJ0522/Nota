@@ -179,6 +179,18 @@ function decorateCodeBlockLines(view: EditorView) {
   );
 }
 
+/**
+ * 围栏上写的 token → 标签上该显示的名字。
+ *
+ * 认别名、认大小写（```Bash 和 ```sh 都显示 Shell）；认不出就**照实显示用户写的那个**，
+ * 不假装认识 —— 编辑器右上角那枚标签和预览里那枚都走这里，两边必须显示同一个词，
+ * 否则「我在左边看到 Python，右边写着 python」会让人以为是两个不同的东西。
+ */
+export function displayLangName(token: string): string {
+  if (!token) return ""
+  return LanguageDescription.matchLanguageName(fencedCodeLanguages, token, true)?.name ?? token;
+}
+
 export function fencedCodeBlockHighlighter() {
   return ViewPlugin.fromClass(
     class {
