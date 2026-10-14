@@ -1223,6 +1223,37 @@ ipcMain.handle('icons:read', async (_e, root: string): Promise<Record<string, st
   }
 })
 
+/* ── 标签图标 ──
+   跟节点图标同一套素材库，但意义不同、所以分开存：
+   节点图标是「这一个文件/文件夹长什么样」，标签图标是「这一类笔记是什么」。
+   混在一个文件里，删一个节点的图标时很容易顺手把标签的归属图标也带走。 */
+function tagIconsFileOf(root: string) {
+  return path.join(root, NOTA_DIR, 'tag-icons.json')
+}
+
+ipcMain.handle('tagIcons:read', async (_e, root: string): Promise<Record<string, string>> => {
+  if (!root) return {}
+  try {
+    return JSON.parse(await fs.readFile(tagIconsFileOf(root), 'utf8')) as Record<string, string>
+  } catch {
+    return {}
+  }
+})
+
+ipcMain.handle(
+  'tagIcons:write',
+  async (_e, root: string, map: Record<string, string>): Promise<boolean> => {
+    if (!root) return false
+    try {
+      await fs.mkdir(path.join(root, NOTA_DIR), { recursive: true })
+      await fs.writeFile(tagIconsFileOf(root), JSON.stringify(map, null, 2), 'utf8')
+      return true
+    } catch {
+      return false
+    }
+  },
+)
+
 ipcMain.handle(
   'icons:write',
   async (_e, root: string, map: Record<string, string>): Promise<boolean> => {

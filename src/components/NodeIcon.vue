@@ -14,6 +14,7 @@
 import { computed } from 'vue'
 import { FileText, Folder, FolderOpen } from 'lucide-vue-next'
 import { store } from '@/store'
+import BrandGlyph from '@/components/BrandGlyph.vue'
 import { brandIcon } from '@/assets/brand-icons'
 
 const props = withDefaults(
@@ -35,49 +36,22 @@ const props = withDefaults(
   { open: false, size: 14, fallback: true },
 )
 
-const { state } = store
-
 const icon = computed(() => store.iconOf(props.path))
+/** 还要留着：用来判断「画品牌还是画表情」，真正的着色在 BrandGlyph 里 */
 const brand = computed(() =>
   icon.value?.kind === 'brand' ? brandIcon(icon.value.id) : null,
 )
 
-/** 相对亮度（0 黑 ~ 1 白）。够用就行，不做 gamma 精确换算 */
-function luminance(hex: string) {
-  const h = hex.replace('#', '')
-  if (h.length !== 6) return 0.5
-  const n = parseInt(h, 16)
-  const r = ((n >> 16) & 255) / 255
-  const g = ((n >> 8) & 255) / 255
-  const b = (n & 255) / 255
-  return 0.2126 * r + 0.7152 * g + 0.0722 * b
-}
-
-const brandColor = computed(() => {
-  const b = brand.value
-  if (!b) return ''
-  const dark = state.theme === 'dark'
-  // 深色下太暗的、浅色下太亮的，都换成前景色，免得整枚消失在底色里
-  const lum = luminance(b.hex)
-  if (dark && lum < 0.3) return 'currentColor'
-  if (!dark && lum > 0.86) return 'currentColor'
-  return `#${b.hex}`
-})
 </script>
 
 <template>
-  <!-- 品牌 -->
-  <svg
-    v-if="brand"
+  <!-- 品牌：深色下的可读性换算在 BrandGlyph 里，标签那儿共用同一份 -->
+  <BrandGlyph
+    v-if="brand && icon"
+    :id="icon.id"
     class="ni ni-brand"
-    :width="size"
-    :height="size"
-    viewBox="0 0 24 24"
-    :style="{ color: brandColor }"
-    aria-hidden="true"
-  >
-    <path :d="brand.path" fill="currentColor" />
-  </svg>
+    :size="size"
+  />
 
   <!-- 表情：用字体渲染，字号比同尺寸的描边图标略大一号才显得一样大 -->
   <span

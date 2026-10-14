@@ -97,51 +97,57 @@ await sleep(700)
 await evaluate(`document.querySelector('.col-tab[data-view="notes"]')?.click()`)
 await sleep(500)
 
-/* ══ 3. 资料栏开着时，侧栏顶行不许并排两枚收起钮 ══ */
+/* ══ 3. 侧栏顶行的收起钮 ══
+   2.2.8 起资料栏常驻，它的收放钮整个撤掉了 —— 这一条跟着改成「恒为一枚」。
+   原来那三条（开着时在资料栏自己顶行 / 收着时退回侧栏顶行 / 再点回来）
+   测的是一种已经不存在的状态，留着只会永远失败。 */
 const openState = JSON.parse(
   await evaluate(`(() => {
     const q = (s) => document.querySelector(s)
     return JSON.stringify({
       column: !!q('.col'),
-      sideToggles: document.querySelectorAll('.side-head .head-actions .mini, .head-actions .mini').length,
-      sideColToggle: !!q('.head-actions [data-role="column-toggle"]'),
+      sideToggles: document.querySelectorAll('.head-actions .mini').length,
       sideOwnToggle: !!q('.head-actions [data-role="sidebar-toggle"]'),
-      colToggle: !!q('.col-flow [data-role="column-toggle"]'),
+      anyColumnToggle: document.querySelectorAll('[data-role="column-toggle"]').length,
     })
   })()`),
 )
 ok(
-  '3.资料栏开着时：收起钮在它自己顶行，侧栏顶行只剩「收起侧边栏」一枚',
-  openState.column && openState.colToggle && openState.sideOwnToggle && !openState.sideColToggle,
+  '3.侧栏顶行只有一枚（收起侧边栏），全页没有资料栏的收放钮',
+  openState.column && openState.sideOwnToggle && openState.sideToggles === 1 && openState.anyColumnToggle === 0,
   openState,
 )
 
-/* 点它 → 资料栏消失，侧栏顶行出现「展开」 */
-await evaluate(`document.querySelector('.col-flow [data-role="column-toggle"]')?.click()`)
-await sleep(600)
+/* 收侧栏 → 窄轨，展开入口一枚，资料栏还在；再展开 → 两栏都在，顶行仍一枚 */
+await evaluate(`document.querySelector('.head-actions [data-role="sidebar-toggle"]')?.click()`)
+await sleep(700)
 const closedState = JSON.parse(
   await evaluate(`(() => {
     const q = (s) => document.querySelector(s)
     return JSON.stringify({
+      rail: !!q('.rail-head'),
+      railBtns: document.querySelectorAll('.rail-head button').length,
       column: !!q('.col'),
-      sideColToggle: !!q('.head-actions [data-role="column-toggle"]'),
-      tip: q('.head-actions [data-role="column-toggle"]')?.getAttribute('data-tip') || '',
+      anyColumnToggle: document.querySelectorAll('[data-role="column-toggle"]').length,
     })
   })()`),
 )
 ok(
-  '4.收起后：资料栏没了，展开入口退回侧栏顶行（不会消失）',
-  !closedState.column && closedState.sideColToggle && closedState.tip.includes('展开'),
+  '4.侧栏收成窄轨：展开入口一枚，资料栏仍在（不会出现两枚并排）',
+  closedState.rail && closedState.railBtns === 1 && closedState.column && closedState.anyColumnToggle === 0,
   closedState,
 )
 
-/* 再点回来 */
-await evaluate(`document.querySelector('.head-actions [data-role="column-toggle"]')?.click()`)
-await sleep(700)
+await evaluate(`document.querySelector('.rail-head button')?.click()`)
+await sleep(800)
 const backState = JSON.parse(
-  await evaluate(`JSON.stringify({ column: !!document.querySelector('.col'), sideColToggle: !!document.querySelector('.head-actions [data-role="column-toggle"]') })`),
+  await evaluate(`JSON.stringify({
+    sidebar: !!document.querySelector('.panel .head'),
+    column: !!document.querySelector('.col'),
+    sideToggles: document.querySelectorAll('.head-actions .mini').length,
+  })`),
 )
-ok('5.再点展开：资料栏回来，侧栏顶行那枚又收起来了', backState.column && !backState.sideColToggle, backState)
+ok('5.再展开侧栏：两栏都在，顶行仍然一枚', backState.sidebar && backState.column && backState.sideToggles === 1, backState)
 
 /* ══ 8. 新建文件夹要立刻出现在树上（不等整棵树重扫）══ */
 await evaluate(`document.querySelector('.col-tab[data-view="notes"]')?.click()`)

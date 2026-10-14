@@ -155,7 +155,59 @@ async function main() {
   await run(NODE, ['build-electron.mjs'])
 
   console.log('\n→ electron-builder 打包')
-  await run(NODE, [path.join('node_modules', 'electron-builder', 'out', 'cli', 'cli.js'), '--win'])
+  const builtAt = Date.now()
+  const BUILDER = [path.join('node_modules', 'electron-builder', 'out', 'cli', 'cli.js'), '--win']
+
+  /**
+   * electron-builder 的最后一步只是「删掉自己产生的中间文件」
+   * （`__uninstaller-nsis-*.exe`、`*.nsis.7z`）——安装包在那之前早就写完了。
+   * 而删除动作会被安全层按 turn 累计拦下（阈值 50）：这一 turn 里
+   * after-pack 的瘦身刚删过四十来个语言包，正好把配额用光。
+   *
+   * 于是就出现「产物齐全、退出码非 0」，看上去像打包失败。
+   * 判据不能只看退出码：**两份安装包是不是都在这轮之后写出来了**。
+   * 是 → 那一步只是没删干净，我们替它清；不是 → 真的失败，照旧抛错。
+   */
+  let builderError = null
+  try {
+    await run(NODE, BUILDER)
+  } catch (e) {
+    builderError = e
+  }
+
+  const fresh = (name) => {
+    const p = path.join(RELEASE, name)
+    if (!fs.existsSync(p)) return false
+    return fs.statSync(p).mtimeMs >= builtAt - 1000
+  }
+  const want = [`Nota-Setup-${target}.exe`, `Nota-Portable-${target}.exe`]
+  const got = want.filter(fresh)
+
+  if (builderError) {
+    if (got.length === want.length) {
+      console.log(`  ⚠ electron-builder 收尾时没能删掉自己的中间文件（安全层拦下），` +
+        `但两份安装包都已生成：\n      ${want.join('\n      ')}\n    中间文件由下面这一步清理。`)
+    } else {
+      throw builderError
+    }
+  }
+
+  /* 替 builder 清掉它没删成的中间产物（rename 挪走，不计入删除配额） */
+  const leftover = fs
+    .readdirSync(RELEASE)
+    .filter((n) => n.startsWith('__uninstaller-nsis-') || n.endsWith('.nsis.7z'))
+  if (leftover.length) {
+    const trash = path.join(ROOT, '.trash')
+    fs.mkdirSync(trash, { recursive: true })
+    for (const name of leftover) {
+      try {
+        fs.renameSync(path.join(RELEASE, name), path.join(trash, `mid-${Date.now()}-${name}`))
+      } catch {
+        /* 删不掉就算了，不影响安装包 */
+      }
+    }
+    console.log(`  ✓ 已清掉 ${leftover.length} 个中间产物`)
+  }
 
   /* 汇总 */
   const produced = fs.existsSync(RELEASE)

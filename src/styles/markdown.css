@@ -152,7 +152,20 @@
   border-right: 1px solid var(--n-line);
   border-bottom: 1px solid var(--n-line);
   padding: 7px 11px;
+  vertical-align: top;
+  /* 表格内容默认居中：笔记里的表格多是「名字 / 状态 / 是否」这类短对照，
+     长短不一时居中比一律左对齐整齐得多。
+     要是作者自己写了对齐标记（`:---` 左、`:---:` 中、`---:` 右），
+     marked 会输出 align 属性 —— 那就听作者的，显式意图压过默认。 */
+  text-align: center;
+}
+.md-body th[align='left'],
+.md-body td[align='left'] {
   text-align: left;
+}
+.md-body th[align='right'],
+.md-body td[align='right'] {
+  text-align: right;
 }
 /* 最右一列不要竖线（wrapper 的边框已经在那里了），最后一行不要横线 */
 .md-body th:last-child,

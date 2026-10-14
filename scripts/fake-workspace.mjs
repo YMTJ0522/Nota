@@ -167,7 +167,34 @@ export function makeInject(opts = {}) {
     ' window.__imported = [];' +
     ' window.api = {' +
     `  pickWorkspace: async () => ${JSON.stringify(ws)},` +
-    '  readTree: async () => window.__tree ?? [],' +
+    /* readTree 必须**现算** tags，不能原样返回上面那份静态树：
+       真主进程是从 .md 文件里解析 frontmatter 的，所以「写完一篇 → 刷新目录树」
+       这一步必然会让新标签出现在侧栏。桩子要是返回一个固定对象，
+       凡是依赖「写盘 → 树上重新出现」的断言都只能在假象里通过。 */
+    '  readTree: async () => {' +
+    '    function tagsOf(doc) {' +
+    '      var m = /^---\\r?\\n([\\s\\S]*?)\\r?\\n---/.exec(String(doc || ""));' +
+    '      if (!m) return [];' +
+    '      var inline = /^(?:tags|tag)[ \\t]*:[ \\t]*\\[(.*)\\]$/m.exec(m[1]);' +
+    '      if (inline) return inline[1].split(",").map(function (s) { return s.trim().replace(/^["\x27]|["\x27]$/g, "") }).filter(Boolean);' +
+    '      var out = [], lines = m[1].split("\\n"), at = lines.findIndex(function (l) { return /^(?:tags|tag)[ \\t]*:/.test(l) });' +
+    '      if (at < 0) return out;' +
+    '      for (var i = at + 1; i < lines.length; i++) {' +
+    '        var hit = /^[ \\t]*-[ \\t]+(.*)$/.exec(lines[i] || "");' +
+    '        if (!hit) break;' +
+    '        out.push(hit[1].trim());' +
+    '      }' +
+    '      return out;' +
+    '    }' +
+    '    function walk(nodes) {' +
+    '      return nodes.map(function (n) {' +
+    '        if (n.type === "dir") return Object.assign({}, n, { children: walk(n.children || []) });' +
+    '        var t = tagsOf(window.__notes[n.path]);' +
+    '        return Object.assign({}, n, { tags: t.length ? t : (n.tags || []) });' +
+    '      });' +
+    '    }' +
+    '    return walk(window.__tree || []);' +
+    '  },' +
     '  readNote: async (f) => { await window.__wait(30); return window.__notes[f] ?? "" },' +
     '  writeNote: async (f, c) => { window.__notes[f] = c; return true },' +
     '  createNote: async (d, n) => {' +
@@ -206,6 +233,9 @@ export function makeInject(opts = {}) {
     /* 节点图标：存在内存里，写盘的内容能被断言看到 */
     '  iconsRead: async () => window.__icons ?? {},' +
     '  iconsWrite: async (root, map) => { window.__icons = map; return true },' +
+    /* 标签的归属图标：同样落在内存里 */
+    '  tagIconsRead: async () => window.__tagIcons ?? {},' +
+    '  tagIconsWrite: async (root, map) => { window.__tagIcons = map; return true },' +
     /* 粘贴/拖入的图片落盘 */
     '  mediaSave: async (root, item) => {' +
     '    const rel = "attachments/粘贴进来的图.png";' +

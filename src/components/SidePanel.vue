@@ -9,13 +9,10 @@ import {
   Folder,
   FolderOpen,
   FolderPlus,
-  Hash,
   Inbox,
   Paperclip,
   PanelLeftClose,
   PanelLeftOpen,
-  PanelRightClose,
-  PanelRightOpen,
   Plus,
   Search,
   Settings,
@@ -27,9 +24,10 @@ import {
 import { isSettingsSection, store } from '@/store'
 import type { NavFilter, SettingsSection, TreeNode } from '@/store'
 import TreeNodeItem from './TreeNodeItem.vue'
+import TagChip from '@/components/TagChip.vue'
 import SettingsDialog from '@/components/SettingsDialog.vue'
 import NoteContextMenu, { type NoteExportKind } from '@/components/NoteContextMenu.vue'
-import IconPickerDialog from '@/components/IconPickerDialog.vue'
+import MarkDialog from '@/components/MarkDialog.vue'
 import FolderContextMenu from '@/components/FolderContextMenu.vue'
 import TagContextMenu from '@/components/TagContextMenu.vue'
 import PromptDialog from '@/components/PromptDialog.vue'
@@ -111,7 +109,7 @@ function commitFolder(e: Event) {
     搜索框现在住在那一列的顶部（参考图的分布就是这样：侧栏负责去哪找，
     那一列负责有哪些，搜索属于「有哪些」）。 */
 async function focusSearch() {
-  if (!state.column) store.toggleColumn()
+  if (!state.column) store.setColumn(true)
   store.setColumnView('notes')
   await nextTick()
   window.dispatchEvent(new CustomEvent('nota:focus-search'))
@@ -120,16 +118,16 @@ async function focusSearch() {
 /**
  * 附件库 / 回收站 / AI 编写的入口。
  *
- * 三样东西现在都住在中间那一列里（SideColumn），点这里只是把那一列切过去：
- * 如果这一列被收起来了，先把它叫回来 —— 点了没反应是最糟的交互。
+ * 三样东西都住在中间那一列里。那一列收着的时候先把它拉开 ——
+ * 用户点这个入口就是为了看它，「点了没反应」是最糟的交互。
  */
 function openLibrary(tab: 'attach' | 'trash') {
-  if (!state.column) store.toggleColumn()
+  if (!state.column) store.setColumn(true)
   store.setColumnView(tab)
 }
 
 function openAi() {
-  if (!state.column) store.toggleColumn()
+  if (!state.column) store.setColumn(true)
   store.setMainView('ai')
 }
 
@@ -248,11 +246,11 @@ async function onMenuReveal() {
 /* ── 换图标 ──
    图标写在 .nota/icons.json，记的是相对路径。文件夹也能换，
    所以这里不区分类型，一律交给 setNodeIcon。 */
-const iconOpen = ref(false)
+const markOpen = ref(false)
 
 async function onIconPick(ic: { kind: 'brand' | 'emoji'; id: string } | null) {
   const n = actionNode.value
-  iconOpen.value = false
+  markOpen.value = false
   if (!n) return
   await store.setNodeIcon(n.path, ic)
   toast(ic ? '图标已更换' : '已恢复默认图标')
@@ -465,21 +463,11 @@ onBeforeUnmount(() => document.removeEventListener('pointerdown', onDocPointer))
           </svg>
         </span>
         <span class="head-title">资料库</span>
-        <!-- 这里只放「收起/展开资料栏」的**展开**那一半，而且只在资料栏收着时出现。
-             规则是：开关永远长在最左边那条还站着的竖栏顶行 ——
-             资料栏在，开关就在资料栏自己顶行右端；资料栏收掉了，它没地方待，
-             才退回侧栏顶行。于是这一行平时就只剩「收起侧边栏」一枚，
-             不会出现两枚并排、一枚收自己一枚收邻居的怪样子。 -->
+        <!-- 这一行永远只有一枚：收起侧边栏（管的就是自己，Ctrl+\）。
+             资料栏那枚不再出现在这儿：它长在资料栏自己的顶行右端，
+             收起后跟着资料栏一起缩成一条窄轨 —— 于是两栏各有一枚、
+             各管自己，不会再有两枚并排、一枚收自己一枚开邻居的样子。 -->
         <span class="head-actions">
-          <button
-            v-if="!state.column"
-            class="mini"
-            data-role="column-toggle"
-            data-tip="展开资料栏"
-            @click="store.toggleColumn()"
-          >
-            <PanelRightOpen :size="15" :stroke-width="1.9" />
-          </button>
           <button
             class="mini"
             data-role="sidebar-toggle"
@@ -626,8 +614,7 @@ onBeforeUnmount(() => document.removeEventListener('pointerdown', onDocPointer))
               @click="store.setActiveTag(t.name)"
               @contextmenu.prevent="onTagMenu($event, t)"
             >
-              <Hash :size="10" :stroke-width="2.2" />
-              {{ t.name }}
+              <TagChip :name="t.name" :size="11" />
               <span class="tag-n">{{ t.count }}</span>
             </button>
           </div>
@@ -685,17 +672,6 @@ onBeforeUnmount(() => document.removeEventListener('pointerdown', onDocPointer))
       <div class="rail-head">
         <button class="rail-btn" data-tip="展开侧边栏 (Ctrl+\)" @click="store.toggleSidebar()">
           <PanelLeftOpen :size="16" :stroke-width="1.9" />
-        </button>
-        <!-- 窄轨态也得留着资料栏开关：侧栏收起来之后，
-             这一枚是唯一还在原地的「哪一块要腾地方」的入口 -->
-        <button
-          class="rail-btn"
-          data-role="column-toggle"
-          :data-tip="state.column ? '收起资料栏' : '展开资料栏'"
-          @click="store.toggleColumn()"
-        >
-          <PanelRightClose v-if="state.column" :size="16" :stroke-width="1.9" />
-          <PanelRightOpen v-else :size="16" :stroke-width="1.9" />
         </button>
       </div>
       <div class="rail-group">
@@ -762,10 +738,10 @@ onBeforeUnmount(() => document.removeEventListener('pointerdown', onDocPointer))
           moveOpen = true
         }
       "
-      @icon="
+      @mark="
         () => {
           takeNode()
-          iconOpen = true
+          markOpen = true
         }
       "
       @copy-path="onMenuCopyPath"
@@ -799,7 +775,7 @@ onBeforeUnmount(() => document.removeEventListener('pointerdown', onDocPointer))
       @icon="
         () => {
           takeNode()
-          iconOpen = true
+          markOpen = true
         }
       "
       @copy-path="onMenuCopyPath"
@@ -812,12 +788,16 @@ onBeforeUnmount(() => document.removeEventListener('pointerdown', onDocPointer))
       "
     />
 
-    <IconPickerDialog
-      :open="iconOpen"
+    <!-- 图标与标签现在是同一个入口：笔记进来有两页（标签 + 图标），
+         文件夹没有 frontmatter，所以只给图标那一页，连页签都不画。 -->
+    <MarkDialog
+      :open="markOpen"
       :name="actionIsDir ? actionNode?.name ?? '' : actionName"
       :type="actionIsDir ? 'dir' : 'file'"
-      @close="iconOpen = false"
-      @pick="onIconPick"
+      :path="actionNode?.path ?? ''"
+      :tags="actionIsDir ? [] : (actionNode?.tags ?? [])"
+      @close="markOpen = false"
+      @pick-icon="onIconPick"
     />
 
     <TagContextMenu

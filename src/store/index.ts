@@ -231,6 +231,8 @@ interface State {
   aiWeb: boolean
   /** 节点图标：相对路径 → `brand:python` / `emoji:📌`。随工作区走 */
   icons: Record<string, string>
+  /** 标签 → 归属图标，跟 icons 同一套素材库、同一个 `kind:id` 值格式 */
+  tagIcons: Record<string, string>
   /** 要不要把那一篇的正文一起交给模型 */
   aiWithNote: boolean
   /** 当前笔记的标题结构。由编辑区在渲染预览时写进来，
@@ -335,6 +337,7 @@ const state = reactive<State>({
   aiWeb: false,
   aiWithNote: true,
   icons: {},
+  tagIcons: {},
   headings: [],
   activeHeading: null,
 })
@@ -541,6 +544,7 @@ async function switchWorkspace(dir: string): Promise<boolean> {
   state.root = dir
   state.tree = tree
   state.icons = {}
+  state.tagIcons = {}
   state.loading = false
   rememberRoot(dir)
   await loadIcons()
@@ -596,12 +600,96 @@ function iconOf(p: string): NodeIcon | null {
   return parseIcon(state.icons[relOf(p)])
 }
 
+/* ── 标签的归属图标 ──
+   标签本来只是 frontmatter 里的一串名字，长得都一样，扫一眼分不清哪个是哪个。
+   给它配一枚图标之后，侧栏的标签清单、笔记上的标签 chip 都带着这枚图标，
+   认的是形状不是字 —— 这跟给文件挑图标是同一件事，所以共用同一份素材库、
+   同一种 `kind:id` 值格式，甚至连输入框都复用同一个。
+
+   但**数据分两个文件存**：icons.json 键是路径（删笔记时天然可以清掉），
+   tag-icons.json 键是标签名。混在一起的话，删一个节点的图标很容易
+   顺手把标签的归属图标也带走，而标签本身还活着。 */
+function tagIconOf(tag: string): NodeIcon | null {
+  if (!tag) return null
+  return parseIcon(state.tagIcons[tag])
+}
+
+/** 设置 / 清除（传 null）某个标签的图标 */
+async function setTagIcon(tag: string, ic: NodeIcon | null) {
+  if (!state.root) return
+  const name = tag.trim()
+  if (!name) return
+  const next = { ...state.tagIcons }
+  if (ic) next[name] = encodeIcon(ic)
+  else delete next[name]
+  state.tagIcons = next
+  await window.api.tagIconsWrite?.(state.root, next)
+}
+
+/* ── 给一篇笔记设标签 ──
+   以前只能在侧栏的标签区点来点去，且改的是「全库所有带这个标签的笔记」。
+   现在右键任意一篇笔记都能直接改这一篇自己的标签清单，所以这里要的是
+   「整组替换」而不是「加一个 / 减一个」—— 勾选框的结果本来就是一整组。 */
+async function setNoteTags(p: string, tags: string[]): Promise<boolean> {
+  if (!p) return false
+  const clean = [...new Set(tags.map((t) => t.trim()).filter(Boolean))]
+  const doc = p === state.activePath ? state.draft : await window.api.readNote(p)
+  const next = writeTags(doc, clean)
+  if (next === doc) return false
+
+  if (p === state.activePath) state.draft = next
+  else await window.api.writeNote(p, next)
+
+  await refreshTree()
+  return true
+}
+
+/**
+ * 把 frontmatter 里的 tags 整段换成 `clean`。
+ *
+ * 三件事必须同时做对，缺一件这篇笔记就废了：
+ * · 本来没有 frontmatter 的笔记要**新建一个**，不能因为原生获取不到就放弃；
+ * · 现有的 `tags: [a, b]` 与 `tags:` + 缩进列表两种写法都要能改写；
+ * · 结果为空时把整段删掉 —— 留一行空的 `tags:` 在文件头是纯粹的噪音。
+ */
+function writeTags(doc: string, clean: string[]): string {
+  const fm = doc.match(/^---\r?\n([\s\S]*?)\r?\n---[ \t]*\r?\n?/)
+  const lines = fm ? fm[1].split('\n') : []
+  const found = fm ? findTagsLine(lines) : null
+  const body = doc.slice(fm ? fm[0].length : 0)
+
+  /* 没有 frontmatter（或 frontmatter 里还没有 tags 行）→ 追加一行 */
+  let head: string[]
+  if (!found) {
+    const others = fm ? lines : []
+    head = clean.length ? [...others, `tags: [${clean.join(', ')}]`] : others
+  } else {
+    const block =
+      clean.length === 0
+        ? []
+        : found.block
+          ? [`${found.key}:`, ...clean.map((t) => `  - ${t}`)]
+          : [`${found.key}: [${clean.join(', ')}]`]
+    head = [...lines.slice(0, found.at), ...block, ...lines.slice(found.end + 1)]
+  }
+
+  const tidy = head
+    .filter((l) => l !== '')
+    .join('\n')
+    .replace(/\n{2,}/g, '\n')
+    .replace(/^\n+|\n+$/g, '')
+
+  return tidy ? `---\n${tidy}\n---\n${body}` : body.replace(/^\n+/, '')
+}
+
 async function loadIcons() {
   if (!state.root) {
     if (Object.keys(state.icons).length) state.icons = {}
+    state.tagIcons = {}
     return
   }
   state.icons = (await window.api.iconsRead?.(state.root)) ?? {}
+  state.tagIcons = (await window.api.tagIconsRead?.(state.root)) ?? {}
 }
 
 /** 设置 / 清除（传 null）某个节点的图标 */
@@ -1095,7 +1183,11 @@ figcaption { font-size: .88em; color: var(--fg-faint); margin-top: .4em; }
 }
 table { border-collapse: separate; border-spacing: 0; width: 100%; margin: 0; font-size: .94em; }
 th, td { border-right: 1px solid var(--line); border-bottom: 1px solid var(--line);
-  padding: 7px 11px; text-align: left; vertical-align: top; }
+  padding: 7px 11px; vertical-align: top;
+  /* 跟预览里同一套规则：默认居中，作者写了对齐标记则听作者的 */
+  text-align: center; }
+th[align='left'], td[align='left'] { text-align: left; }
+th[align='right'], td[align='right'] { text-align: right; }
 th:last-child, td:last-child { border-right: none; }
 tbody tr:last-child td { border-bottom: none; }
 th { background: var(--surface); font-weight: 600; }
@@ -1354,49 +1446,11 @@ function setColumnView(v: ColumnView) {
   localStorage.setItem(COLUMN_KEY, v)
 }
 
-/* ── 资料栏的收放 ──
-   收起是「把宽度还给正文」，但什么时候该收，以前全靠人自己判断。
-   给一条明确的规则：窗口窄到「给它最小宽度之后正文就站不住」时就自己收，
-   宽回来再自己还回去 —— 不用人去点。
-   系统因窄窗收的那次要单独记着：只有那一次才在窗口变宽时自动恢复。
-   人自己点收的不能自动弹回来，那等于替他把决定改了。 */
-let shrankByWindow = false
-
-function setColumn(v: boolean) {
-  state.column = v
-  localStorage.setItem('nota-column-open', v ? '1' : '0')
-}
-
-/** 中间那一列显不显示（AI 也能收起，把宽度还给正文） */
-function toggleColumn() {
-  shrankByWindow = false
-  setColumn(!state.column)
-}
-
-/** 这一刻窗口还放得下资料栏吗。
-    不写死「窗口小于 XXX 就收掉资料栏」这种像素阈值 —— 阈值会跟各栏宽度打架，
-    人把侧栏拖宽一点，阈值就不成立了。用跟拖动时同一套算法现算。 */
-function columnFits(winW: number = window.innerWidth) {
-  return winW - sidebarNow(winW) - EDITOR_MIN_WIDTH >= WIDTH_LIMITS.column.min
-}
-
-/** 窗口尺寸变了就照上面那条规则收放一次 */
-function fitColumnToWindow(winW: number) {
-  const fits = columnFits(winW)
-  if (!fits && state.column) {
-    shrankByWindow = true
-    setColumn(false)
-  } else if (fits && !state.column && shrankByWindow) {
-    shrankByWindow = false
-    setColumn(true)
-  }
-}
-
 /* ── 各栏宽度：拖动分隔线改的就是这几个值 ──
    都带上下限，免得被拖成 0 或者宽到把正文挤没。 */
 export const WIDTH_LIMITS = {
   sidebar: { min: 180, max: 420, collapsed: 48 },
-  column: { min: 220, max: 560 },
+  column: { min: 220, max: 560, collapsed: 34 },
   outline: { min: 140, max: 340 },
 } as const
 
@@ -1408,8 +1462,47 @@ function clampWidth(key: WidthKey, v: number) {
 }
 
 /** 侧栏此刻实际占多宽（收成窄轨时是 48，不是它存着的宽度） */
-function sidebarNow(winW: number = window.innerWidth) {
-  return state.sidebar ? Math.min(state.sidebarWidth, winW) : WIDTH_LIMITS.sidebar.collapsed
+/**
+ * 侧栏此刻实际占多宽。
+ *
+ * 除了「存的那个值」和「窗口宽度」，还得再收一道上限：把资料栏的最小宽度和
+ * 编辑区的最小宽度先让出来，剩下的才是侧栏能占的。
+ * 少了这道上限，在宽窗口里把侧栏拖到 420 的人换个 960 的窄窗口，
+ * 三栏加起来就超过了窗口宽度 —— 以前这时会把资料栏整栏收掉顶账，
+ * 现在资料栏常驻，只能让侧栏自己退。
+ *
+ * 这一路**只用常量算**：不能去问 `effectiveColumnWidth`，那条路会绕回来
+ * 问 `sidebarNow`，两个函数互相等对方先给个数。
+ */
+export function sidebarNow(winW: number = window.innerWidth) {
+  if (!state.sidebar) return WIDTH_LIMITS.sidebar.collapsed
+  const cap = Math.max(
+    WIDTH_LIMITS.sidebar.min,
+    winW - WIDTH_LIMITS.column.min - EDITOR_MIN_WIDTH,
+  )
+  return Math.max(WIDTH_LIMITS.sidebar.min, Math.min(state.sidebarWidth, winW, cap))
+}
+
+/* ── 资料栏的收放 ──
+   收起之后不留「的那一个按钮都不知道去哪了」的死角：
+   它自己会缩成一条 34px 的窄轨，展开钮就长在那条窄轨上。
+
+   为什么不在收起时把开关挪到侧栏顶行：那样侧栏顶行就会同时出现
+   「收起侧边栏」和「展开资料栏」两枚 —— 一枚收自己、一枚开邻居，
+   并排看着像一对同级开关，其实谁跟谁都不是一回事（用户明确嫌过）。
+   侧栏自己收起时也是留一条窄轨，两栏用同一种语言，各有一枚，
+   永远不会撞在一起。
+
+   为什么不用「窄到放不下就自动收」那套：那是替人做决定。
+   窗口变宽时它该不该自动回来？回来，是把人已经习惯了的位置又改了；
+   不回来，人就得猜它去哪了。窄轨不需要回答这两个问题 —— 它一直在那儿。 */
+function setColumn(v: boolean) {
+  state.column = v
+  localStorage.setItem('nota-column-open', v ? '1' : '0')
+}
+
+function toggleColumn() {
+  setColumn(!state.column)
 }
 
 /** 中间那一列最多能占多少：先把侧栏和编辑区各自的那份让出来，剩下的才是它的。
@@ -1518,6 +1611,10 @@ function initPrefs() {
   state.autoSave = localStorage.getItem('nota-autosave') !== '0'
   state.sidebar = localStorage.getItem('nota-sidebar') !== '0'
   state.outline = localStorage.getItem('nota-outline') !== '0'
+  // 资料栏收没收是**人的选择**，要记住：上次是专门为了看长文才收掉的，
+  // 重启后又出现在眼前等于没记。早先那一版不读这个键，是因为当时它有别的意思
+  // ——窄窗自动收的。现在自动收放那套已经删了，这个键只剩「人自己点的」，
+  // 所以可以放心恢复。
   state.column = localStorage.getItem('nota-column-open') !== '0'
   const cv = localStorage.getItem(COLUMN_KEY)
   if (cv && (COLUMN_VIEWS as string[]).includes(cv)) {
@@ -2119,6 +2216,9 @@ export const store = {
   loadIcons,
   iconOf,
   setNodeIcon,
+  tagIconOf,
+  setTagIcon,
+  setNoteTags,
   openNote,
   saveNote,
   newNote,
@@ -2147,11 +2247,12 @@ export const store = {
   toggleSidebar,
   setColumnView,
   toggleColumn,
-  fitColumnToWindow,
+  setColumn,
   NOTE_TABS,
   setWidth,
   autoColumnWidth,
   effectiveColumnWidth,
+  sidebarNow,
   resetColumnWidth,
   WIDTH_LIMITS,
   setViewMode,

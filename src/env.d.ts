@@ -63,6 +63,9 @@ interface NoteApi {
   /** 节点图标：相对路径 → 图标 id */
   iconsRead(root: string): Promise<Record<string, string>>
   iconsWrite(root: string, map: Record<string, string>): Promise<boolean>
+  /** 标签的归属图标：标签名 → 图标 id */
+  tagIconsRead(root: string): Promise<Record<string, string>>
+  tagIconsWrite(root: string, map: Record<string, string>): Promise<boolean>
   /** 把粘贴 / 拖进来的图片存进工作区 attachments/，返回相对路径 */
   mediaSave(
     root: string,

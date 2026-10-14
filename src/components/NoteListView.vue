@@ -20,6 +20,7 @@ import type { TreeNode } from '@/store'
 import NodeIcon from '@/components/NodeIcon.vue'
 import NoteContextMenu, { type NoteExportKind } from '@/components/NoteContextMenu.vue'
 import PromptDialog from '@/components/PromptDialog.vue'
+import MarkDialog from '@/components/MarkDialog.vue'
 import FolderPicker from '@/components/FolderPicker.vue'
 import ConfirmDialog from '@/components/ConfirmDialog.vue'
 
@@ -88,8 +89,13 @@ const actionPath = ref('')
 const renameOpen = ref(false)
 const moveOpen = ref(false)
 const removeOpen = ref(false)
+const markOpen = ref(false)
 
 const actionName = computed(() => store.baseNameOf(actionPath.value))
+/** 标记弹窗要照着这篇现有的标签打勾，所以路径之外的那份信息也得带上 */
+const actionTags = computed(
+  () => files.value.find((f) => f.path === actionPath.value)?.tags ?? [],
+)
 
 function onContextMenu(e: MouseEvent, f: TreeNode) {
   e.preventDefault()
@@ -128,6 +134,20 @@ function onMenuOpen() {
   const p = menu.value?.path
   closeMenu()
   if (p) void store.openNote(p)
+}
+
+/**
+ * 「更换图标」在卡片区曾经点了没反应：菜单那一项发了 `icon`，
+ * 这一栏压根没接 —— 菜单项照常画出来，点了什么也不发生。
+ * 换成图标后卡片要当场变（state.icons 是 reactive，卡片照它画），
+ * 所以这里不用像目录树那样再去刷一遍列表。
+ */
+async function onIconPick(ic: { kind: 'brand' | 'emoji'; id: string } | null) {
+  const p = actionPath.value
+  markOpen.value = false
+  if (!p) return
+  await store.setNodeIcon(p, ic)
+  toast(ic ? '图标已更换' : '已恢复默认图标')
 }
 
 async function copyPath() {
@@ -315,6 +335,22 @@ onBeforeUnmount(() => {
       @reveal="reveal"
       @export="doExport"
       @remove="() => { takeMenu(); removeOpen = true }"
+      @mark="
+        () => {
+          takeMenu()
+          markOpen = true
+        }
+      "
+    />
+
+    <MarkDialog
+      :open="markOpen"
+      :name="actionName"
+      type="file"
+      :path="actionPath"
+      :tags="actionTags"
+      @close="markOpen = false"
+      @pick-icon="onIconPick"
     />
 
     <PromptDialog

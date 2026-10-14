@@ -1,6 +1,8 @@
 node_modules/
 dist/
 dist-electron/
+# 性能剖析专用的未压缩构建产物（scripts/diag-profile.mjs 用的靶子）
+dist-prof/
 release/
 *.tsbuildinfo
 *.log

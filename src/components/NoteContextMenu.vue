@@ -3,7 +3,7 @@
  * 笔记卡片 / 目录树上的右键菜单。
  *
  * 顺序照参考图来：先「我对这篇做什么」（打开、收藏），
- * 再「改它本身」（重命名、归类），
+ * 再「改它本身」（重命名、标记、归类），
  * 再「它在磁盘上的位置」（复制路径、在系统打开），
  * 然后是四种导出，最后才是删除——危险的那一项永远在最下面、带红色。
  *
@@ -39,7 +39,7 @@ const emit = defineEmits<{
   (e: 'open'): void
   (e: 'star'): void
   (e: 'rename'): void
-  (e: 'icon'): void
+  (e: 'mark'): void
   (e: 'move'): void
   (e: 'copyPath'): void
   (e: 'reveal'): void
@@ -75,7 +75,7 @@ const EXPORTS: { kind: NoteExportKind; label: string; icon: unknown }[] = [
     <ContextMenuItem :icon="PencilLine" label="重命名" @select="emit('rename')" />
     <!-- 换图标放在「改它本身」这一组：它改的是这篇笔记看起来什么样，
          和重命名是同一类动作，不是磁盘操作 -->
-    <ContextMenuItem :icon="Shapes" label="更换图标…" @select="emit('icon')" />
+    <ContextMenuItem :icon="Shapes" label="标记…" @select="emit('mark')" />
     <ContextMenuItem :icon="FolderInput" label="归类…" @select="emit('move')" />
 
     <ContextMenuSeparator />

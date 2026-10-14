@@ -17,7 +17,6 @@ const { state } = store
  */
 function onLibrary(e: Event) {
   const which = (e as CustomEvent<'attach' | 'trash'>).detail
-  if (!state.column) store.toggleColumn()
   store.setColumnView(which === 'trash' ? 'trash' : 'attach')
 }
 
@@ -30,10 +29,17 @@ let ro: ResizeObserver | null = null
 /** 各栏宽度由 SplitHandle 拖着改，这里只负责把它们写到 CSS 变量上。
     中间那一列没被人拖过时走「自适应」：窗口宽它就宽，但始终给编辑区留够地方。 */
 const colW = computed(() => store.effectiveColumnWidth(winW.value))
+/**
+ * 侧栏真正画出来的宽度也得走同一个算法（`sidebarNow`），不能直接用存的那个值。
+ * 存的宽度是上次在**宽窗口**里拖出来的，换个窄窗口它就已经站不下了 ——
+ * 只在上限计算里收着、渲染时照旧画，结果是三栏加起来超过窗口，
+ * 被挤的是编辑区（实测 960px 下编辑区只剩 508，比它的下限 520 还窄）。
+ */
+const sideW = computed(() => store.sidebarNow(winW.value))
 
 function widthVars() {
   return {
-    '--side-w': `${state.sidebarWidth}px`,
+    '--side-w': `${sideW.value}px`,
     '--col-w': `${colW.value}px`,
     '--outline-w': `${state.outlineWidth}px`,
   }
@@ -65,6 +71,10 @@ function onKey(e: KeyboardEvent) {
     // 侧边栏折叠/展开
     e.preventDefault()
     store.toggleSidebar()
+  } else if (e.shiftKey && e.key === '|') {
+    // 资料栏折叠/展开：Ctrl+Shift+\ 在物理键盘上打出来的就是这个键
+    e.preventDefault()
+    store.toggleColumn()
   }
 }
 
@@ -98,17 +108,12 @@ onMounted(() => {
     winW.value = window.innerWidth
   })
   ro.observe(document.documentElement)
-  // 起手先按当前窗口收放一次：上次是在宽窗口里退出的、这次开在窄窗口上，
-  // 别让资料栏一上来就把正文挤扁。
-  store.fitColumnToWindow(winW.value)
 })
 
-/* 资料栏什么时候该收：窗口窄到放不下就自己收，宽回来再自己还回去。
-   规则在 store 里，这里只负责把窗口宽度喂进去。
-   侧栏收起/展开同样改变可用宽度，所以也一起看。 */
-watch([winW, () => state.sidebar, () => state.sidebarWidth], () => {
-  store.fitColumnToWindow(winW.value)
-})
+/* 资料栏常驻，宽度靠 `effectiveColumnWidth` 自己收上限（见 store），
+   侧栏那边也有一道上限（`sidebarNow`）。两道都只跟当前窗口现算，
+   所以窗口怎么变都不需要额外再收放一次 —— 以前这里挂着一个
+   「窄到放不下就把整栏收掉」的 watcher，现在那条路不存在了。 */
 
 onBeforeUnmount(() => {
   window.removeEventListener('keydown', onKey)
@@ -127,12 +132,9 @@ onBeforeUnmount(() => {
     <div class="body" :style="widthVars()">
       <SidePanel v-if="state.root" />
       <SplitHandle v-if="state.root && state.sidebar" target="sidebar" label="拖动调整侧边栏宽度" />
-      <!-- 资料栏收起/展开是一次「整块滑走 / 滑回来」：v-if 直接删掉的话，
-           编辑区会硬生生跳一大截。用 Transition 让它在 0 宽度上收缩/张开。
-           侧栏那一条本来就有自己的宽度过渡（它收起后还要留一条图标窄轨）。 -->
-      <Transition name="colx">
-        <SideColumn v-if="state.root && state.column" />
-      </Transition>
+      <!-- 资料栏常驻渲染：收起态是它自己的一条窄轨，不是被删掉。
+           删掉会让编辑区硬跳一截，而且那个「把它叫回来」的入口没地方放。 -->
+      <SideColumn v-if="state.root" />
       <SplitHandle v-if="state.root && state.column" target="column" label="拖动调整资料栏宽度" />
 
       <main class="main">
@@ -179,24 +181,9 @@ onBeforeUnmount(() => {
   background: var(--n-bg);
 }
 
-/* 资料栏收起 / 展开：宽度从 0 滑到 --col-w。
-   `!important` 是因为 .col 自己那条 `width: var(--col-w)` 和这里同权重，
-   写不写全靠谁在后面，太脆；不如明说这一刻就是 0。
-   只在进出场这两百多毫秒里挂过渡，窗口缩放时宽度照旧是瞬时的
-   —— 拖窗口时栏跟在后面甩，比不动画还难受。 */
-.colx-enter-active,
-.colx-leave-active {
-  overflow: hidden;
-  transition:
-    width 200ms var(--n-ease),
-    opacity 160ms var(--n-ease);
-}
-
-.colx-enter-from,
-.colx-leave-to {
-  width: 0 !important;
-  opacity: 0;
-}
+/* 资料栏收起 / 展开的过渡写在 SideColumn 自己的 `.col` 上（宽度 200ms）。
+   这里不再需要 Transition：那一列现在是常驻渲染的，收起态只是它内部的一次
+   换装（一条 34px 的窄轨），不存在「整块被移出 DOM」这回事。 */
 
 /* 空态下的顶栏：只有名字和三颗窗口按钮，
    整条都是拖动区（按钮自己声明 no-drag）。 */

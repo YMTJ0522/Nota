@@ -115,6 +115,12 @@ contextBridge.exposeInMainWorld('api', {
   iconsWrite: (root: string, map: Record<string, string>): Promise<boolean> =>
     ipcRenderer.invoke('icons:write', root, map),
 
+  /* 标签归属图标：标签名 → 图标 id，存在 .nota/tag-icons.json */
+  tagIconsRead: (root: string): Promise<Record<string, string>> =>
+    ipcRenderer.invoke('tagIcons:read', root),
+  tagIconsWrite: (root: string, map: Record<string, string>): Promise<boolean> =>
+    ipcRenderer.invoke('tagIcons:write', root, map),
+
   /* 把粘贴 / 拖进来的图片存进工作区 attachments/，返回相对路径 */
   mediaSave: (
     root: string,

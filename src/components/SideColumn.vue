@@ -26,6 +26,7 @@ import {
   ListTree,
   Loader2,
   PanelRightClose,
+  PanelRightOpen,
   Paperclip,
   Quote,
   Sparkles,
@@ -70,7 +71,15 @@ const NOTE_TABS = computed(() =>
   ].filter((t) => t.id !== 'outline' || state.outline),
 )
 
-/** 另外三种：各占一屏，靠侧栏入口切过来 */
+/**
+ * 另外三种：各占一屏，靠侧栏入口切过来。
+ *
+ * 这张表只有那三种 —— 「笔记 / 大纲 / 引用」是页签，名字和图标在
+ * NOTE_TABS 里。所以「当前这一屏叫什么」要分两路问，不能一路问到底：
+ * 收起后的窄轨上要写这一栏收着的是什么，笔记类得回页签那张表去要，
+ * 拿 SOLO[view] 去问会拿到 undefined（第一版就栽在这儿，
+ * 一点收起整列渲染抛错，编辑区宽度是还回来了，列自己没了）。
+ */
 const SOLO: Record<string, { label: string; icon: unknown }> = {
   attach: { label: '附件库', icon: Paperclip },
   trash: { label: '回收站', icon: Trash2 },
@@ -79,7 +88,13 @@ const SOLO: Record<string, { label: string; icon: unknown }> = {
 
 const view = computed(() => state.columnView)
 const isNoteTab = computed(() => NOTE_TABS.value.some((t) => t.id === view.value))
-const solo = computed(() => SOLO[view.value] ?? SOLO.notes)
+const solo = computed(() => {
+  if (isNoteTab.value) {
+    const t = NOTE_TABS.value.find((x) => x.id === view.value)
+    return { label: t?.label ?? '笔记', icon: t?.icon ?? FileText }
+  }
+  return SOLO[view.value] ?? { label: '笔记', icon: FileText }
+})
 const noteCount = computed(() => store.visibleFiles.value.length)
 
 function pick(id: ColumnView) {
@@ -133,7 +148,8 @@ async function doImport() {
 </script>
 
 <template>
-  <section ref="colEl" class="col" :data-view="view" aria-label="资料栏">
+  <section ref="colEl" class="col" :class="{ folded: !state.column }" :data-view="view" aria-label="资料栏">
+    <template v-if="state.column">
     <header ref="flowEl" class="col-flow" :data-crammed="flowTier || null">
       <!-- 笔记这一类：一排页签。 -->
       <template v-if="isNoteTab">
@@ -164,8 +180,7 @@ async function doImport() {
       </template>
 
       <!-- 一进一出，永远在这一列的右上角：
-           不管当前看的是笔记、附件还是 AI，收笔记的地方都在同一处。
-           「收起这一栏」不在这儿 —— 它在侧栏顶行，跟「收起侧边栏」并排。 -->
+           不管当前看的是笔记、附件还是 AI，收起笔记的地方都在同一处。 -->
       <button
         class="col-act"
         data-role="new-note"
@@ -185,15 +200,13 @@ async function doImport() {
         <Loader2 v-if="importing" class="spinning" :size="14" :stroke-width="1.9" />
         <Upload v-else :size="14" :stroke-width="1.9" />
       </button>
-      <!-- 「收起这一栏」长在这一栏自己的顶行右端：
-           管的就是自己，跟新建/导入同属这一栏的操作。
-           以前它挂在侧栏顶行、跟「收起侧边栏」并排 —— 一枚收自己、一枚收邻居，
-           两枚看着像一对同级开关，其实谁跟谁都不是一回事。
-           收起后这一栏没了，入口退回侧栏顶行（见 SidePanel）。 -->
+      <!-- 收起这一栏的开关长在它自己这一列上，不在侧栏顶行。
+           侧栏顶行让给了「收起侧边栏」——两栏各自的开关各在各列，
+           不会并排成一对看着像同级、其实谁跟谁都不是一回事的按钮。 -->
       <button
         class="col-act"
         data-role="column-toggle"
-        data-tip="收起资料栏"
+        data-tip="收起资料栏 (Ctrl+Shift+\)"
         @click="store.toggleColumn()"
       >
         <PanelRightClose :size="14" :stroke-width="1.9" />
@@ -208,12 +221,38 @@ async function doImport() {
       <TrashView v-else-if="view === 'trash'" />
       <AiChatPanel v-else />
     </div>
+    </template>
+
+    <!-- ══ 收起态：一条窄轨 ══
+         不是「完全消失 + 在别处留个入口」。完全消失之后，
+         人得先在脑子里记着「它去哪了」，再去侧栏找那个入口——
+         而那个入口跟侧栏自己的开关挨在一起，正是当初嫌难看的那副样子。
+         留一条 34px 的窄轨，展开钮就在上面，原处来回，不用找。
+         侧栏收起时也是这样一条窄轨，两栏用同一种语言。 -->
+    <div v-else class="col-fold">
+      <button
+        class="fold-btn"
+        data-role="column-toggle"
+        data-tip="展开资料栏 (Ctrl+Shift+\)"
+        @click="store.toggleColumn()"
+      >
+        <PanelRightOpen :size="15" :stroke-width="1.9" />
+      </button>
+      <span class="fold-crumb" :title="solo.label">
+        <component :is="solo.icon" :size="13" :stroke-width="1.9" />
+      </span>
+      <span class="fold-spacer" />
+      <span v-if="isNoteTab" class="fold-n">{{ noteCount }}</span>
+    </div>
   </section>
 </template>
 
 <style scoped>
 .col {
   flex: none;
+  /* 收放是一次宽度过渡，不是突然消失：整列直接没掉的那一瞬间，
+     编辑区会猛地往左跳一大截，眼睛根本跟不上。 */
+  transition: width 200ms var(--n-ease);
   width: var(--col-w, 296px);
   display: flex;
   flex-direction: column;
@@ -221,6 +260,67 @@ async function doImport() {
   border-right: 1px solid var(--n-line);
   background: color-mix(in oklab, var(--n-sunken) 62%, var(--n-bg));
   overflow: hidden;
+}
+
+/* ── 收起态：34px 的窄轨 ── */
+.col.folded {
+  width: 34px;
+}
+
+.col-fold {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 5px 0;
+  gap: 2px;
+}
+
+.fold-btn {
+  flex: none;
+  width: 26px;
+  height: 26px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--n-r-sm);
+  color: var(--n-fg-dim);
+}
+
+.fold-btn svg {
+  fill: none;
+  stroke: currentColor;
+}
+
+.fold-btn:hover {
+  background: var(--n-bg);
+  color: var(--n-accent);
+}
+
+/* 当前这一屏是什么。窄归窄，不能让人忘了这儿收着的是什么东西 */
+.fold-crumb {
+  flex: none;
+  display: inline-flex;
+  padding: 4px 0;
+  color: var(--n-fg-faint);
+}
+
+.fold-crumb svg {
+  fill: none;
+  stroke: currentColor;
+}
+
+.fold-spacer {
+  flex: 1;
+  min-height: 0;
+}
+
+.fold-n {
+  flex: none;
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  color: var(--n-fg-faint);
 }
 
 /* ── 页签行 ── */

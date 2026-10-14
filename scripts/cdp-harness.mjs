@@ -17,7 +17,10 @@ import { fileURLToPath } from 'node:url'
 import { purgeStale, removeProfile } from './tmp-profiles.mjs'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
-const distDir = path.join(root, 'dist')
+/* WEB_ROOT 允许换一个静态根目录：剖析时需要一份**未压缩**的构建
+   （minify 会把函数名抹掉，CPU profile 里只剩一堆无意义的 fn），
+   那份临时产物放 dist-prof，正常产物仍是 dist。 */
+const distDir = path.join(root, process.env.WEB_ROOT || 'dist')
 
 const EDGE = 'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe'
 
