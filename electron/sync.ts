@@ -84,17 +84,47 @@ async function davFetch(
    WebDAV 的 XML 命名空间前缀各家不一样（d: / D: / 不带前缀），
    正则一律写成 `(?:[\w-]+:)?`，哪家的都认。 */
 
-function parsePropsResponse(block: string): { href: string; isDir: boolean; mtime: number; size: number } {
-  const href = decodeURIComponent(
-    (/<(?:[\w-]+:)?href>([^<]*)<\/(?:[\w-]+:)?href>/.exec(block)?.[1] ?? '').trim(),
-  )
+function parsePropsResponse(block: string): {
+  href: string
+  raw: string
+  isDir: boolean
+  mtime: number
+  size: number
+} {
+  const raw = (/<(?:[\w-]+:)?href>([^<]*)<\/(?:[\w-]+:)?href>/.exec(block)?.[1] ?? '').trim()
+  const href = decodeURIComponent(raw)
   const isDir = /<(?:[\w-]+:)?collection\s*\/?>/.test(block)
   const mtime = Date.parse(
     (/<(?:[\w-]+:)?getlastmodified>([^<]*)<\/(?:[\w-]+:)?getlastmodified>/.exec(block)?.[1] ??
       '') || '',
   )
   const size = Number(/<(?:[\w-]+:)?getcontentlength>(\d+)</.exec(block)?.[1] ?? 0)
-  return { href, isDir, mtime: Number.isNaN(mtime) ? 0 : mtime, size }
+  return { href, raw, isDir, mtime: Number.isNaN(mtime) ? 0 : mtime, size }
+}
+
+/**
+ * href 各家给法不一样：有的给完整 URL，有的只给路径（`/dav/Nota/子目录`）。
+ *
+ * 只给路径的那种必须补成绝对 URL —— 子目录是拿 href 接着往下 PROPFIND 的，
+ * 把 `/dav/…` 直接丢给 net.fetch 会得到
+ * `Failed to parse URL from /dav/…`：第一次同步（远端还是空的、没有子目录）
+ * 一路顺风，第二次一撞上子目录就整轮失败。
+ */
+function absoluteHref(href: string, cfg: SyncConfig): string {
+  try {
+    return new URL(href, baseUrl(cfg) + '/').toString()
+  } catch {
+    return href
+  }
+}
+
+/** 把 URL 规整成可比的路径键：解码、去尾斜杠。 */
+function hrefKey(u: string): string {
+  try {
+    return decodeURIComponent(new URL(u, 'http://x/').pathname.replace(/\/+$/, ''))
+  } catch {
+    return decodeURIComponent(u.replace(/\/+$/, ''))
+  }
 }
 
 /** 列一个远端目录（Depth 1）。返回目录自身的信息 + 直接子项 */
@@ -115,10 +145,15 @@ async function listDir(url: string, cfg: SyncConfig): Promise<RemoteEntry[]> {
     const p = parsePropsResponse(b)
     if (!p.href) continue
     // href 可能是绝对 URL，也可能只有路径 —— 统一取末段当名字
-    const clean = p.href.replace(/\/+$/, '')
-    const name = decodeURIComponent(clean.split('/').pop() ?? '')
+    const name = decodeURIComponent(p.href.replace(/\/+$/, '').split('/').pop() ?? '')
     if (!name) continue
-    out.push({ href: clean, name, isDir: p.isDir, mtime: p.mtime, size: p.size })
+    out.push({
+      href: absoluteHref(p.raw, cfg),
+      name,
+      isDir: p.isDir,
+      mtime: p.mtime,
+      size: p.size,
+    })
   }
   return out
 }
@@ -218,14 +253,17 @@ export async function syncWorkspace(root: string, cfg: SyncConfig): Promise<Sync
     const queue: { url: string; prefix: string }[] = [
       { url: dirUrl(cfg), prefix: '' },
     ]
-    while (queue.length) {
+    let guard = 0
+    while (queue.length && guard++ < 5000) {
       const { url, prefix } = queue.shift()!
       const entries = await listDir(url, cfg)
-      const selfName = decodeURIComponent(
-        (url.replace(/\/+$/, '').split('/').pop() ?? ''),
-      )
+      // PROPFIND 会连目录自己一起带回来。不认出来的话它会被当成
+      // 「一个同名子目录」再塞回队列 —— 于是无限往下钻，整轮同步卡死。
+      // 比的是规整过的路径（解码 + 去尾斜杠），因为 URL 上那段是编码过的，
+      // 而服务器给的 href 未必编码，两种写法要能认成同一个。
+      const self = hrefKey(url)
       for (const e of entries) {
-        if (e.name === selfName && prefix === '') continue // PROPFIND 会带回目录自己
+        if (hrefKey(e.href) === self) continue
         if (e.isDir) {
           queue.push({ url: `${e.href}/`, prefix: prefix ? `${prefix}/${e.name}` : e.name })
         } else {

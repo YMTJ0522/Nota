@@ -1,12 +1,17 @@
 /**
- * 官网用的功能特写截图。
+ * 官网用的功能特写截图（`site/shots/*.png`）。
  *
- * 跟 shots.mjs 的区别：那边是「自查用的界面记录」，这边是「对外宣传」，
- * 所以每张图只拍**一个功能**，并且刻意把界面填到最好看的状态 ——
- * 提示块那张要十一种都排上、关系图那张要有明显的枢纽和孤岛、搜索那张
- * 要能看到正文命中。空荡荡的界面当宣传图是没有说服力的。
+ * 跟 `scripts/shots.mjs`（docs/ 那批）是两回事：那边是自查记录，这边是对外放的，
+ * 所以每张图只拍**一个角度**，并且刻意把界面填到最好看的状态。
  *
- * 一律 2 倍图：网页上要放大看细节（代码高亮、提示块配色、图表的线）。
+ * 题材上有一条硬要求：**得像真的在写一篇东西**。
+ * 早先用的是「把所有语法塞一遍」的演示稿，提示块一口气铺了十一种，
+ * 于是六张图里三张的主角都是彩色方框 —— 看着像在展示提示块，不像在展示
+ * 一个笔记应用。现在换成一篇真文章（《Linux 命令行入门》），提示块只在
+ * 结尾留一个，剩下的篇幅是标题、正文、命令、表格、图表、待办、脚注这些
+ * 每天真会写的东西。
+ *
+ * 一律 2 倍图：网页上要放大看细节（代码高亮、表格、图表的线）。
  */
 import { launch } from './cdp-harness.mjs'
 import { makeInject, makeNotes } from './fake-workspace.mjs'
@@ -14,115 +19,146 @@ import { makeInject, makeNotes } from './fake-workspace.mjs'
 const OUT = 'site/shots'
 const PORT = Number(process.env.PORT || 4431)
 
-/** 十一种提示块 + 图表 + 代码块：预览里最「满」的一屏 */
-const SHOWCASE = [
-  '---',
-  'title: 一周手记',
-  'tags: [手记, 示例]',
-  '---',
+/* ── 一篇真文章 ──
+   提示块刻意只留**一个**，还放在结尾：上一版被吐槽「官网全是提示框」，
+   就是因为演示稿把它们铺满了屏。 */
+const ARTICLE = [
+  '# Linux 命令行入门',
   '',
-  '# 一周手记',
+  '> 命令行的难不在命令多，而在不知道「我现在在哪儿、刚才发生了什么」。',
   '',
-  '*「把想法写下来，它们才会长成东西。」*',
+  '第一次连上一台服务器，屏幕上只有一个光标在闪。这篇从那个光标开始，',
+  '把每天真会用到的东西过一遍：看目录、找文件、看进程，最后写一个自己的脚本。',
   '',
-  '> [!NOTE] 提示',
-  '> 蓝。用来补一句不写也行、写了更清楚的话。',
+  '## 先回答三个问题',
   '',
-  '> [!TIP] 技巧',
-  '> 绿。围栏后面写 `line-numbers` 就有行号，`{2}` 高亮某一行。',
+  '敲命令之前把这三个答上来，八成的情况就够应付了：',
   '',
-  '> [!WARNING] 警告',
-  '> 琥珀。这一步做错了会丢东西。',
+  '1. **我在哪个目录** —— `pwd`',
+  '2. **这里有什么** —— `ls -lh`',
+  '3. **刚才那句为什么报错** —— 看终端回的最后一行，答案多半就在那儿',
   '',
-  '> [!DANGER] 危险',
-  '> 红。删掉就找不回来了。',
+  '## 目录与文件',
   '',
-  '> [!QUESTION] 疑问',
-  '> 玫红。这里还没想清楚。',
+  '| 命令 | 干什么 | 常用写法 |',
+  '| :--- | :--- | :--- |',
+  '| `pwd` | 打印当前目录 | `pwd` |',
+  '| `ls` | 列目录 | `ls -lh` |',
+  '| `cd` | 换目录 | `cd /var/log` |',
+  '| `cp` | 复制 | `cp -a src/ dst/` |',
+  '| `mv` | 移动 / 改名 | `mv a.txt b.txt` |',
+  '| `rm` | 删除（没有回收站） | `rm -i old.log` |',
   '',
-  '> [!SUCCESS] 成功',
-  '> 青绿。做完了。',
+  '## 找东西',
   '',
-  '> [!IMPORTANT] 重要',
-  '> 紫。这条别跳过。',
+  '按名字找和按内容找是两回事：',
   '',
-  '> [!EXAMPLE] 示例',
-  '> 靛。给一个具体的样子。',
-  '',
-  '> [!CAUTION] 注意',
-  '> 橙。小心一点。',
-  '',
-  '> [!INFO] 说明',
-  '> 青蓝。交代背景。',
-  '',
-  '> [!QUOTE] 引用',
-  '> 灰。别人的话。',
-  '',
-  '## 这周做了什么',
-  '',
-  '- [x] 把资料库迁到本地目录',
-  '- [x] 给编辑器补上代码块行号',
-  '- [ ] 整理读书笔记的双链 → [[读书笔记]]',
-  '',
-  '## 一段代码',
-  '',
-  '```ts title="notes.ts" line-numbers {3}',
-  'export interface Note {',
-  '  path: string',
-  '  tags: string[]',
-  '  updatedAt: number',
-  '}',
+  '```bash title="最近七天改过的日志"',
+  'find /var/log -name "*.log" -mtime -7',
   '```',
   '',
-  '## 图表',
+  '```bash title="在一堆文件里找那句话"',
+  'grep -R "connection refused" /var/log -n',
+  '```',
+  '',
+  '## 看进程',
+  '',
+  '服务起没起来、占了多少内存，都在这里：',
+  '',
+  '```bash',
+  'ps aux | grep nginx',
+  '```',
+  '',
+  '想知道更细的（哪个进程在吃 CPU、内存还剩多少），另开一篇 [[进程与端口]] 讲。',
+  '',
+  '## 写第一个脚本',
+  '',
+  '把每天要做的备份写成脚本，比记命令靠谱：',
+  '',
+  '```bash title="backup.sh" line-numbers',
+  '#!/usr/bin/env bash',
+  'set -euo pipefail',
+  '',
+  'SRC="/srv/data"',
+  'DST="/srv/backup"',
+  'STAMP="$(date +%F)"',
+  '',
+  'tar -czf "$DST/data-$STAMP.tar.gz" "$SRC"',
+  'echo "备份完成：$DST/data-$STAMP.tar.gz"',
+  '```',
+  '',
+  '写完别忘了 `chmod +x backup.sh`[^1]，不然它会安静地失败。',
+  '',
+  '## 一条命令是怎么跑完的',
   '',
   '```mermaid',
   'graph LR',
-  '  A[想法] --> B[笔记]',
-  '  B --> C[整理]',
-  '  C --> D[输出]',
-  '  B --> D',
+  '  A[敲下回车] --> B{Shell 找得到这个命令吗}',
+  '  B -- 找不到 --> C[command not found]',
+  '  B -- 找到 --> D[启动进程]',
+  '  D --> E{退出码是 0 吗}',
+  '  E -- 是 --> F[成了，接着敲下一句]',
+  '  E -- 不是 --> G[回头看报错那一行]',
   '```',
   '',
-  '## 表格',
+  '## 练习清单',
   '',
-  '| 项目 | 状态 | 耗时 |',
-  '| --- | --- | --- |',
-  '| 资料库 | 完成 | 2 天 |',
-  '| 编辑器 | 完成 | 3 天 |',
-  '| 双链 | 进行中 | — |',
+  '- [x] 用 ssh 连上一台机器',
+  '- [x] 找到 nginx 的日志放在哪儿',
+  '- [ ] 写一个每天自动备份的脚本，挂到 cron 上',
+  '- [ ] 把 [[Shell 脚本]] 那一篇读完',
   '',
+  '## 接着往下读',
+  '',
+  '- [[进程与端口]] —— `ps`、`ss`、`lsof` 三件套',
+  '- [[Shell 脚本]] —— 变量、判断、循环，够用就好',
+  '',
+  '> [!tip] 记不住参数很正常',
+  '> 老手也是 `man` 和 `--help` 来回翻。真正要记住的只有「怎么查」。',
+  '',
+  '[^1]: `chmod +x` 给的是执行权限，没有它只能写成 `bash backup.sh` 来调。',
 ].join('\n')
 
-/** 关系图用的几篇：写一串互相引用的笔记，图上才有枢纽和孤岛 */
-const LINKED = {
-  '/ws/一周手记.md': SHOWCASE,
-  '/ws/读书笔记.md': '# 读书笔记\n\n在读《设计中的设计》。[[一周手记]] 里也提到了这本。\n',
-  '/ws/项目计划.md': '# 项目计划\n\n跟着 [[一周手记]] 推进，细节见 [[技术备忘]]。\n',
-  '/ws/技术备忘.md': '# 技术备忘\n\n给 [[项目计划]] 做技术底稿。\n',
-  '/ws/灵感.md': '# 灵感\n\n想到什么先扔这儿，之后再并进 [[项目计划]]。\n',
-  '/ws/旧稿.md': '# 旧稿\n\n这一篇谁的都没提。\n',
+/* 关系图要有枢纽也有孤岛，就靠这几篇互相引 */
+const NOTES = {
+  '/ws/Linux 命令行入门.md': ARTICLE,
+  '/ws/进程与端口.md': [
+    '# 进程与端口',
+    '',
+    '看进程用 `ps aux`，看端口用 `ss -lntp`，查谁占着文件用 `lsof`。',
+    '',
+    '这一篇接着 [[Linux 命令行入门]] 往下写。',
+  ].join('\n'),
+  '/ws/Shell 脚本.md': [
+    '# Shell 脚本',
+    '',
+    '变量、判断、循环三样就够用。开头那句 `set -euo pipefail` 别忘了。',
+    '',
+    '配套示例在 [[Linux 命令行入门]]。',
+  ].join('\n'),
+  '/ws/旧稿.md': '# 旧稿\n\n这一篇谁的都没提，孤零零地放着。\n',
 }
 
-function treeOf(extra) {
+function treeOf() {
   const file = (name, tags = []) => ({
     type: 'file',
     name,
     path: `/ws/${name}`,
     tags,
-    starred: name === '一周手记.md',
+    starred: name === 'Linux 命令行入门.md',
     mtime: Date.now() - 3600_000,
     excerpt: '',
   })
   return [
     {
       type: 'dir',
-      name: '2026',
-      path: '/ws/2026',
+      name: '运维笔记',
+      path: '/ws/运维笔记',
       children: [
-        file('一周手记.md', ['手记']),
-        file('读书笔记.md', ['阅读']),
-        ...extra.map((n) => file(n)),
+        file('Linux 命令行入门.md', ['Linux']),
+        file('进程与端口.md', ['Linux']),
+        file('Shell 脚本.md', ['Linux']),
+        file('旧稿.md'),
       ],
     },
   ]
@@ -130,13 +166,12 @@ function treeOf(extra) {
 
 const { send, evaluate, sleep, close, shot } = await launch({
   port: PORT,
-  size: [1440, 900],
+  size: [1500, 940],
   scale: 2,
 })
 
-const notes = { ...makeNotes(), ...LINKED }
-const tree = treeOf(['项目计划.md', '技术备忘.md', '灵感.md', '旧稿.md'])
-const INJECT = makeInject({ notes, tree })
+const notes = { ...makeNotes(), ...NOTES }
+const INJECT = makeInject({ notes, tree: treeOf() })
 
 await send('Page.navigate', { url: `http://127.0.0.1:${PORT}/` })
 await sleep(1200)
@@ -148,18 +183,18 @@ await sleep(900)
 await evaluate(`
   (() => {
     const r = [...document.querySelectorAll('.nlist .nl-item, .tree .row.file')]
-      .find((b) => (b.textContent || '').includes('一周手记'));
+      .find((b) => (b.textContent || '').includes('Linux'));
     r?.click();
     return !!r;
   })()
 `)
-await sleep(1500)
+await sleep(1800)
 
 const clickMode = async (label) => {
   await evaluate(
     `(() => { const b = [...document.querySelectorAll('.ph-seg-btn')].find(x => (x.getAttribute('aria-label')||'').includes(${JSON.stringify(label)})); b?.click(); return !!b })()`,
   )
-  await sleep(900)
+  await sleep(1100)
 }
 
 const setTheme = async (label) => {
@@ -178,24 +213,32 @@ const setTheme = async (label) => {
   await sleep(700)
 }
 
-/* ① 主视觉：浅色 · 分栏（左边源码、右边渲染结果） */
-await clickMode('分栏')
-await sleep(2600)
-console.log('  →', await shot(`${OUT}/hero.png`))
-
-/* ② 深色 · 阅读模式。图表配色会跟着重画，所以要等它画完 */
-await setTheme('深色')
-await clickMode('阅读模式')
-await sleep(2600)
-console.log('  →', await shot(`${OUT}/dark.png`))
-
-/* ③ 提示块与图表：回到浅色分栏，滚到提示块那一屏 */
+/* ① 主视觉：浅色 · 分栏（左边源码、右边渲染），停在文章开头 */
 await setTheme('浅色')
 await clickMode('分栏')
-await sleep(2400)
+await sleep(2600)
 await evaluate(`document.querySelector('.preview')?.scrollTo(0, 0)`)
 await sleep(600)
-console.log('  →', await shot(`${OUT}/callouts.png`))
+console.log('  →', await shot(`${OUT}/hero.png`))
+
+/* ② 阅读模式的排版：滚到表格与图表那一屏 —— 看的是排版，不是语法清单 */
+await clickMode('阅读')
+await sleep(2600)
+await evaluate(`(() => { const p = document.querySelector('.preview'); if (p) p.scrollTop = 700; return !!p })()`)
+await sleep(900)
+console.log('  →', await shot(`${OUT}/article.png`))
+
+/* ③ 大纲：中间那一列的页签 */
+await clickMode('分栏')
+await evaluate(`
+  (() => {
+    const b = [...document.querySelectorAll('.col-tab')].find((x) => x.textContent.includes('大纲'))
+    b?.click()
+    return !!b
+  })()
+`)
+await sleep(1000)
+console.log('  →', await shot(`${OUT}/outline.png`))
 
 /* ④ 关系图 */
 await evaluate(`
@@ -208,7 +251,7 @@ await evaluate(`
 await sleep(3400)
 console.log('  →', await shot(`${OUT}/graph.png`))
 
-/* ⑤ 搜索面板：正文里搜「设计中的设计」，标题里没有这个词 */
+/* ⑤ 搜索面板：正文里搜「备份」，标题里没有这个词 */
 await evaluate(`
   (() => {
     const b = [...document.querySelectorAll('.nav-item')].find((x) => x.textContent.includes('关系图'))
@@ -224,7 +267,7 @@ await sleep(400)
 await evaluate(`
   (() => {
     const i = document.querySelector('.sp-input')
-    i.value = '设计中的设计'
+    i.value = '备份'
     i.dispatchEvent(new Event('input', { bubbles: true }))
     return true
   })()
@@ -235,16 +278,21 @@ console.log('  →', await shot(`${OUT}/search.png`))
 await evaluate(`document.querySelector('.sp-x')?.click()`)
 await sleep(400)
 
-/* ⑥ 大纲与引用：中间那一列的两个页签 */
+/* ⑥ 深色 · 阅读模式：中间栏先回到笔记列表，再滚到脚本与流程图那一屏 */
+await setTheme('深色')
 await evaluate(`
   (() => {
-    const b = [...document.querySelectorAll('.col-tab, .nlist-tab')].find((x) => x.textContent.includes('大纲'))
+    const b = [...document.querySelectorAll('.col-tab')].find((x) => x.textContent.includes('笔记'))
     b?.click()
     return !!b
   })()
 `)
+await sleep(500)
+await clickMode('阅读')
+await sleep(2400)
+await evaluate(`(() => { const p = document.querySelector('.preview'); if (p) p.scrollTop = 900; return !!p })()`)
 await sleep(900)
-console.log('  →', await shot(`${OUT}/outline.png`))
+console.log('  →', await shot(`${OUT}/dark.png`))
 
 await close()
 console.log('done')

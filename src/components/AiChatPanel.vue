@@ -1402,15 +1402,25 @@ const thinkingLive = computed(
 .row {
   display: flex;
   flex-direction: column;
-  /* 靠左是默认：助手那一段贴左边，我说的靠右（见 .row.user） */
-  align-items: flex-start;
+  /* 这里**必须**是默认的 stretch，不能写 flex-start。
+     列向 flex 容器里 `align-items: flex-start` 会让子项按 max-content 收缩贴合，
+     于是长代码行把它撑到几百像素宽 —— 拖到 220px 的窄栏里那段代码照样占 800px，
+     捅出面板、被隔壁编辑区压在下面，就是「代码块被挡住」。
+     撑满之后宽度由这一栏说了算，代码块自己横向滚。
+     要贴边的元素各自用 align-self / max-width 挪，不该靠收窄整行来实现。 */
+  align-items: stretch;
   gap: 5px;
   margin-bottom: 14px;
 }
 
-/* 我靠右：整条右对齐，只有气泡有底色 */
-.row.user {
-  align-items: flex-end;
+/* 我靠右：气泡与动作自己挪过去，整行仍然撑满 */
+.row.user .bubble,
+.row.user .acts,
+.row.user .srcs {
+  align-self: flex-end;
+}
+.row.user .who {
+  text-align: right;
 }
 
 .who {
@@ -1437,8 +1447,11 @@ const thinkingLive = computed(
   word-break: break-word;
 }
 
-/* 助手正文不走气泡：窄栏里一层边框少一层压迫 */
+/* 助手正文不走气泡：窄栏里一层边框少一层压迫。
+   min-width:0 是给里面的代码块让路 —— 没有它，flex 子项不会收缩到
+   内容宽度以下，代码块就带着它的最长行一起把这一栏顶宽。 */
 .body {
+  min-width: 0;
   font-size: 12.5px;
   line-height: 1.75;
   color: var(--n-fg);

@@ -1531,10 +1531,15 @@ function wordify(root: HTMLElement) {
   for (const el of Array.from(root.querySelectorAll('.pv-callout'))) {
     toCell(el, 'wc-callout', ['data-type'])
   }
-  for (const el of Array.from(root.querySelectorAll('figure.pv-code-fig'))) {
+  /* 带标题的代码块是一个 figure（标题在外，<pre> 在内）。
+     两个分支都跑的话，那个 <pre> 会被再包一层表格 —— 表格套表格，
+     在 Word 里就是两重边框盖两重底色。所以先看有没有 figure 兜着：
+     有就整块交给 figure 这一支，pre 这一支跳过。 */
+  for (const el of Array.from(root.querySelectorAll('pre'))) {
+    if (el.closest('figure.pv-code-fig')) continue
     toCell(el, 'wc-code')
   }
-  for (const el of Array.from(root.querySelectorAll('pre'))) {
+  for (const el of Array.from(root.querySelectorAll('figure.pv-code-fig'))) {
     toCell(el, 'wc-code')
   }
   for (const el of Array.from(root.querySelectorAll('.pv-task'))) {
@@ -1620,6 +1625,7 @@ function inlineWordStyles(root: HTMLElement) {
   each('img', 'max-width:100%;border:0;')
   each('figcaption', 'font-size:9pt;color:#8a867c;margin-top:4pt;')
   each('.pv-task', 'font-family:"Segoe UI Symbol",Arial,sans-serif;')
+  each('.pv-code-lang', 'font-size:8.5pt;color:#8a867c;font-family:Consolas,"Courier New",monospace;')
   each('.pv-line.is-hl', 'background:#eef4f0;')
   // 正文数据表
   each('table:not(.wc-code):not(.wc-callout)', 'border-collapse:collapse;width:100%;margin:10pt 0;')
@@ -1650,6 +1656,75 @@ function inlineWordStyles(root: HTMLElement) {
     const cls = Array.from(el.classList).find((c) => WORD_HL_COLORS[c])
     if (cls) stamp(el, `color:${WORD_HL_COLORS[cls]};`)
   }
+
+  /* 代码的每一行必须是**真的块级元素**。
+     预览里一行就是一个 `<span class="pv-line">`，换行靠 CSS `display:block` 撑；
+     Word / WPS 不认这条规则，整段代码于是糊成一行 —— 用户看到的就是
+     「代码块里面的东西不显示」。换成 `<p>` 后 Word 一定当段落处理，
+     margin 清零，行与行之间就是正常的一行间距。
+     行内那些高亮 span 原样搬过去，行高亮（`is-hl`）的底色也跟着走。 */
+  for (const el of Array.from(root.querySelectorAll('.pv-line'))) {
+    const p = document.createElement('p')
+    let css = 'margin:0;padding:0;line-height:1.55;'
+    if (el.classList.contains('is-hl')) css += 'background:#eef4f0;'
+    const old = el.getAttribute('style')
+    p.setAttribute('style', old ? `${css};${old}` : css)
+    while (el.firstChild) p.appendChild(el.firstChild)
+    // 空行留一个不换行空格，不然 Word 会把它并掉，代码的行数就少了
+    if (!p.firstChild) p.appendChild(document.createTextNode('\u00A0'))
+    // 缩进：HTML 会把行首的空格并掉，换成不换行空格才保得住代码的层次
+    const lead = p.firstChild
+    if (lead && lead.nodeType === Node.TEXT_NODE) {
+      const m = /^[ \t]+/.exec(lead.nodeValue ?? '')
+      if (m) {
+        lead.nodeValue =
+          '\u00A0'.repeat(m[0].length) + (lead.nodeValue ?? '').slice(m[0].length)
+      }
+    }
+    el.replaceWith(p)
+  }
+}
+
+/**
+ * 给每张图钉死像素尺寸。
+ *
+ * Word 不认 `max-width`：只写百分比的话它按图片**原始像素**排版。
+ * 图表是 2 倍图，一张就两千多像素宽 —— 铺出去两三页、还捅破页边距，
+ * 就是用户说的「图表显得特别大特别大」。
+ * Word 认的是 `width` / `height` 属性（按 96dpi 折算），所以这里按 A4
+ * 正文宽度封顶（页边距各 2.54cm，正文约 15.9cm ≈ 600px），等比例算高；
+ * 本来比正文窄的图维持原尺寸，不放大。
+ */
+const WORD_IMG_MAX_PX = 580
+
+async function fitWordImages(root: HTMLElement) {
+  const imgs = Array.from(root.querySelectorAll('img'))
+  await Promise.all(
+    imgs.map(
+      (img) =>
+        new Promise<void>((resolve) => {
+          const apply = (w: number, h: number) => {
+            if (w > 0 && h > 0) {
+              const k = Math.min(1, WORD_IMG_MAX_PX / w)
+              const ow = Math.max(1, Math.round(w * k))
+              const oh = Math.max(1, Math.round(h * k))
+              img.setAttribute('width', String(ow))
+              img.setAttribute('height', String(oh))
+              const old = img.getAttribute('style')
+              img.setAttribute('style', `width:${ow}px;height:${oh}px;${old ? old + ';' : ''}`)
+            }
+            resolve()
+          }
+          if (img.naturalWidth > 0) return apply(img.naturalWidth, img.naturalHeight)
+          const src = img.getAttribute('src') ?? ''
+          if (!src) return resolve()
+          const probe = new Image()
+          probe.onload = () => apply(probe.naturalWidth, probe.naturalHeight)
+          probe.onerror = () => resolve()
+          probe.src = src
+        }),
+    ),
+  )
 }
 
 /** Markdown → 正文 HTML（和预览同一套解析与高亮） */
@@ -1692,7 +1767,11 @@ async function renderExportBody(
     host.innerHTML = body
     if (hasGraph) await renderMermaidInHtml(host, { asImage: forWord })
     if (hasMath) await renderMathInHtml(host, forWord ? { output: 'mathml' } : {})
-    if (forWord) wordify(host)
+    if (forWord) {
+      // 先量图（要等图片 decode 出来才有真实像素），再摊成 Word 的结构
+      await fitWordImages(host)
+      wordify(host)
+    }
     body = host.innerHTML
   }
 
