@@ -17,3 +17,6 @@ docs/probe-*.png
 
 # clean.mjs / release.mjs 用改名代替删除而挪走的旧目录
 .trash/
+
+# publish-github.mjs 发版时临时拼的 Release 正文（用完即删）
+.tmp-release-body.json
