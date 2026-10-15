@@ -425,6 +425,11 @@ async function render() {
   const lit = await highlightFences(raw)
   const media = await resolveMediaInHtml(lit)
   const enhanced = enhancePreview(media)
+  /* 重排会把整个正文 DOM 换掉，滚动高度瞬间归零再长回来 —— 点个待办、
+     勾个勾整个预览抖一下就是这么来的。换 DOM 前记住滚到哪，换完再放回去；
+     mermaid / 公式画完把高度撑起来之后还要再放一次，否则那一下还是会跳。 */
+  const paneEl = previewRef.value
+  const keepTop = paneEl?.scrollTop ?? 0
   html.value = enhanced.html
   // 预览换了一批 DOM，标题的纵向位置缓存作废
   marksDirty = true
@@ -432,6 +437,7 @@ async function render() {
   await nextTick()
   const pane = previewRef.value
   if (pane) {
+    pane.scrollTop = keepTop
     markWikiLinks(pane)
     /**
      * 这两样都是**画完之后才把高度撑起来**的：公式从占位符变成排版好的
@@ -439,6 +445,7 @@ async function render() {
      * 纵坐标全是早的，同步会照着旧坐标走。
      */
     void Promise.all([renderMathInHtml(pane), renderMermaidInHtml(pane)]).then(() => {
+      pane.scrollTop = keepTop
       marksDirty = true
     })
   }

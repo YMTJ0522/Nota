@@ -92,8 +92,25 @@ function coarseDiff(am: string[], bm: string[]): { op: DiffOp; text: string }[] 
  * 标准 LCS：先填一张 (n+1)×(m+1) 的表，再从右下角回溯出路径。
  * 表用 Uint32Array 摊平成一维 —— 二维数组的每一行都是一次分配，
  * 几百行乘几百列就是几百次分配。
+ *
+ * 内层比较走**整数**不走字符串：先给两边的行各发一个行号（同文同号），
+ * DP 每格就只是一次数字比较。直接拿字符串比的话，一篇 2000 行、
+ * 每行几十字的笔记就是上百万次字符串比较，几秒就烧进去了 ——
+ * 这正是版本历史在长文上「打开就卡死」的出处。
  */
 function lcsDiff(a: string[], b: string[]): { op: DiffOp; text: string }[] {
+  const ids = new Map<string, number>()
+  const intern = (s: string) => {
+    let v = ids.get(s)
+    if (v === undefined) {
+      v = ids.size
+      ids.set(s, v)
+    }
+    return v
+  }
+  const ai = a.map(intern)
+  const bi = b.map(intern)
+
   const n = a.length
   const m = b.length
   const w = m + 1
@@ -101,7 +118,7 @@ function lcsDiff(a: string[], b: string[]): { op: DiffOp; text: string }[] {
   for (let i = n - 1; i >= 0; i -= 1) {
     for (let j = m - 1; j >= 0; j -= 1) {
       table[i * w + j] =
-        a[i] === b[j]
+        ai[i] === bi[j]
           ? table[(i + 1) * w + (j + 1)] + 1
           : Math.max(table[(i + 1) * w + j], table[i * w + (j + 1)])
     }
@@ -111,7 +128,7 @@ function lcsDiff(a: string[], b: string[]): { op: DiffOp; text: string }[] {
   let i = 0
   let j = 0
   while (i < n && j < m) {
-    if (a[i] === b[j]) {
+    if (ai[i] === bi[j]) {
       out.push({ op: 'same', text: a[i] })
       i += 1
       j += 1

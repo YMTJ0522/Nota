@@ -1195,13 +1195,21 @@ const thinkingLive = computed(
   color: var(--n-fg-dim);
 }
 
-/* ══ ④ 消息流 ══ */
+/* ══ ④ 消息流 ══
+   滚动条本身藏掉：消息流右缘一条灰轨 + 底下滚动条交接处的白色小方块，
+   在深色面板上特别扎眼（用户点名要掉的正是这两样）。
+   滚动能力不动 —— 滚轮、触摸板、拖拽都照常，只是不画那条轨。 */
 .stream {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
   overscroll-behavior: contain;
   padding: 10px 10px 4px;
+  scrollbar-width: none;
+}
+
+.stream::-webkit-scrollbar {
+  display: none;
 }
 
 /* ══ 空态 ══
@@ -1492,6 +1500,11 @@ const thinkingLive = computed(
   word-break: break-word;
   max-height: 220px;
   overflow-y: auto;
+  scrollbar-width: none;
+}
+
+.think::-webkit-scrollbar {
+  display: none;
 }
 
 /* 思考时的光标：让「正在往外流」这件事看得见 */

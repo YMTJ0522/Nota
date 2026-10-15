@@ -81,6 +81,25 @@ interface NoteApi {
     engine?: string
     error?: string
   }>
+  /** 云同步（WebDAV）：测试连接 / 执行同步 */
+  syncTest(cfg: {
+    url: string
+    username: string
+    password: string
+    dir: string
+  }): Promise<{ ok: boolean; error?: string }>
+  syncRun(
+    root: string,
+    cfg: { url: string; username: string; password: string; dir: string },
+  ): Promise<{
+    ok: boolean
+    uploaded: number
+    downloaded: number
+    conflicts: number
+    skipped: number
+    error?: string
+  }>
+  onSyncProgress(cb: (text: string) => void): void
   appInfo(): Promise<{
     electron: string
     chrome: string

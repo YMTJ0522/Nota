@@ -43,7 +43,9 @@ const style = ref<Record<string, string>>({})
 
 /** 和工具栏下拉同一套摆位逻辑：量锚点、右边缘避让。
     菜单挂在 header 里，父级没有 overflow 裁剪，但仍用 fixed
-    保持和工具栏一致的行为（窗口 resize 时不会错位）。 */
+    保持和工具栏一致的行为（窗口 resize 时不会错位）。
+    默认从按钮左缘起排（菜单出现在按钮右侧），贴到窗口右缘
+    放不下时退回右对齐 —— 靠边的那颗按钮不能把菜单挤出屏幕。 */
 function place() {
   const a = anchor.value
   const m = menu.value
@@ -51,7 +53,8 @@ function place() {
   const r = a.getBoundingClientRect()
   const mw = Math.ceil(m.getBoundingClientRect().width)
   const EDGE = 8
-  let left = r.right - mw
+  let left = r.left
+  if (left + mw > window.innerWidth - EDGE) left = r.right - mw
   if (left < EDGE) left = EDGE
   style.value = {
     position: 'fixed',

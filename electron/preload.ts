@@ -139,6 +139,29 @@ contextBridge.exposeInMainWorld('api', {
     error?: string
   }> => ipcRenderer.invoke('ai:websearch', query, limit),
 
+  /* 云同步（WebDAV）：测试连接 / 执行同步；进度事件一路推到界面 */
+  syncTest: (cfg: {
+    url: string
+    username: string
+    password: string
+    dir: string
+  }): Promise<{ ok: boolean; error?: string }> => ipcRenderer.invoke('sync:test', cfg),
+  syncRun: (
+    root: string,
+    cfg: { url: string; username: string; password: string; dir: string },
+  ): Promise<{
+    ok: boolean
+    uploaded: number
+    downloaded: number
+    conflicts: number
+    skipped: number
+    error?: string
+  }> => ipcRenderer.invoke('sync:run', root, cfg),
+  onSyncProgress: (cb: (text: string) => void): void => {
+    ipcRenderer.removeAllListeners('sync:progress')
+    ipcRenderer.on('sync:progress', (_e, text: string) => cb(text))
+  },
+
   /* 运行环境版本（关于页展示） */
   appInfo: (): Promise<{
     electron: string

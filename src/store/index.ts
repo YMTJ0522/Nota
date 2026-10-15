@@ -54,7 +54,14 @@ export type MeasureName = 'narrow' | 'standard' | 'wide' | 'full'
  * 「这个 id 认不认」，设置面板自己也要按 id 找当前页——两处各写一份白名单，
  * 加了新分区就一定会漏一处（外观页当初就是这么跳不过去的）。
  */
-export const SETTINGS_SECTIONS = ['general', 'appearance', 'editor', 'ai', 'about'] as const
+export const SETTINGS_SECTIONS = [
+  'general',
+  'appearance',
+  'editor',
+  'ai',
+  'sync',
+  'about',
+] as const
 export type SettingsSection = (typeof SETTINGS_SECTIONS)[number]
 
 export function isSettingsSection(id: unknown): id is SettingsSection {
@@ -241,6 +248,19 @@ interface State {
   headings: HeadingItem[]
   /** 当前读到哪一节。滚动由编辑区量，大纲那一侧只负责高亮这一条 */
   activeHeading: string | null
+  /** 云同步（WebDAV）。config 持久化在 localStorage，状态是这一屏的 */
+  sync: SyncUi
+}
+
+/** 云同步在界面上的那一份状态 */
+export interface SyncUi {
+  config: { url: string; username: string; password: string; dir: string; auto: boolean }
+  /** idle / busy / ok / error */
+  status: 'idle' | 'busy' | 'ok' | 'error'
+  /** 现在正在传哪个文件 / 上一次同步的结果一句话 */
+  message: string
+  /** 上次成功同步的时间戳 */
+  lastAt: number
 }
 
 /** AI 对话消息。role 只有 user / assistant 两种——system 单独放在配置里 */
@@ -341,6 +361,12 @@ const state = reactive<State>({
   tagIcons: {},
   headings: [],
   activeHeading: null,
+  sync: {
+    config: { url: '', username: '', password: '', dir: '', auto: false },
+    status: 'idle',
+    message: '',
+    lastAt: 0,
+  },
 })
 
 /** 「最近编辑」的时间窗：7 天内有改动的算最近 */
@@ -1517,6 +1543,113 @@ function wordify(root: HTMLElement) {
   for (const el of Array.from(root.querySelectorAll('.pv-mermaid'))) {
     el.querySelectorAll('.pv-mermaid-src').forEach((n) => n.remove())
   }
+
+  inlineWordStyles(root)
+}
+
+/**
+ * 排版规则**逐元素内联**。
+ *
+ * Word 和 WPS 对 HTML 里 `<style>` 块的支持都没个准谱：MS Word 大体认，
+ * WPS 时认时不认，一不认就退回它自己的默认样式 —— 标题变成 Calibri Light
+ * 的蓝色大字、正文 11px 宋体、代码块没了等宽，整篇就成了用户说的「乱」。
+ * 内联 style 是唯一两边都乖乖照办的通道，所以关键规则在 wordify 之后
+ * 再逐元素敲死一遍（数值与 WORD_CSS 一致，那份留着兜底）。
+ */
+const WORD_CALLOUT_COLORS: Record<string, [string, string]> = {
+  note: ['#5b60d6', '#eef0fb'],
+  info: ['#2a7fc0', '#ecf4fb'],
+  tip: ['#2c8f63', '#ecf6f1'],
+  success: ['#3f8f3a', '#eef6ea'],
+  example: ['#8a4fc9', '#f3edfb'],
+  important: ['#b34bb0', '#f9edf9'],
+  question: ['#cf4b86', '#fceef5'],
+  warning: ['#a67c1a', '#fbf4e4'],
+  caution: ['#b8641a', '#fcf0e6'],
+  danger: ['#c33f2c', '#fceceb'],
+  quote: ['#6f6c66', '#f4f3f0'],
+}
+
+const WORD_HL_COLORS: Record<string, string> = {
+  'cm-hl-keyword': '#8a4e30',
+  'cm-hl-string': '#2d7a56',
+  'cm-hl-number': '#b56a16',
+  'cm-hl-func': '#3d5f8f',
+  'cm-hl-type': '#6a548f',
+  'cm-hl-prop': '#5c6848',
+  'cm-hl-operator': '#8a4e30',
+  'cm-hl-punct': '#6b6862',
+  'cm-hl-var': '#6b6862',
+  'cm-hl-comment': '#8d8a83',
+}
+
+function inlineWordStyles(root: HTMLElement) {
+  const stamp = (el: Element, css: string) => {
+    const old = el.getAttribute('style')
+    el.setAttribute('style', old ? `${css};${old}` : css)
+  }
+  const each = (sel: string, css: string, skip = '') => {
+    for (const el of Array.from(root.querySelectorAll(sel))) {
+      if (skip && el.closest(skip)) continue
+      stamp(el, css)
+    }
+  }
+
+  // 标题：字号、颜色、段前段后全部敲死，不给 Word 的内置标题样式留缝
+  const h = (size: string, color: string) =>
+    `font-size:${size};font-weight:bold;color:${color};margin:14pt 0 6pt;line-height:1.35;`
+  each('h1', `font-size:20pt;font-weight:bold;color:#1e1d1a;margin:0 0 6pt;line-height:1.35;`)
+  each('h2', h('16pt', '#1e1d1a'))
+  each('h3', h('14pt', '#1e1d1a'))
+  each('h4', h('12.5pt', '#1e1d1a'))
+  each('h5', h('11pt', '#55534e'))
+  each('h6', h('10.5pt', '#8a867c'))
+  // 正文：中文文档的通行排法 —— 两端对齐 + 固定行距
+  const body = 'font-size:10.5pt;line-height:1.72;text-align:justify;'
+  each('p', `${body}margin:0 0 6pt;`, '.wc-code,.wc-callout')
+  each('li', `${body}margin:0 0 3pt;`)
+  each('ul,ol', 'margin:0 0 8pt;padding-left:22pt;')
+  each('blockquote',
+    'margin:10pt 0;padding:4pt 0 4pt 12pt;border-left:4.5pt solid #2f6f52;background:#f2f5f3;color:#55534e;')
+  each('code', 'font-family:Consolas,"Courier New",monospace;font-size:9.5pt;background:#f4f2ec;',
+    '.wc-code')
+  each('a', 'color:#2f6f52;text-decoration:underline;')
+  each('mark', 'background:#f6e3a8;')
+  each('del,s', 'color:#8a867c;')
+  each('hr', 'border:none;border-top:1pt solid #dedbd4;margin:14pt 0;')
+  each('img', 'max-width:100%;border:0;')
+  each('figcaption', 'font-size:9pt;color:#8a867c;margin-top:4pt;')
+  each('.pv-task', 'font-family:"Segoe UI Symbol",Arial,sans-serif;')
+  each('.pv-line.is-hl', 'background:#eef4f0;')
+  // 正文数据表
+  each('table:not(.wc-code):not(.wc-callout)', 'border-collapse:collapse;width:100%;margin:10pt 0;')
+  each('table:not(.wc-code):not(.wc-callout) th',
+    'border:1pt solid #dedbd4;background:#f2f1ed;font-weight:bold;padding:6pt 9pt;')
+  each('table:not(.wc-code):not(.wc-callout) td',
+    'border:1pt solid #dedbd4;padding:6pt 9pt;')
+  // 代码块表格
+  each('table.wc-code td',
+    'border:1pt solid #e2ded4;background:#f7f6f2;padding:8pt 10pt;font-family:Consolas,"Courier New",monospace;font-size:9pt;line-height:1.6;')
+  each('table.wc-code td pre', 'margin:0;padding:0;border:0;background:transparent;')
+  // 提示块表格：左边一条类型色粗边是它的身份
+  for (const el of Array.from(root.querySelectorAll('table.wc-callout'))) {
+    const type = el.getAttribute('data-type') ?? 'note'
+    const [bar, bg] = WORD_CALLOUT_COLORS[type] ?? WORD_CALLOUT_COLORS.note
+    stamp(el, 'border-collapse:collapse;width:100%;margin:12pt 0;')
+    for (const td of Array.from(el.querySelectorAll('td'))) {
+      stamp(td,
+        `border:1pt solid #dedbd4;border-left:4.5pt solid ${bar};background:${bg};padding:8pt 11pt;`)
+    }
+    const head = el.querySelector('.pv-callout-head')
+    if (head) stamp(head, 'font-weight:bold;margin:0 0 3pt;')
+    const title = el.querySelector('.pv-callout-title')
+    if (title) stamp(title, `font-size:10.5pt;color:${bar};`)
+  }
+  // 代码高亮：类选择器在 WPS 里靠不住，颜色直接写到 span 上
+  for (const el of Array.from(root.querySelectorAll('[class*="cm-hl-"]'))) {
+    const cls = Array.from(el.classList).find((c) => WORD_HL_COLORS[c])
+    if (cls) stamp(el, `color:${WORD_HL_COLORS[cls]};`)
+  }
 }
 
 /** Markdown → 正文 HTML（和预览同一套解析与高亮） */
@@ -1612,7 +1745,7 @@ function wordDocument(title: string, body: string) {
 ${WORD_CSS}
 </style>
 </head>
-<body>
+<body style="font-family:'等线','DengXian','Microsoft YaHei','PingFang SC',sans-serif;font-size:10.5pt;line-height:1.72;color:#24231f;">
 <div class="WordSection1">
 ${body}
 </div>
@@ -1903,6 +2036,7 @@ function initPrefs() {
   initAi()
   initPrefs2()
   initSessions()
+  initSync()
 }
 
 /**
@@ -1952,6 +2086,83 @@ function initTheme() {
   const saved = localStorage.getItem('nota-theme') as 'light' | 'dark' | null
   const t = saved ?? (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light')
   setTheme(t)
+}
+
+/* ── 云同步（WebDAV）── */
+
+function setSyncConfig(patch: Partial<SyncUi['config']>) {
+  state.sync.config = { ...state.sync.config, ...patch }
+  try {
+    localStorage.setItem('nota-sync', JSON.stringify(state.sync.config))
+  } catch {
+    /* 存不下就算了 */
+  }
+}
+
+function initSync() {
+  try {
+    const raw = localStorage.getItem('nota-sync')
+    if (raw) state.sync.config = { ...state.sync.config, ...JSON.parse(raw) }
+  } catch {
+    /* 坏了就当没配过 */
+  }
+  if (state.sync.config.url) {
+    void runSync(true)
+    // 静默自动同步：每 10 分钟一轮，只有开着「自动」才跑
+    setInterval(() => {
+      if (state.sync.config.auto && state.sync.config.url && state.root) void runSync(true)
+    }, 10 * 60 * 1000)
+  }
+}
+
+function syncCfg() {
+  const { url, username, password, dir } = state.sync.config
+  return { url, username, password, dir }
+}
+
+async function testSync(): Promise<{ ok: boolean; error?: string }> {
+  state.sync.status = 'busy'
+  state.sync.message = '正在测试连接…'
+  const r = await window.api.syncTest(syncCfg())
+  state.sync.status = r.ok ? 'ok' : 'error'
+  state.sync.message = r.ok ? '连接成功' : (r.error ?? '连接失败')
+  return r
+}
+
+async function runSync(silent = false): Promise<boolean> {
+  if (!state.root) {
+    if (!silent) toastSync('先打开一个工作区再同步')
+    return false
+  }
+  if (state.sync.status === 'busy') return false
+  state.sync.status = 'busy'
+  state.sync.message = '正在同步…'
+  window.api.onSyncProgress((text) => {
+    if (state.sync.status === 'busy') state.sync.message = text
+  })
+  const r = await window.api.syncRun(state.root, syncCfg())
+  if (r.ok) {
+    state.sync.status = 'ok'
+    state.sync.lastAt = Date.now()
+    const parts = [`上传 ${r.uploaded}`, `下载 ${r.downloaded}`]
+    if (r.conflicts) parts.push(`冲突 ${r.conflicts}`)
+    parts.push(`无变化 ${r.skipped}`)
+    state.sync.message = parts.join(' · ')
+    if (r.conflicts > 0 || (!silent && (r.uploaded || r.downloaded))) {
+      window.dispatchEvent(
+        new CustomEvent('nota:toast', { detail: `同步完成：${state.sync.message}` }),
+      )
+    }
+  } else {
+    state.sync.status = 'error'
+    state.sync.message = r.error ?? '同步失败'
+    if (!silent) toastSync(`同步失败：${state.sync.message}`)
+  }
+  return r.ok
+}
+
+function toastSync(text: string) {
+  window.dispatchEvent(new CustomEvent('nota:toast', { detail: text }))
 }
 
 /* ── 外观偏好 ──
@@ -2500,6 +2711,9 @@ export const store = {
   setTheme,
   setAccent,
   setAiConfig,
+  setSyncConfig,
+  testSync,
+  runSync,
   initTheme,
   autoExpand,
   exportNote,

@@ -1280,8 +1280,11 @@ export async function renderMathInHtml(
  * 反过来不宽容：必须是文件的**最开头**，正文中间的 `---`（分隔线）不算。
  */
 export function stripFrontMatter(md: string): string {
+  // `\\?---`：分隔线前面多一个反斜杠也认。有些工具（包括我们自己的旧版本）
+  // 写文件时会把行首的 `-` 转义成 `\-`，文件打开就是满屏的 `\---` 和
+  // `title: …` —— 对这种「被写坏的 frontmatter」也照剥不误，别让用户背锅。
   return md.replace(
-    /^\uFEFF?[ \t]*---[ \t]*\r?\n[\s\S]*?\r?\n[ \t]*---[ \t]*(?:\r?\n|$)/,
+    /^\uFEFF?[ \t]*\\?---[ \t]*\r?\n[\s\S]*?\r?\n[ \t]*\\?---[ \t]*(?:\r?\n|$)/,
     '',
   )
 }

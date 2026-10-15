@@ -31,6 +31,8 @@ import {
   Sun,
   Type,
   X,
+  Cloud,
+  RefreshCw,
 } from 'lucide-vue-next'
 import { ACCENTS, ACCENT_SWATCH, AI_DEFAULTS, AI_PRESETS, BG_STYLES, DENSITY, MEASURES, store } from '@/store'
 import appIcon from '@/assets/app-icon.png'
@@ -51,6 +53,7 @@ const SECTIONS: { id: SectionId; label: string; icon: unknown }[] = [
   { id: 'appearance', label: '外观', icon: Palette },
   { id: 'editor', label: '编辑', icon: Type },
   { id: 'ai', label: 'AI 编写', icon: Sparkles },
+  { id: 'sync', label: '云同步', icon: Cloud },
   { id: 'about', label: '关于', icon: Info },
 ]
 
@@ -121,6 +124,12 @@ watch(
 /* ── AI ── */
 const testing = ref(false)
 const testResult = ref<{ ok: boolean; text: string } | null>(null)
+
+/** 云端目录的占位符：没填就用工作区文件夹自己的名字 */
+const workspaceDirName = computed(() => {
+  if (!state.root) return ''
+  return state.root.replace(/[\\/]+$/, '').split(/[\\/]/).pop() ?? ''
+})
 const testModels = ref<string[]>([])
 const showModels = ref(false)
 const showKey = ref(false)
@@ -239,6 +248,7 @@ const RESET_LABEL: Record<SectionId, string> = {
   appearance: '恢复外观设置',
   editor: '恢复编辑设置',
   ai: '恢复 AI 设置',
+  sync: '',
   about: '',
 }
 
@@ -758,6 +768,133 @@ async function changeWorkspace() {
               </div>
             </template>
 
+            <!-- ══ 云同步 ══
+                 WebDAV 一条协议覆盖坚果云 / InfiniCloud / 群晖 / Nextcloud。
+                 密码是各家的「应用密码」而不是登录密码（坚果云在网页端
+                 安全选项里生成），存在本机 localStorage，不随笔记上传。 -->
+            <template v-else-if="section === 'sync'">
+              <div class="st-row">
+                <div class="st-label">
+                  <span class="st-name">服务器地址</span>
+                  <span class="st-desc">坚果云填 https://dav.jianguoyun.com/dav/ 就行</span>
+                </div>
+                <div class="st-field">
+                  <Cloud class="st-field-ico" :size="13" :stroke-width="1.9" />
+                  <input
+                    v-model="state.sync.config.url"
+                    class="st-input"
+                    type="text"
+                    placeholder="https://dav.jianguoyun.com/dav/"
+                    spellcheck="false"
+                    @change="store.setSyncConfig({ url: state.sync.config.url })"
+                  />
+                </div>
+              </div>
+
+              <div class="st-row">
+                <div class="st-label">
+                  <span class="st-name">账号</span>
+                  <span class="st-desc">坚果云是注册邮箱</span>
+                </div>
+                <div class="st-field">
+                  <input
+                    v-model="state.sync.config.username"
+                    class="st-input"
+                    type="text"
+                    placeholder="you@example.com"
+                    spellcheck="false"
+                    @change="store.setSyncConfig({ username: state.sync.config.username })"
+                  />
+                </div>
+              </div>
+
+              <div class="st-row">
+                <div class="st-label">
+                  <span class="st-name">应用密码</span>
+                  <span class="st-desc">在服务商网页端生成；存本机，不随笔记上传</span>
+                </div>
+                <div class="st-field">
+                  <input
+                    v-model="state.sync.config.password"
+                    class="st-input"
+                    type="password"
+                    placeholder="••••••••"
+                    spellcheck="false"
+                    @change="store.setSyncConfig({ password: state.sync.config.password })"
+                  />
+                </div>
+              </div>
+
+              <div class="st-row">
+                <div class="st-label">
+                  <span class="st-name">云端目录</span>
+                  <span class="st-desc">默认用工作区文件夹的名字；没有会自动创建</span>
+                </div>
+                <div class="st-field">
+                  <input
+                    v-model="state.sync.config.dir"
+                    class="st-input"
+                    type="text"
+                    :placeholder="workspaceDirName"
+                    spellcheck="false"
+                    @change="store.setSyncConfig({ dir: state.sync.config.dir })"
+                  />
+                </div>
+              </div>
+
+              <div class="st-row">
+                <div class="st-label">
+                  <span class="st-name">自动同步</span>
+                  <span class="st-desc">打开应用时和每 10 分钟各同步一轮（当前：{{ state.sync.config.auto ? '开' : '关' }}）</span>
+                </div>
+                <button
+                  class="st-switch"
+                  role="switch"
+                  :aria-checked="state.sync.config.auto"
+                  :class="{ on: state.sync.config.auto }"
+                  @click="store.setSyncConfig({ auto: !state.sync.config.auto })"
+                >
+                  <span class="st-knob" />
+                </button>
+              </div>
+
+              <div class="st-row st-row-last">
+                <div class="st-label">
+                  <span class="st-name">立即同步</span>
+                  <span
+                    class="st-desc"
+                    :class="{ 'is-ok': state.sync.status === 'ok', 'is-bad': state.sync.status === 'error' }"
+                  >
+                    {{ state.sync.message || '上传 / 下载两边改过的文件；冲突会留底不覆盖' }}
+                  </span>
+                </div>
+                <button class="st-btn" :disabled="state.sync.status === 'busy'" @click="store.runSync()">
+                  <RefreshCw
+                    class="spin"
+                    :class="{ 'is-spinning': state.sync.status === 'busy' }"
+                    :size="13"
+                    :stroke-width="2"
+                  />
+                  <span>{{ state.sync.status === 'busy' ? '同步中…' : '立即同步' }}</span>
+                </button>
+              </div>
+
+              <div class="st-row">
+                <div class="st-label">
+                  <span class="st-name">测试连接</span>
+                  <span class="st-desc">只验证地址和密码，不动任何文件</span>
+                </div>
+                <button class="st-btn" :disabled="state.sync.status === 'busy'" @click="store.testSync()">
+                  <span>测试连接</span>
+                </button>
+              </div>
+
+              <div class="st-note">
+                这版同步不做删除：在一台设备上删掉的笔记，云端那份会留下来。两边同时改过的文件算冲突——你的本地版本会改名成
+                xxx.conflict-时间.md 留底，再落云端版本，谁的字都不会丢。
+              </div>
+            </template>
+
             <!-- ══ 关于 ══
                  以前是一段说明文字加两张清单，像一份说明书。
                  改成「一块带标的头图 + 四张特性卡 + 两张清单」：
@@ -1066,6 +1203,18 @@ async function changeWorkspace() {
   color: var(--n-fg);
   background: var(--n-bg);
   transition: border-color var(--n-dur) var(--n-ease), color var(--n-dur) var(--n-ease);
+}
+
+/* 云同步页底部那条说明：跨列的整行小字，交代这版同步不做什么 */
+.st-note {
+  grid-column: 1 / -1;
+  margin-top: 2px;
+  padding: 9px 12px;
+  border: 1px dashed var(--n-line);
+  border-radius: var(--n-r-md);
+  font-size: 11.5px;
+  line-height: 1.75;
+  color: var(--n-fg-faint);
 }
 
 .st-btn:hover:not(:disabled) {

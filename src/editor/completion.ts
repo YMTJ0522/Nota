@@ -315,12 +315,15 @@ function notaCompletion(ctx: CompletionContext): CompletionResult | null {
  *
  * CodeMirror 默认是 Ctrl-Space，这里**特意把它换掉**：在中文 Windows 上
  * Ctrl-Space 是输入法的中英切换，写中文的人一天要按几十次 —— 编辑器把它抢走
- * 等于让人没法切回中文。换 Alt-/ ，跟别的常用键都不撞。
+ * 等于让人没法切回中文。
  *
- * 代码块里的补全本来就是打字自动来的，所以这个键只在正文里真正用得上；
- * 把它设在一个不碍事的位置，比设在一个「标准」但会打架的位置要紧。
+ * 主键位用 Ctrl+Shift+Space：跟系统与常见输入法都不撞，按键形制又和
+ * 「默认那个 Ctrl-Space」同一家族，好记。Alt-/ 留着当别名 —— 老用户已经顺手了。
+ *
+ * 代码块里的补全本来就是打字自动来的，所以这个键只在正文里真正用得上。
  */
-const MANUAL_KEY = 'Alt-/'
+const MANUAL_KEY = 'Mod-Shift-Space'
+const MANUAL_KEY_ALT = 'Alt-/'
 
 export function markdownCompletion(): Extension[] {
   return [
@@ -339,6 +342,7 @@ export function markdownCompletion(): Extension[] {
     keymap.of([
       ...completionKeymap.filter((b) => b.key !== 'Ctrl-Space'),
       { key: MANUAL_KEY, run: startCompletion },
+      { key: MANUAL_KEY_ALT, run: startCompletion },
     ]),
   ]
 }

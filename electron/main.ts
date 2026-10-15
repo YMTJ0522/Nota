@@ -3,6 +3,7 @@ import path from 'node:path'
 import fs from 'node:fs/promises'
 import { existsSync } from 'node:fs'
 import { pathToFileURL } from 'node:url'
+import { testConnection, syncWorkspace, onSyncProgress } from './sync'
 
 // Vite 注入：开发环境指向 dev server，生产环境加载打包后的 dist
 process.env.APP_ROOT = path.join(__dirname, '..')
@@ -374,16 +375,16 @@ const SEARCH_ENGINES: {
   snip: RegExp
 }[] = [
   {
-    name: 'DuckDuckGo',
-    build: (q) => `https://lite.duckduckgo.com/lite/?q=${encodeURIComponent(q)}`,
-    link: /<a[^>]+class="result-link"[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/gi,
-    snip: /<td[^>]+class="result-snippet"[^>]*>([\s\S]*?)<\/td>/gi,
-  },
-  {
     name: 'Bing',
     build: (q) => `https://www.bing.com/search?q=${encodeURIComponent(q)}&count=10`,
     link: /<h2>\s*<a[^>]+href="(https?:\/\/[^"]+)"[^>]*>([\s\S]*?)<\/a>/gi,
     snip: /<p[^>]+class="b_(?:lineclamp\d|paractl|caption)"[^>]*>([\s\S]*?)<\/p>/gi,
+  },
+  {
+    name: 'DuckDuckGo',
+    build: (q) => `https://lite.duckduckgo.com/lite/?q=${encodeURIComponent(q)}`,
+    link: /<a[^>]+class="result-link"[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/gi,
+    snip: /<td[^>]+class="result-snippet"[^>]*>([\s\S]*?)<\/td>/gi,
   },
 ]
 
@@ -523,6 +524,14 @@ ipcMain.handle('app:info', () => ({
   platform: process.platform,
   arch: process.arch,
 }))
+
+/* ── IPC：WebDAV 云同步。请求在主进程发（与联网检索同一个理由：不受 CORS 限制），
+   进度通过 sync:progress 事件推给渲染进程，界面上能看见「正在传哪个文件」 ── */
+ipcMain.handle('sync:test', (_e, cfg) => testConnection(cfg))
+ipcMain.handle('sync:run', async (_e, root: string, cfg) => syncWorkspace(root, cfg))
+onSyncProgress((text) => {
+  win?.webContents.send('sync:progress', text)
+})
 
 /* ── IPC：文件系统操作，全部在主进程执行，渲染进程只能通过白名单调用 ── */
 

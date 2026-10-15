@@ -308,6 +308,10 @@ async function doImport() {
   font-weight: 500;
   font-variant-numeric: tabular-nums;
   color: var(--n-fg-faint);
+  /* 占位宽度锁死：切筛选（所有 → 收藏）时数字从两位变一位，
+     右边的「大纲 / 引用」不该跟着挪一下 —— 位数变化只发生在格子里 */
+  min-width: 14px;
+  text-align: center;
 }
 
 .col-tab.on .col-tab-n {

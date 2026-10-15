@@ -76,12 +76,34 @@ onMounted(() => {
 onBeforeUnmount(() => {
   document.removeEventListener('pointerdown', onDocPointer)
   document.removeEventListener('keydown', onEsc)
+  if (diffTimer) clearTimeout(diffTimer)
 })
 
-const diffRows = computed<DiffLine[]>(() => {
-  if (mode.value !== 'diff' || !active.value) return []
-  return diffLines(baseText.value, preview.value)
-})
+/**
+ * 对比行**异步**算。diff 是纯 CPU 活，长文 + 大改动能烧掉小一秒；
+ * 放在 computed 里就是同步卡死渲染 —— 面板一打开整个窗口点不动。
+ * 先摆出「计算中」，下一拍再真算，窗口始终有响应。
+ */
+const diffRows = ref<DiffLine[]>([])
+const diffing = ref(false)
+let diffTimer: ReturnType<typeof setTimeout> | null = null
+
+function scheduleDiff() {
+  if (diffTimer) clearTimeout(diffTimer)
+  if (mode.value !== 'diff' || !active.value) {
+    diffRows.value = []
+    diffing.value = false
+    return
+  }
+  diffing.value = true
+  diffTimer = setTimeout(() => {
+    const rows = diffLines(baseText.value, preview.value)
+    diffRows.value = rows
+    diffing.value = false
+  }, 30)
+}
+
+watch(() => [mode.value, baseText.value, preview.value, active.value], scheduleDiff)
 
 const summary = computed(() => diffSummary(diffRows.value))
 
@@ -256,7 +278,8 @@ function fmtSize(n: number) {
             <!-- 对比：只把有变化的行摆出来更容易读，但会丢掉上下文，
                  所以保留完整文本、用底色区分（和 git diff 的默认行为一致）。 -->
             <div v-if="mode === 'diff'" class="hp-diff">
-              <div v-if="diffRows.length === 0" class="hp-hint">选一个版本进行对比</div>
+              <div v-if="diffing" class="hp-hint">正在对比…</div>
+              <div v-else-if="diffRows.length === 0" class="hp-hint">选一个版本进行对比</div>
               <div
                 v-for="(r, i) in diffRows"
                 v-else
@@ -501,6 +524,10 @@ function fmtSize(n: number) {
   padding: 0 10px 0 0;
   white-space: pre-wrap;
   word-break: break-word;
+  /* 几千行 diff 一次性全量渲染也扛得住：视口外的行先不排不画，
+     滚到哪儿算到哪儿（Chromium 的 content-visibility 就是干这个的） */
+  content-visibility: auto;
+  contain-intrinsic-size: auto 19px;
 }
 
 .hp-dl.add { background: color-mix(in srgb, var(--n-accent) 12%, transparent); }
