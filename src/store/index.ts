@@ -1687,17 +1687,48 @@ export function wordify(root: HTMLElement) {
     el.textContent = el.classList.contains('on') ? '\u2612' : '\u2610'
   }
 
-  /* ── 9. Mermaid 源码块移除 ── */
+  /* ── 9. 段落内的 <br> 拆成独立段落 ──
+     Word 把 HTML 的 <br> 当成「软回车」，而软回车**同样参与两端对齐**：
+     一个段落里挤出多行时（`**作者：豆包**<br>**版本：v2.0**<br>…`），
+     每一行都会被强行拉满整行宽，短行的字间距就被扯得七零八落 ——
+     用户看到的「作者　：　　豆　包」就是这么来的。
+     拆成各自独立的 <p> 之后，每段只有一行，那是段落末行，justify 不碰它。
+     行距给一点点（2pt）而不是归零：这些行原本是同段，拆开后不该散得太开。 */
+  for (const p of Array.from(root.querySelectorAll('p'))) {
+    if (!p.querySelector('br')) continue
+    const base = p.getAttribute('style') ?? ''
+    const makeP = () => {
+      const np = document.createElement('p')
+      np.setAttribute('style', base ? `${base};margin:0 0 2pt;` : 'margin:0 0 2pt;')
+      return np
+    }
+    const frag = document.createDocumentFragment()
+    let cur = makeP()
+    for (const kid of Array.from(p.childNodes)) {
+      if (kid.nodeType === 1 && (kid as Element).tagName === 'BR') {
+        // 空行留一个不换行空格，否则 Word 会把它整个并掉
+        if (!cur.firstChild) cur.appendChild(document.createTextNode('\u00A0'))
+        frag.appendChild(cur)
+        cur = makeP()
+        continue
+      }
+      cur.appendChild(kid)
+    }
+    if (cur.firstChild) frag.appendChild(cur)
+    p.replaceWith(frag)
+  }
+
+  /* ── 10. Mermaid 源码块移除 ── */
   for (const el of Array.from(root.querySelectorAll('.pv-mermaid'))) {
     el.querySelectorAll('.pv-mermaid-src').forEach((n) => n.remove())
   }
 
-  /* ── 10. 脚注回链移除（静态文档里点不动） ── */
+  /* ── 11. 脚注回链移除（静态文档里点不动） ── */
   for (const el of Array.from(root.querySelectorAll('.pv-fnback'))) {
     el.remove()
   }
 
-  /* ── 11. hr 换成 Word 认的结构 ──
+  /* ── 12. hr 换成 Word 认的结构 ──
      Word 对 CSS border-top 的 <hr> 支持不稳定，换成一个单格表格画线。 */
   for (const hr of Array.from(root.querySelectorAll('hr'))) {
     const table = document.createElement('table')
@@ -1813,6 +1844,17 @@ export function inlineWordStyles(root: HTMLElement) {
   // 代码块表格
   each('table.wc-code td',
     'border:1pt solid #e2ded4;background:#f7f6f2;padding:8pt 10pt;font-family:Consolas,"Courier New",monospace;font-size:9pt;line-height:1.6;text-align:left;')
+  /* 「不跨页」要看块有多长 —— 一刀切会把翻页节奏搞乱。
+     <style> 里给代码块和提示块统一写了 page-break-inside:avoid，本意是
+     不让一个短块被切成两半。可一条四十行的代码块也照此办理时，Word 只剩
+     「整块推到下一页」这一条路，上一页于是留下半页空白 —— 用户看到的就是
+     大段大段的空白。短块保留 avoid（整体性更要紧），长块放开让 Word 自己找断点。 */
+  for (const el of Array.from(root.querySelectorAll('table.wc-code, table.wc-callout'))) {
+    // 数 .pv-line —— 此刻代码行还是 span（换成 <p> 是 inlineWordStyles 的最后一步），
+    // 数 td p 会一律得 0，长块判定就永远不成立。
+    const rows = el.querySelectorAll('td .pv-line').length || el.querySelectorAll('td p').length || 1
+    stamp(el, `border-collapse:collapse;width:100%;page-break-inside:${rows > 12 ? 'auto' : 'avoid'};`)
+  }
   // 提示块表格：左边一条类型色粗边是它的身份
   for (const el of Array.from(root.querySelectorAll('table.wc-callout'))) {
     const type = el.getAttribute('data-type') ?? 'note'
@@ -2062,7 +2104,9 @@ export async function renderExportBody(
   const host = document.createElement('div')
   host.innerHTML = body
   let ommLPlaceholders: Array<[string, string]> = []
-  if (hasGraph) await renderMermaidInHtml(host, { asImage: forWord })
+  // light: true —— 导出的终点永远是白底（Word 白纸 / PDF 白页 / HTML 白背景），
+  // 深色主题下算出的浅色线条放上去会整张隐形，所以强制按浅色渲染。
+  if (hasGraph) await renderMermaidInHtml(host, { asImage: forWord, light: true })
   if (hasMath) await renderMathInHtml(host, forWord ? { output: 'mathml' } : {})
 
   if (forWord) {

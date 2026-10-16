@@ -1032,13 +1032,35 @@ function readVar(name: string, fallback: string): string {
   return getComputedStyle(document.documentElement).getPropertyValue(name).trim() || fallback
 }
 
-function mermaidThemeVariables(): Record<string, string> {
-  const dark = document.documentElement.getAttribute('data-theme') === 'dark'
-  const bg = readVar('--n-bg', dark ? '#16161a' : '#fbfaf6')
-  const surface = readVar('--n-surface', dark ? '#1c1d21' : '#fffefb')
-  const fg = readVar('--n-fg', dark ? '#eeedea' : '#2a2b28')
-  const fgDim = readVar('--n-fg-dim', dark ? '#a3a19b' : '#8b8880')
-  const line = readVar('--n-line', dark ? '#33343a' : '#e6e2da')
+/** 应用当前是不是深色主题。图表取色和导出强制浅色都看它。 */
+const darkMode = () => document.documentElement.getAttribute('data-theme') === 'dark'
+
+/* 图表色板：深浅两套，各自取过对比。
+   提成模块级常量是因为它有两个用处 —— themeVariables 里逐项兑底色，
+   以及 xychart 的 plotColorPalette（那个必须是一条完整的配置，不能只给一项）。 */
+const MERMAID_PALETTE = {
+  dark: { a: '#5fb3a1', b: '#e0b263', c: '#e08a6e', d: '#a3cb7e', e: '#cb8bb2', f: '#84a8cb' },
+  light: { a: '#2e8c7e', b: '#c98a2e', c: '#bf5a3c', d: '#6e8c46', e: '#a44c74', f: '#4a7ca6' },
+}
+
+function mermaidThemeVariables(forceLight = false): Record<string, string> {
+  /* forceLight 是给**导出**用的：导出的终点永远是白底 —— Word 的白纸、
+     PDF 的白页、HTML 的白背景。而 svgToPng 光栅化时也是先铺一层白。
+     深色主题下这套变量算出来的是「浅色线条 + 浅色文字」，落在白底上
+     等于隐形（实测 xychart 的坐标轴与折线整张消失）。
+     所以导出时无条件按浅色算色，跟用户当前用什么主题无关。 */
+  const dark = !forceLight && darkMode()
+  /* forceLight 时**不能**走 readVar：readVar 读的是当前主题挂在根上的真实值，
+     深色主题下它照样会把 #16161a / #eeedea 捞回来，forceLight 就形同虚设
+     （实测第一版就是这么翻车的 —— 导出出来的图还是深色）。
+     所以强制浅色时直接用浅色字面量，一个变量都不问。 */
+  const pick = (name: string, darkVal: string, lightVal: string) =>
+    forceLight ? lightVal : readVar(name, dark ? darkVal : lightVal)
+  const bg = pick('--n-bg', '#16161a', '#fbfaf6')
+  const surface = pick('--n-surface', '#1c1d21', '#fffefb')
+  const fg = pick('--n-fg', '#eeedea', '#2a2b28')
+  const fgDim = pick('--n-fg-dim', '#a3a19b', '#8b8880')
+  const line = pick('--n-line', '#33343a', '#e6e2da')
 
   /* 图表自己带一套色板，不再跟着界面强调色走。
    两条理由，都是挨过骂之后才定的：
@@ -1048,23 +1070,7 @@ function mermaidThemeVariables(): Record<string, string> {
       一整张图看过去发冷、发闷，被点名说丑。
    现在这组是手挑的：青为主（节点）、琥珀与陶土作辅，橄榄/玫/石板蓝
    留给饼图和多分支，冷暖搭着来，深浅两套各自取过对比。 */
-  const P = dark
-    ? {
-        a: '#5fb3a1',
-        b: '#e0b263',
-        c: '#e08a6e',
-        d: '#a3cb7e',
-        e: '#cb8bb2',
-        f: '#84a8cb',
-      }
-    : {
-        a: '#2e8c7e',
-        b: '#c98a2e',
-        c: '#bf5a3c',
-        d: '#6e8c46',
-        e: '#a44c74',
-        f: '#4a7ca6',
-      }
+  const P = MERMAID_PALETTE[dark ? 'dark' : 'light']
 
   /* 节点：主色兑进底色，浅浅一层 —— 形状还在，颜色是「我们家的」。
      描边取同色更深的一档，边上屋顶线用淡灰；文字永远是正文色，两套主题都读得清。 */
@@ -1164,9 +1170,11 @@ function mermaidThemeVariables(): Record<string, string> {
     不然每次渲染（哪怕同一篇笔记反复重排）都要走一遍全局初始化。 */
 let appliedThemeKey = ''
 
-function ensureMermaidTheme() {
-  const vars = mermaidThemeVariables()
-  const key = JSON.stringify(vars)
+function ensureMermaidTheme(forceLight = false) {
+  const vars = mermaidThemeVariables(forceLight)
+  // 主题键要带上 forceLight：同一份色板在「深色渲染」和「浅色渲染」下
+  // 是两次不同的 initialize，只用 vars 做键会让导出复用预览那份深色配置。
+  const key = (forceLight ? 'light|' : 'auto|') + JSON.stringify(vars)
   if (key === appliedThemeKey) return
   mermaidMod?.initialize({
     startOnLoad: false,
@@ -1174,6 +1182,12 @@ function ensureMermaidTheme() {
     theme: 'base',
     themeVariables: vars,
     flowchart: { curve: 'basis' },
+    /* xychart（折线/柱状）的线条色不走 themeVariables，得单独给：
+       它的默认色板是 `#FFF4B5` 那一套 —— 那是配深底用的浅黄，
+       落到白纸上淡得几乎看不出折线在哪。这里换成跟图里其它元素同族的颜色。 */
+    xyChart: {
+      plotColorPalette: Object.values(MERMAID_PALETTE[forceLight ? 'light' : darkMode() ? 'dark' : 'light']).join(','),
+    },
     fontFamily: vars.fontFamily,
   })
   appliedThemeKey = key
@@ -1181,7 +1195,7 @@ function ensureMermaidTheme() {
 
 export async function renderMermaidInHtml(
   root: HTMLElement,
-  opts: { asImage?: boolean } = {},
+  opts: { asImage?: boolean; light?: boolean } = {},
 ): Promise<void> {
   const targets = root.querySelectorAll<HTMLElement>('.pv-mermaid-graph[data-graph]')
   if (targets.length === 0) return
@@ -1193,7 +1207,7 @@ export async function renderMermaidInHtml(
       mermaidMod = mod.default
       appliedThemeKey = ''
     }
-    ensureMermaidTheme()
+    ensureMermaidTheme(opts.light ?? false)
   } catch {
     return
   }
