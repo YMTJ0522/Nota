@@ -191,24 +191,44 @@ function insideCode(src: string, index: number): boolean {
  *
  * 结束行未必独占一个 `<p>`：它可能是某个 `<li>` 的最后一行，
  * 也可能是 `<p>:::<br>::::</p>` 这种「分隔行 + 结束行」挤在一段里的形态。
- * 所以不按段落找，而是直接扫「紧贴块级闭合标签的冒号行」，
- * 再把偏移推到那个闭合标签之后。
+ * 还有更糟的：marked 把 `:::…` 「懒继续」进了上一段——比如表格单元格里
+ * `<td>::::</td>`、列表项里 `<li>…:::</li>`、引用块里末尾的 `:::`——
+ * 这些就**没法**纯按字符串匹配定位到闭合段，因为整块被吸进外层元素里了。
+ *
+ * 解决：扫「独立的 <p> 段」，以段为单位看内容是不是纯冒号（允许 `<br>` 拆行）。
+ * 这是 marked **最稳定的输出形态**——任凭它怎么懒继续，`::::` 只要真的想当
+ * 闭合标记，它就会独立成段；只要它被外层吃掉了，就当成内容漏出去，让 buildXxxHtml
+ * 走 fallback 把那些残留的 `::::` `:::` 当成纯文本丢掉。
+ *
+ * 如果连一个独立闭合段都找不到（marked 把一切全打散），则按外层元素的边界回退。
  */
 function findContainerEnd(src: string, from: number, colons: number): number {
-  const re = new RegExp(
-    `(?<!:):{${colons}}(?!:)[ \\t]*(?=\\s*<br\\s*\\/?>|\\s*<\\/(?:p|li|ul|ol|div|blockquote|h[1-6]|td|th|section|article)>)`,
-    'g',
-  )
-  re.lastIndex = from
+  // 优先级 1：找下一个「内容里只有 colons 个冒号（允许 `<br>` 拆行）」的独立 <p>。
+  const pRe = /<p\b[^>]*>([\s\S]*?)<\/p>/gi
+  pRe.lastIndex = from
+  let pm: RegExpExecArray | null
+  while ((pm = pRe.exec(src))) {
+    const inner = pm[1]
+    // 把 <br> 当分隔、空格去掉、剩余的就是纯字符。
+    const cleaned = inner
+      .replace(/<br\s*\/?>/gi, '')
+      .replace(/<[^>]+>/g, '')
+      .replace(/\s+/g, '')
+    if (cleaned.length >= colons && /^:+$/.test(cleaned)) {
+      return pm.index + pm[0].length
+    }
+  }
+  // 优先级 2：找「列内孤立的 :{colons,}」——marked 把闭合符塞进了 <td> / <li> 这种
+  // 块级元素的最后位置，且后面跟着那个元素的闭合。把段落收尾时一并把外层
+  // 已经开启的块级标签全收完，避免 region 截在标签里。
+  const colonRe = new RegExp(`(?<!:):{${colons},}(?!:)`, 'g')
+  colonRe.lastIndex = from
   let m: RegExpExecArray | null
-  while ((m = re.exec(src))) {
+  while ((m = colonRe.exec(src))) {
     if (insideCode(src, m.index)) continue
-    const gt = src.indexOf('>', m.index)
-    if (gt < 0) return -1
-    // 结束行可能落在列表/引用的内部（懒继续），把外层容器的闭合标签一并吃进来，
-    // 否则切出来的片段会带着一个没闭合的 <ul>，拼出去就是坏结构。
-    let end = gt + 1
-    const tailRe = /^\s*(?:<\/(?:ul|ol|div|blockquote|section|article|table)>)+/i
+    // 把匹配到冒号段后面的所有「孤立闭合标签」一并吃掉，包括 </td></tr></table> 等。
+    const tailRe = /^\s*(?:<\/(?:ul|ol|li|div|blockquote|section|article|table|tr|td|p|h[1-6]|th)>)+/i
+    let end = m.index + m[0].length
     for (;;) {
       const t = tailRe.exec(src.slice(end))
       if (!t) break
@@ -272,10 +292,15 @@ function transformTabs(src: string): string {
 
 /** 把容器区域拼成 tabs 结构；识别不出标签时原样退回 */
 function buildTabsHtml(region: string): string {
+  // region 来自 findContainerEnd:它已经尽力找闭合段的位置,但 marked 经常把
+  // 闭合 `:::` `::::` 「懒继续」进表格单元格 / 列表项 / 引用块,
+  // 让定位丢失精度。先把这类「漏出去」的纯冒号块清掉,再交给下面的 split。
+  // 清理必须用 DOM 而不是字符串扫,免得误伤真正的内容。
+  const cleaned = stripFencesFromBlocks(region)
   const tabs: { label: string; body: string[] }[] = []
   let cur: { label: string; body: string[] } | null = null
 
-  for (const tok of splitRegionBlocks(region)) {
+  for (const tok of splitRegionBlocks(cleaned)) {
     if (!tok.line) {
       if (cur) cur.body.push(tok.text)
       continue
@@ -294,10 +319,10 @@ function buildTabsHtml(region: string): string {
     if (cur) cur.body.push(`<p>${bare}</p>`)
   }
 
-  if (tabs.length === 0) return region
+  if (tabs.length === 0) return cleaned
 
-  // data-i 是给点击接线用的：标签和它对应的内容页按同一个序号配对，
-  // 切换时只改两边 `.on` 落在第几个上。没有它就得靠 DOM 顺序去数，
+  // data-i 是给点击接线用的:标签和它对应的内容页按同一个序号配对,
+  // 切换时只改两边 `.on` 落在第几个上。没有它就得靠 DOM 顺序去数,
   // 一旦中间夹了别的节点数就错。
   const head = tabs
     .map(
@@ -312,6 +337,33 @@ function buildTabsHtml(region: string): string {
     )
     .join('')
   return `<div class="pv-tabs"><div class="pv-tabbar">${head}</div>${panes}</div>`
+}
+
+/**
+ * 把 marked 输出里「内容只含冒号 + 空白」的叶节点整块移除——
+ * 主要是 `<td>::::</td>` `<li>…:::</li>` `<p>::::</p>` 这种。
+ * 它们是闭合标记,但 marked 没办法识别,而被「懒继续」进了外层块。
+ * 漏到 tabs region 里会把表格行搞乱、让标题节点被吞进来。
+ *
+ * 不能在源 HTML 字符串上改:DOM 解析才能识别「这是孤立的纯冒号 cell」。
+ */
+function stripFencesFromBlocks(html: string): string {
+  if (!html.includes(':::')) return html
+  // 用一个游离容器解析,不挂到文档,改完拿走序列化字符串。
+  const host = document.createElement('div')
+  host.innerHTML = html
+  // 1) 全树扫:任何叶节点,文本只有 `:xxx` / `xxx:::` 之类纯冒号 + 空白,删它。
+  const all = Array.from(host.querySelectorAll('p, td, th, li, span'))
+  for (const el of all) {
+    if (el.children.length > 0) continue
+    const text = (el.textContent ?? '').trim()
+    if (text && /^:{3,}$/.test(text)) {
+      // 如果父容器里就剩这一个子,直接删会把父留个空壳;
+      // 这里只删这一行文本节点,父自然空下来。
+      el.remove()
+    }
+  }
+  return host.innerHTML
 }
 
 /* ── 折叠详情（`::: details 标题` 围栏写法） ── */
