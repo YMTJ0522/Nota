@@ -47,6 +47,7 @@ const emit = defineEmits<{
   (e: 'remove'): void
 }>()
 
+/* 跟顶栏导出菜单同一份（四项）——见 EditorActions.vue 里的说明 */
 const EXPORTS: { kind: NoteExportKind; label: string; icon: unknown }[] = [
   { kind: 'pdf', label: '导出 PDF', icon: FileDown },
   { kind: 'html', label: '导出 HTML', icon: FileText },

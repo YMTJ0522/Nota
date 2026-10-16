@@ -1200,7 +1200,14 @@ ipcMain.handle(
       const buf = await printer.webContents.printToPDF({
         printBackground: true,
         pageSize: 'A4',
-        margins: { top: 0.6, bottom: 0.6, left: 0.7, right: 0.7 },
+        margins: { top: 0.75, bottom: 0.75, left: 0.7, right: 0.7 },
+        headerTemplate: '<div></div>',
+        footerTemplate: `
+          <div style="width:100%;text-align:center;font-size:9px;color:#8a867c;
+                      font-family:-apple-system,'Segoe UI','PingFang SC',sans-serif;
+                      padding:0 20mm;">
+            <span class="pageNumber"></span> / <span class="totalPages"></span>
+          </div>`,
       })
       await fs.writeFile(result.filePath, buf)
     } finally {

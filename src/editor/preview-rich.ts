@@ -65,9 +65,21 @@ function transformCallouts(src: string): string {
   return src.replace(CALLOUT_RE, (_whole, type: string, fold: string, title: string, rest: string) => {
     const key = type.toLowerCase()
     const meta = CALLOUT_META[key] ?? { label: type, icon: 'ℹ' }
-    const heading = title.trim() || meta.label
+    const titleText = title.trim()
+    // marked(breaks) 会把引用块里的软换行并成 <br>，导致「标题<br>正文」全被
+    // 当成标题吞进来（正文会跟标题挤在一起，字号颜色都变标题样式）。
+    // 把第一个 <br> 之后的内容拆出来放回正文区。
+    let heading = titleText || meta.label
+    let extraBody = ''
+    const brIdx = titleText.indexOf('<br>')
+    if (brIdx !== -1) {
+      heading = titleText.slice(0, brIdx).trim() || meta.label
+      const after = titleText.slice(brIdx + 4).trim()
+      if (after) extraBody = `<p>${after}</p>`
+    }
     // rest 是引用块里标题之后的剩余段落（already <p>…</p>）
-    const body = rest.replace(/^\s*<p>\s*<\/p>\s*$/, '')
+    let body = rest.replace(/^\s*<p>\s*<\/p>\s*$/, '')
+    if (extraBody) body = extraBody + body
     return (
       `<div class="pv-callout" data-type="${key}">` +
       `<div class="pv-callout-head"><span class="pv-callout-icon">${meta.icon}</span>` +

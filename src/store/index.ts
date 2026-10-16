@@ -1183,7 +1183,7 @@ function absolutizeMedia(html: string): string {
  * 导出的文档跟屏幕上是一个字形；换一台没装字的机器也只是退回系统字体，
  * 不会缺字、不会变乱码。
  */
-const EXPORT_CSS = `
+export const EXPORT_CSS = `
 :root {
   --fg: #24231f; --fg-dim: #55534e; --fg-faint: #8a867c;
   --line: #dedbd4; --surface: #f7f6f3;
@@ -1198,33 +1198,37 @@ body {
     "PingFang SC", "Microsoft YaHei", "Noto Sans CJK SC", sans-serif;
   font-size: 16px; line-height: 1.78; color: var(--fg); background: #fbfaf7;
   -webkit-font-smoothing: antialiased;
+  orphans: 3; widows: 3;
 }
+/* ── 标题层级 ── */
 h1, h2, h3, h4, h5, h6 {
   line-height: 1.34; margin: 1.5em 0 .5em; font-weight: 700;
   letter-spacing: -.015em; color: var(--fg);
-  /* 打印时标题不能落在页尾当孤行 */
   break-after: avoid; page-break-after: avoid;
+  break-inside: avoid; page-break-inside: avoid;
 }
-h1 { font-size: 1.62em; margin-top: 0; }
-h2 { font-size: 1.34em; }
+h1 { font-size: 1.62em; margin-top: 0; padding-bottom: .25em; border-bottom: 1px solid var(--line); }
+h2 { font-size: 1.34em; padding-bottom: .2em; border-bottom: 1px solid var(--line); }
 h3 { font-size: 1.16em; }
 h4 { font-size: 1.04em; }
 h5 { font-size: .96em; color: var(--fg-dim); }
 h6 { font-size: .92em; color: var(--fg-faint); }
+/* ── 正文段落与列表 ── */
 p { margin: .8em 0; }
 ul, ol { padding-left: 1.45em; margin: .8em 0; }
 li { margin: .28em 0; }
 li > ul, li > ol { margin: .28em 0; }
-/* 任务列表：去掉圆点，复选框单独一格 */
 ul.contains-task-list { list-style: none; padding-left: .2em; }
 li.task-list-item { display: flex; gap: .5em; align-items: baseline; }
 li.task-list-item input { margin: 0; }
+/* ── 行内元素 ── */
 a { color: var(--accent); text-decoration: underline; text-underline-offset: 3px; }
 a[href] { word-break: break-word; }
 strong { font-weight: 700; }
 del { color: var(--fg-faint); }
 mark { background: #f6e3a8; color: inherit; padding: 0 2px; border-radius: 3px; }
 hr { border: none; border-top: 1px solid var(--line); margin: 2em 0; }
+/* ── 代码 ── */
 code {
   font-family: "JetBrains Mono", "Cascadia Code", ui-monospace, Consolas,
     "Sarasa Mono SC", monospace;
@@ -1236,7 +1240,6 @@ pre {
   border: 1px solid var(--code-line); border-radius: 10px;
   background: var(--code-bg); color: var(--code-fg);
   overflow-x: auto; tab-size: 2;
-  /* 代码块被拆到两页上是最难看的一种断法，宁可整块推到下一页 */
   break-inside: avoid; page-break-inside: avoid;
   white-space: pre-wrap; word-break: break-word;
 }
@@ -1245,32 +1248,43 @@ pre code {
   color: inherit; font-size: .88em; line-height: 1.72;
 }
 .pv-line { display: block; min-height: 1.5em; }
+.pv-line.is-hl { background: #e8f0eb; border-radius: 3px; margin: 0 -6px; padding: 0 6px; }
+/* 行号：CSS 计数器，导出里也能正确显示 */
+pre[data-line-numbers] { counter-reset: pv-ln; padding-left: 3.2em; position: relative; }
+pre[data-line-numbers] .pv-line { counter-increment: pv-ln; }
+pre[data-line-numbers] .pv-line::before {
+  content: counter(pv-ln);
+  position: absolute; left: 0; width: 2.4em;
+  text-align: right; padding-right: .6em;
+  font-size: .78em; color: var(--fg-faint);
+  user-select: none; -webkit-user-select: none;
+}
+/* ── 引用块 ── */
 blockquote {
   margin: 1em 0; padding: .45em 0 .45em 14px;
   border-left: 3px solid var(--accent); border-radius: 0 6px 6px 0;
   background: var(--accent-soft); color: var(--fg-dim);
+  break-inside: avoid; page-break-inside: avoid;
 }
 blockquote p:first-child { margin-top: 0; }
 blockquote p:last-child { margin-bottom: 0; }
+/* ── 图片与 figure ── */
 img, video { max-width: 100%; height: auto; border-radius: 8px; }
 img { display: block; margin: 1em auto; }
-figure { margin: 1em 0; text-align: center; }
-/* 代码块也是 figure（.pv-code-fig），跟着上面那条居中会把**代码**也居中 ——
-   导出来一眼看上去是乱的。代码块自己声明回左对齐，居中只留给真正的插图。 */
+figure { margin: 1em 0; text-align: center; break-inside: avoid; page-break-inside: avoid; }
 figure.pv-code-fig { text-align: left; }
 pre, .pv-code-box { text-align: left; }
 figcaption { font-size: .88em; color: var(--fg-faint); margin-top: .4em; }
-/* 表格：圆角由外层裁（collapse 状态下 table 自己吃不到 border-radius），
-   所以改成 separate、只画右/下两条边，最外圈交给 wrapper。 */
+/* ── 表格 ── */
 .pv-table-wrap {
   margin: 1em 0; border: 1px solid var(--line);
   border-radius: 10px; overflow: hidden;
+  break-inside: avoid; page-break-inside: avoid;
 }
 table { border-collapse: separate; border-spacing: 0; width: 100%; margin: 0; font-size: .94em; }
 th, td { border-right: 1px solid var(--line); border-bottom: 1px solid var(--line);
   padding: 7px 11px; vertical-align: top;
-  /* 跟预览里同一套规则：默认居中，作者写了对齐标记则听作者的 */
-  text-align: center; }
+  text-align: center; word-break: break-word; }
 th[align='left'], td[align='left'] { text-align: left; }
 th[align='right'], td[align='right'] { text-align: right; }
 th:last-child, td:last-child { border-right: none; }
@@ -1278,19 +1292,16 @@ tbody tr:last-child td { border-bottom: none; }
 th { background: var(--surface); font-weight: 600; }
 thead { display: table-header-group; }
 tr { break-inside: avoid; page-break-inside: avoid; }
-/* Callout（> [!NOTE] 这类）。与预览同一副样子：左侧色条 + 淡底，
-   标题与正文同一段流，没有那条把内容切成两截的深色标题带。
-   导出里不好用 color-mix（Word / 打印这条路不一定支持），
-   所以淡底用已经算好的 --accent-soft，不在这里现场再混一次。 */
+/* ── Callout 提示块 ── */
 .pv-callout {
   margin: 1.15em 0; padding: .7em 14px .75em;
   border: 1px solid var(--code-line); border-left: 4px solid var(--accent);
   border-radius: 8px; background: var(--accent-soft);
+  break-inside: avoid; page-break-inside: avoid;
 }
 .pv-callout-head { display: flex; align-items: center; gap: 7px;
   font-size: .92em; font-weight: 600; line-height: 1.5; }
 .pv-callout-title { color: var(--accent); letter-spacing: .01em; }
-/* 图标是 SVG（用 currentColor），所以给它自己一个 color 就够了 */
 .pv-callout-icon { display: inline-flex; align-items: center; justify-content: center;
   width: 20px; height: 20px; border-radius: 6px; color: var(--accent);
   background: var(--accent-soft); }
@@ -1298,8 +1309,6 @@ tr { break-inside: avoid; page-break-inside: avoid; }
 .pv-callout-body { margin-top: .2em; }
 .pv-callout-body > p:first-child { margin-top: .3em; }
 .pv-callout-body > p:last-child { margin-bottom: 0; }
-/* 导出这份样式里**不能用 oklch**（Word 那条路不认），所以十一种类型
-   在这里逐个写成字面色：色条、标题、淡底三样一起给，跟预览那边的色相对得上。 */
 .pv-callout[data-type='note'] { --c: #5b60d6; --s: #eef0fb; }
 .pv-callout[data-type='info'] { --c: #2a7fc0; --s: #ecf4fb; }
 .pv-callout[data-type='tip'] { --c: #2c8f63; --s: #ecf6f1; }
@@ -1314,79 +1323,91 @@ tr { break-inside: avoid; page-break-inside: avoid; }
 .pv-callout { border-left-color: var(--c); background: var(--s); }
 .pv-callout-title, .pv-callout-icon { color: var(--c); }
 .pv-callout-icon { background: #fff; }
-/* 待办：预览里那个勾是自己画的 span，导出里补成可见的方框字符 */
+/* ── 待办 ── */
 .pv-task { display: inline-block; margin-right: .35em; color: var(--fg-dim); }
 .pv-task::after { content: "\\2610"; font-size: 1.05em; }
 .pv-task.on::after { content: "\\2612"; color: var(--accent); }
-/* 折叠块 / 分栏 / 嵌入：导出时全部摊平，不做交互 */
-.pv-fold > summary { cursor: default; font-weight: 600; }
+/* ── 折叠块：导出时强制展开 ── */
+.pv-fold, details.pv-details { break-inside: avoid; page-break-inside: avoid; }
+details.pv-details > summary { cursor: default; font-weight: 600; margin-bottom: .3em; }
+details.pv-details[open] > summary { margin-bottom: .5em; }
+.pv-details-body { padding-left: .8em; border-left: 2px solid var(--line); }
+/* ── 分栏标签：导出时全部摊平，每个标签带标题 ── */
+.pv-tabs { break-inside: avoid; page-break-inside: avoid; margin: 1em 0; }
+.pv-tabbar { display: none; }
+.pv-tab-pane { display: block !important; margin: .8em 0; padding: .7em 12px;
+  border: 1px solid var(--line); border-radius: 8px; background: var(--surface); }
+.pv-tab-pane::before { content: attr(data-label); display: block;
+  font-weight: 700; font-size: .88em; color: var(--accent); margin-bottom: .4em; }
+/* ── 嵌入与双链 ── */
 .pv-embed { display: inline-flex; gap: 5px; padding: 2px 9px 2px 7px;
   border: 1px solid var(--line); border-radius: 6px; background: var(--surface);
   font-size: .92em; color: var(--accent); }
-/* 双链：导出前一并有样。链接在这儿点不动（纸面/静态文件），但至少看得出
-   它是「指向另一篇」的词，而不是两个突兀的中括号。 */
 .pv-wlink { color: var(--accent); text-decoration: none;
-  border-bottom: 1px solid color-mix(in srgb, var(--accent) 40%, transparent); }
+  border-bottom: 1px solid rgba(47,111,82,.4); }
 .pv-wlink.is-missing, .pv-embed.is-missing { border-style: dashed; color: var(--fg-faint); }
 .pv-wlink-tag, .pv-embed-tag { margin-right: 4px; padding: 0 4px; border-radius: 3px;
-  background: color-mix(in srgb, var(--accent) 12%, transparent); color: var(--accent);
-  font-size: 10px; }
-/* 公式：katex 的样式不随导出走（那是一整份 CSS），
-   所以导出时统一降级成等宽原文 —— 至少不会变成一堆乱字符。 */
+  background: rgba(47,111,82,.12); color: var(--accent); font-size: 10px; }
+/* ── 公式 ── */
 .pv-math, .pv-math-block { font-family: ui-monospace, Consolas, monospace;
   background: var(--code-bg); border-radius: 4px; padding: 0 .3em; }
-.pv-math-block { display: block; padding: .5em .7em; margin: .8em 0; text-align: center; }
-/* 脚注。以前这项等于不存在：marked 不认脚注语法，预览和导出里都躺着一串
-   中括号。现在 collectFootnotes 会把它们收拢到文末排成一张列表。 */
+.pv-math-block { display: block; padding: .5em .7em; margin: .8em 0; text-align: center;
+  break-inside: avoid; page-break-inside: avoid; }
+/* ── Mermaid 图表 ── */
+.pv-mermaid { margin: 1.2em 0; text-align: center; break-inside: avoid; page-break-inside: avoid; }
+.pv-mermaid-graph { display: inline-block; max-width: 100%; }
+.pv-mermaid-graph svg { max-width: 100%; height: auto; }
+.pv-mermaid-src { display: none; }
+/* ── 脚注 ── */
 .footnotes { margin-top: 2.5em; padding-top: 1em; border-top: 1px solid var(--line);
-  font-size: .9em; color: var(--fg-dim); }
+  font-size: .9em; color: var(--fg-dim);
+  break-inside: avoid; page-break-inside: avoid; }
 .pv-fn-list { margin: 0; padding-left: 1.3em; }
 .pv-fn-n { color: var(--accent); font-weight: 600; }
-.pv-fnback { margin-left: 4px; text-decoration: none; color: var(--fg-faint); }
+.pv-fnback { display: none; }
 sup a { text-decoration: none; }
 sup.pv-fnref { font-size: .75em; line-height: 0; vertical-align: super; }
-/* 高级代码块的外壳：标题条 + 行号 + 高亮行 */
-.pv-code-fig { margin: 1em 0; text-align: left; }
+/* ── 高级代码块外壳 ── */
+.pv-code-fig { margin: 1em 0; text-align: left; break-inside: avoid; page-break-inside: avoid; }
+.pv-code-box { break-inside: avoid; page-break-inside: avoid; }
 .pv-code-fig > .pv-code-box > pre { margin: 0; border-top-left-radius: 0; border-top-right-radius: 0; }
 .pv-code-fig:not(:has(.pv-code-title)) > .pv-code-box > pre { border-radius: 10px; }
-/* 语言标签：导出里它只是一行说明，不再浮到右上角（打印时绝对定位会飘） */
 .pv-code-lang { display: block; text-align: right; margin: .3em 0 -.5em;
   font-size: .72em; font-weight: 600; letter-spacing: .02em; color: var(--fg-faint); }
 .pv-code-title { padding: 6px 14px; border: 1px solid var(--code-line); border-bottom: 0;
   border-radius: 8px 8px 0 0; background: var(--surface);
   font-size: .78em; font-weight: 600; color: var(--fg-dim); }
-/* 行内标签与块 ID：导出里也一样能认出它们是记号 */
+/* ── 标签与块 ID ── */
 .pv-tag { padding: 0 .4em; border-radius: 6px; background: var(--accent-soft);
   color: var(--accent); font-size: .92em; }
 .pv-bid { color: var(--fg-faint); font-size: .85em; }
-/* 代码高亮：与预览同一套类名 */
+/* ── 代码高亮 ── */
 .cm-hl-keyword { color: #8a4e30 } .cm-hl-string { color: #2d7a56 }
 .cm-hl-number { color: #b56a16 } .cm-hl-func { color: #3d5f8f }
 .cm-hl-type { color: #6a548f } .cm-hl-prop { color: #5c6848 }
 .cm-hl-operator { color: #8a4e30 } .cm-hl-punct { color: #6b6862 }
 .cm-hl-var { color: #6b6862 } .cm-hl-comment { color: #8d8a83; font-style: italic }
+/* ── 手动分页符 ── */
 .pdf-break { break-before: page; page-break-before: always; }
-@page { size: A4; margin: 18mm 16mm; }
+/* ── 页面设置 ── */
+@page { size: A4; margin: 20mm 18mm; }
 @media print {
-  body { max-width: none; margin: 0; padding: 0; background: #fff; font-size: 11.5pt; }
+  body { max-width: none; margin: 0; padding: 0; background: #fff; font-size: 11pt; }
   a { color: var(--fg); text-decoration: none; }
-  pre, .pv-table-wrap, .pv-callout, img { box-shadow: none; }
-}
-@media (prefers-color-scheme: dark) {
-  :root {
-    --fg: #e8e5df; --fg-dim: #b3b0a8; --fg-faint: #8a8780;
-    --line: #34342f; --surface: #22221e;
-    --code-bg: #1b1c20; --code-line: #2c2d33; --code-fg: #d8d5ce;
-    --accent: #86c4a4; --accent-soft: #1e2620;
+  a[href^="http"]::after { content: " (" attr(href) ")"; font-size: .8em; color: var(--fg-faint); }
+  pre, .pv-table-wrap, .pv-callout, img, figure, .pv-mermaid,
+  .pv-code-fig, .pv-code-box, details.pv-details, .pv-tabs {
+    box-shadow: none;
+    break-inside: avoid; page-break-inside: avoid;
   }
-  body { background: #1a1a18; }
-  mark { background: #5c4f24; color: #f0ece2; }
-  .cm-hl-keyword { color: #e0a57a } .cm-hl-string { color: #86c4a4 }
-  .cm-hl-number { color: #e0b36a } .cm-hl-func { color: #8fb0dd }
-  .cm-hl-type { color: #b7a3dd } .cm-hl-prop { color: #b3c49a }
-  .cm-hl-operator { color: #e0a57a } .cm-hl-punct { color: #a5a29a }
-  .cm-hl-var { color: #a5a29a } .cm-hl-comment { color: #8a8780 }
-}`
+  /* 打印时表格容器不能 overflow:hidden，否则 thead 重复失效 */
+  .pv-table-wrap { overflow: visible; border-radius: 0; }
+  pre { overflow-x: visible; }
+  h1, h2, h3 { break-after: avoid; page-break-after: avoid; }
+  .footnotes { break-before: auto; }
+}
+/* 导出文件不带暗色模式：打印/分享时永远是白底 */
+`
 
 /**
  * Word / WPS 那一份样式表。
@@ -1400,50 +1421,55 @@ sup.pv-fnref { font-size: .75em; line-height: 0; vertical-align: super; }
  *
  * 尺寸一律用 pt：Word 的排版单位是 pt，用 em/px 它换算出来的大小常常对不上。
  */
-const WORD_CSS = `
+export const WORD_CSS = `
 body { font-family: "等线","DengXian","Microsoft YaHei","PingFang SC",sans-serif;
   font-size: 10.5pt; line-height: 1.72; color: #24231f; background: #ffffff;
   margin: 0; padding: 0; }
-p { margin: 0 0 6pt; }
+p { margin: 0 0 6pt; text-align: justify; }
 p, li, td, th { mso-line-height-rule: exactly; }
 h1, h2, h3, h4, h5, h6 { font-weight: bold; color: #1e1d1a; margin: 14pt 0 6pt;
-  line-height: 1.35; }
-h1 { font-size: 20pt; margin-top: 0; }
-h2 { font-size: 16pt; }
+  line-height: 1.35; page-break-after: avoid; }
+h1 { font-size: 20pt; margin-top: 0; border-bottom: 1pt solid #dedbd4; padding-bottom: 4pt; }
+h2 { font-size: 16pt; border-bottom: 1pt solid #dedbd4; padding-bottom: 3pt; }
 h3 { font-size: 14pt; }
 h4 { font-size: 12.5pt; }
 h5 { font-size: 11pt; color: #55534e; }
 h6 { font-size: 10.5pt; color: #8a867c; }
 ul, ol { margin: 0 0 8pt; padding-left: 22pt; }
-li { margin: 0 0 3pt; }
+li { margin: 0 0 3pt; text-align: justify; }
 a { color: #2f6f52; text-decoration: underline; }
 strong { font-weight: bold; }
-del { color: #8a867c; }
+del, s { color: #8a867c; }
 mark { background: #f6e3a8; }
-hr { border: none; border-top: 1px solid #dedbd4; margin: 14pt 0; }
-blockquote { margin: 10pt 0; padding: 4pt 0 4pt 12pt; border-left: 3pt solid #2f6f52;
+hr { border: none; border-top: 1pt solid #dedbd4; margin: 14pt 0; }
+blockquote { margin: 10pt 0 10pt 12pt; padding: 4pt 0 4pt 12pt; border-left: 3pt solid #2f6f52;
   background: #f2f5f3; color: #55534e; }
 code { font-family: Consolas,"Courier New",monospace; font-size: 9.5pt;
   background: #f4f2ec; padding: 0 2pt; }
-/* Word 里 div 的边框和底色彩色常常画不出来，所以代码块与提示块都在
-   wordify() 里换成了单格表格 —— 表格是 Word 最认的一种容器。 */
-table.wc-code { width: 100%; border-collapse: collapse; margin: 10pt 0; }
-table.wc-code td { border: 1px solid #e2ded4; background: #f7f6f2;
+/* 代码块 → 单格表格（Word 不画 div 的边框和底色）
+   pre/code 外壳已在 wordify 里拆除，td 里直接是 .pv-code-lang + <p> 代码行 */
+table.wc-code { width: 100%; border-collapse: collapse; margin: 10pt 0;
+  page-break-inside: avoid; }
+table.wc-code td { border: 1pt solid #e2ded4; background: #f7f6f2;
   padding: 8pt 10pt; font-family: Consolas,"Courier New",monospace; font-size: 9pt;
   line-height: 1.6; text-align: left; color: #3b3934; }
-table.wc-code td pre { margin: 0; padding: 0; border: 0; background: transparent;
+table.wc-code td p { margin: 0; padding: 0; text-align: left;
+  font-family: Consolas,"Courier New",monospace; font-size: 9pt; line-height: 1.55;
   white-space: pre-wrap; word-break: break-all; }
-table.wc-code td .pv-line { display: block; }
-table.wc-code td .pv-line.is-hl { background: #eef4f0; }
-/* 代码高亮走字面色（Word 不认 var） */
+table.wc-code .pv-code-lang { display: block; text-align: right;
+  font-size: 8pt; color: #8a867c; font-weight: bold; margin: 0 0 3pt;
+  font-family: Consolas,"Courier New",monospace; }
+/* 代码高亮走字面色 */
 .cm-hl-keyword { color: #8a4e30 } .cm-hl-string { color: #2d7a56 }
 .cm-hl-number { color: #b56a16 } .cm-hl-func { color: #3d5f8f }
 .cm-hl-type { color: #6a548f } .cm-hl-prop { color: #5c6848 }
 .cm-hl-operator { color: #8a4e30 } .cm-hl-punct { color: #6b6862 }
 .cm-hl-var { color: #6b6862 } .cm-hl-comment { color: #8d8a83; font-style: italic }
-table.wc-callout { width: 100%; border-collapse: collapse; margin: 12pt 0; }
+/* 提示块 → 单格表格 */
+table.wc-callout { width: 100%; border-collapse: collapse; margin: 12pt 0;
+  page-break-inside: avoid; }
 table.wc-callout td { padding: 8pt 11pt; font-size: 10pt; text-align: left;
-  border: 1px solid #dedbd4; background: #f7f6f3; }
+  border: 1pt solid #dedbd4; background: #f7f6f3; }
 table.wc-callout[data-type='note'] td { border-left: 4.5pt solid #5b60d6; background: #eef0fb; }
 table.wc-callout[data-type='info'] td { border-left: 4.5pt solid #2a7fc0; background: #ecf4fb; }
 table.wc-callout[data-type='tip'] td { border-left: 4.5pt solid #2c8f63; background: #ecf6f1; }
@@ -1468,39 +1494,58 @@ table.wc-callout[data-type='danger'] .pv-callout-title { color: #a53425 }
 table.wc-callout[data-type='quote'] .pv-callout-title { color: #5d5a54 }
 .pv-callout-head { font-weight: bold; margin: 0 0 3pt; }
 .pv-callout-title { font-size: 10.5pt; }
-/* 图标是 SVG，Word 画不出来 —— 换成同色的一个实心方点当标记，
-   至少「这里有块带色的提示」这件事还在。 */
 .pv-callout-icon { display: none; }
+.pv-callout-body p { margin: 0 0 4pt; font-size: 10pt; line-height: 1.6; text-align: left; }
 .pv-callout-body > p:first-child { margin-top: 0; }
 .pv-callout-body > p:last-child { margin-bottom: 0; }
-/* 表格：Word 认 collapse，边框写在单元格上 */
+/* 数据表格 */
 table:not(.wc-code):not(.wc-callout) { border-collapse: collapse; width: 100%;
   margin: 10pt 0; font-size: 10pt; mso-table-lspace: 0pt; mso-table-rspace: 0pt; }
-th, td { border: 1px solid #dedbd4; padding: 6pt 9pt; vertical-align: top;
+th, td { border: 1pt solid #dedbd4; padding: 6pt 9pt; vertical-align: top;
   text-align: center; }
 th[align='left'], td[align='left'] { text-align: left; }
 th[align='right'], td[align='right'] { text-align: right; }
 th { background: #f2f1ed; font-weight: bold; }
-img { max-width: 100%; border: 0; }
-figure { margin: 10pt 0; }
-figcaption { font-size: 9pt; color: #8a867c; margin-top: 4pt; }
-/* 待办的勾：预览里那个是 CSS 画的方框，Word 看不到 ::after，
-   所以 wordify() 直接把它换成了字符 ☐ / ☒。 */
+/* 图片：居中、不超页宽 */
+img { border: 0; display: block; margin: 8pt auto; }
+figure { margin: 10pt 0; text-align: center; }
+figcaption { font-size: 9pt; color: #8a867c; margin-top: 4pt; text-align: center; }
+/* 待办 */
 .pv-task { font-family: "Segoe UI Symbol",Arial,sans-serif; }
-.pv-embed { color: #2f6f52; border-bottom: 1px solid #dedbd4; }
+/* 双链与嵌入 */
+.pv-embed { color: #2f6f52; border-bottom: 1pt solid #dedbd4; }
 .pv-wlink { color: #2f6f52; text-decoration: underline; }
 .pv-wlink.is-missing, .pv-embed.is-missing { color: #8a867c; }
 .pv-tag { color: #2f6f52; }
 .pv-bid { color: #8a867c; font-size: 9pt; }
+/* 代码块标题与语言标签 */
 .pv-code-title { font-weight: bold; font-size: 9.5pt; color: #55534e;
   margin: 0 0 3pt; }
 .pv-code-lang { font-size: 8.5pt; color: #8a867c; font-weight: bold; }
+/* 公式降级：MathML 在 WPS 里靠不住，保底给等宽底色 */
 .pv-math, .pv-math-block { font-family: Consolas,monospace; background: #f4f2ec; }
-.footnotes { margin-top: 16pt; padding-top: 6pt; border-top: 1px solid #dedbd4;
+.pv-math-block { display: block; text-align: center; padding: 6pt 0; margin: 8pt 0; }
+/* Mermaid 图表：居中 */
+.pv-mermaid { text-align: center; margin: 10pt 0; }
+.pv-mermaid img { margin: 0 auto; }
+/* 折叠块：导出时已展开，给个视觉区分 */
+.pv-details { margin: 10pt 0; }
+.pv-details summary { font-weight: bold; color: #55534e; margin-bottom: 4pt; }
+.pv-details-body { padding-left: 12pt; border-left: 2pt solid #dedbd4; }
+/* 分栏标签：导出时摊平，每个标签一段 */
+.pv-tabs { margin: 10pt 0; }
+.pv-tabbar { display: none; }
+.pv-tab-pane { margin: 8pt 0; padding: 6pt 10pt;
+  border: 1pt solid #dedbd4; background: #f7f6f3; }
+.pv-tab-pane p { margin: 0 0 4pt; font-size: 10.5pt; line-height: 1.72; text-align: justify; }
+.pv-tab-label { font-weight: bold; font-size: 10pt; color: #2f6f52; margin: 0 0 4pt; }
+/* 脚注 */
+.footnotes { margin-top: 16pt; padding-top: 6pt; border-top: 1pt solid #dedbd4;
   font-size: 9pt; color: #55534e; }
+.pv-fnback { display: none; }
 sup { vertical-align: super; font-size: 8pt; }
 sup a { text-decoration: none; }
-@page WordSection1 { size: A4; margin: 2.2cm 2cm; }
+@page WordSection1 { size: A4; margin: 2.54cm 2.2cm; }
 div.WordSection1 { page: WordSection1; }
 `
 
@@ -1512,7 +1557,7 @@ div.WordSection1 { page: WordSection1; }
  *   · 代码块 → 单格表格（灰底 + 细框 + 等宽字）
  * 另外待办那个方框是 CSS 画的（::after），Word 里看不见，换成 ☐ / ☒ 字符。
  */
-function wordify(root: HTMLElement) {
+export function wordify(root: HTMLElement) {
   const toCell = (el: Element, cls: string, attrs: string[] = []) => {
     const table = document.createElement('table')
     table.className = cls
@@ -1528,25 +1573,143 @@ function wordify(root: HTMLElement) {
     el.replaceWith(table)
   }
 
+  /* ── 1. 解包 .pv-table-wrap ──
+     预览里表格外面套了一层 div 用来做圆角和 overflow，Word 不认这些，
+     留着反而让表格多一层缩进。直接把 table 提出来。 */
+  for (const wrap of Array.from(root.querySelectorAll('.pv-table-wrap'))) {
+    const table = wrap.querySelector('table')
+    if (table) wrap.replaceWith(table)
+    else wrap.remove()
+  }
+
+  /* ── 2. 分栏标签摊平 ──
+     Word 没有 tab 交互，把每个 pane 变成带标题的段落块。 */
+  for (const tabs of Array.from(root.querySelectorAll('.pv-tabs'))) {
+    const frag = document.createDocumentFragment()
+    // 从 tabbar 里取标签文字
+    const labels = Array.from(tabs.querySelectorAll('.pv-tab')).map(
+      (t) => t.textContent?.trim() ?? '',
+    )
+    const panes = Array.from(tabs.querySelectorAll('.pv-tab-pane'))
+    panes.forEach((pane, i) => {
+      const label = labels[i] || pane.getAttribute('data-label') || `标签 ${i + 1}`
+      const titleP = document.createElement('p')
+      titleP.className = 'pv-tab-label'
+      titleP.textContent = `▎${label}`
+      frag.appendChild(titleP)
+      const div = document.createElement('div')
+      div.className = 'pv-tab-pane'
+      while (pane.firstChild) div.appendChild(pane.firstChild)
+      frag.appendChild(div)
+    })
+    tabs.replaceWith(frag)
+  }
+
+  /* ── 3. 折叠块展开 ──
+     <details>/<summary> 是 HTML5 元素，Word 不认。
+     换成：summary → 加粗段落，body → 带左边线的 div。 */
+  for (const det of Array.from(root.querySelectorAll('details.pv-details, details.pv-fold'))) {
+    const div = document.createElement('div')
+    div.className = 'pv-details'
+    const summary = det.querySelector('summary')
+    if (summary) {
+      const p = document.createElement('p')
+      p.className = 'pv-details-title'
+      while (summary.firstChild) p.appendChild(summary.firstChild)
+      div.appendChild(p)
+      summary.remove()
+    }
+    const bodyDiv = det.querySelector('.pv-details-body')
+    if (bodyDiv) {
+      while (bodyDiv.firstChild) div.appendChild(bodyDiv.firstChild)
+      bodyDiv.remove()
+    }
+    while (det.firstChild) div.appendChild(det.firstChild)
+    det.replaceWith(div)
+  }
+
+  /* ── 4. 提示块 → 单格表格 ── */
   for (const el of Array.from(root.querySelectorAll('.pv-callout'))) {
+    // Word / WPS 不认行内 <svg>，图标删掉（类型色条已经表达身份）
+    el.querySelectorAll('.pv-callout-icon').forEach((n) => n.remove())
     toCell(el, 'wc-callout', ['data-type'])
   }
-  /* 带标题的代码块是一个 figure（标题在外，<pre> 在内）。
-     两个分支都跑的话，那个 <pre> 会被再包一层表格 —— 表格套表格，
-     在 Word 里就是两重边框盖两重底色。所以先看有没有 figure 兜着：
-     有就整块交给 figure 这一支，pre 这一支跳过。 */
-  for (const el of Array.from(root.querySelectorAll('pre'))) {
+
+  /* ── 5. 行号：CSS 计数器在 Word 里不存在，改成真实文字 ──
+     必须在 pre 被替换成表格之前做：属性挂在 pre 上，替换后就找不到了。 */
+  for (const pre of Array.from(root.querySelectorAll('pre[data-line-numbers]'))) {
+    const lines = pre.querySelectorAll('.pv-line')
+    lines.forEach((line, i) => {
+      const numSpan = document.createElement('span')
+      numSpan.className = 'wc-ln'
+      numSpan.textContent = `${String(i + 1).padStart(3, ' ')} \u2502 `
+      line.insertBefore(numSpan, line.firstChild)
+    })
+    pre.removeAttribute('data-line-numbers')
+  }
+
+  /* ── 6. 代码块 → 单格表格 ──
+     必须包整个 .pv-code-box（含语言标签），不能只包 pre：
+     只包 pre 的话，.pv-code-lang 会飘在表格外面，排版断裂。
+     带标题的 figure 整块包进去。 */
+  for (const el of Array.from(root.querySelectorAll('.pv-code-box'))) {
     if (el.closest('figure.pv-code-fig')) continue
+    if (el.closest('table.wc-code')) continue
     toCell(el, 'wc-code')
   }
   for (const el of Array.from(root.querySelectorAll('figure.pv-code-fig'))) {
     toCell(el, 'wc-code')
   }
-  for (const el of Array.from(root.querySelectorAll('.pv-task'))) {
-    el.textContent = el.classList.contains('on') ? '☒' : '☐'
+  /* 兜底：没有 .pv-code-box 包裹的裸 pre（理论上不会出现，保险起见） */
+  for (const el of Array.from(root.querySelectorAll('pre'))) {
+    if (el.closest('table.wc-code')) continue
+    toCell(el, 'wc-code')
   }
+
+  /* ── 7. 拆除代码块里的行内外壳 ──
+     toCell 之后 td 里的结构是：.pv-code-box > pre > code > .pv-line
+     而 inlineWordStyles 会把 .pv-line 换成 <p>（块级）。
+     <code> 是行内元素，<pre> 也不该嵌套 <p>，Word 解析时会把结构拆散，
+     导致代码全部挤成一行。这里把 code / pre / .pv-code-box 逐层拆掉，
+     让 td 里直接是 .pv-code-lang + 代码行，干净利落。 */
+  const unwrap = (el: Element) => {
+    const parent = el.parentNode
+    if (!parent) return
+    while (el.firstChild) parent.insertBefore(el.firstChild, el)
+    parent.removeChild(el)
+  }
+  for (const code of Array.from(root.querySelectorAll('table.wc-code code'))) unwrap(code)
+  for (const pre of Array.from(root.querySelectorAll('table.wc-code pre'))) unwrap(pre)
+  for (const box of Array.from(root.querySelectorAll('table.wc-code .pv-code-box'))) unwrap(box)
+
+  /* ── 8. 待办方框 ── */
+  for (const el of Array.from(root.querySelectorAll('.pv-task'))) {
+    el.textContent = el.classList.contains('on') ? '\u2612' : '\u2610'
+  }
+
+  /* ── 9. Mermaid 源码块移除 ── */
   for (const el of Array.from(root.querySelectorAll('.pv-mermaid'))) {
     el.querySelectorAll('.pv-mermaid-src').forEach((n) => n.remove())
+  }
+
+  /* ── 10. 脚注回链移除（静态文档里点不动） ── */
+  for (const el of Array.from(root.querySelectorAll('.pv-fnback'))) {
+    el.remove()
+  }
+
+  /* ── 11. hr 换成 Word 认的结构 ──
+     Word 对 CSS border-top 的 <hr> 支持不稳定，换成一个单格表格画线。 */
+  for (const hr of Array.from(root.querySelectorAll('hr'))) {
+    const table = document.createElement('table')
+    table.className = 'wc-hr'
+    table.setAttribute('style', 'width:100%;border-collapse:collapse;margin:14pt 0;')
+    const tr = document.createElement('tr')
+    const td = document.createElement('td')
+    td.setAttribute('style', 'border:none;border-top:1pt solid #dedbd4;padding:0;height:0;')
+    td.innerHTML = '&nbsp;'
+    tr.appendChild(td)
+    table.appendChild(tr)
+    hr.replaceWith(table)
   }
 
   inlineWordStyles(root)
@@ -1588,7 +1751,7 @@ const WORD_HL_COLORS: Record<string, string> = {
   'cm-hl-comment': '#8d8a83',
 }
 
-function inlineWordStyles(root: HTMLElement) {
+export function inlineWordStyles(root: HTMLElement) {
   const stamp = (el: Element, css: string) => {
     const old = el.getAttribute('style')
     el.setAttribute('style', old ? `${css};${old}` : css)
@@ -1601,42 +1764,55 @@ function inlineWordStyles(root: HTMLElement) {
   }
 
   // 标题：字号、颜色、段前段后全部敲死，不给 Word 的内置标题样式留缝
-  const h = (size: string, color: string) =>
-    `font-size:${size};font-weight:bold;color:${color};margin:14pt 0 6pt;line-height:1.35;`
-  each('h1', `font-size:20pt;font-weight:bold;color:#1e1d1a;margin:0 0 6pt;line-height:1.35;`)
-  each('h2', h('16pt', '#1e1d1a'))
+  const h = (size: string, color: string, extra = '') =>
+    `font-size:${size};font-weight:bold;color:${color};margin:14pt 0 6pt;line-height:1.35;${extra}`
+  each('h1', `font-size:20pt;font-weight:bold;color:#1e1d1a;margin:0 0 6pt;line-height:1.35;border-bottom:1pt solid #dedbd4;padding-bottom:4pt;`)
+  each('h2', h('16pt', '#1e1d1a', 'border-bottom:1pt solid #dedbd4;padding-bottom:3pt;'))
   each('h3', h('14pt', '#1e1d1a'))
   each('h4', h('12.5pt', '#1e1d1a'))
   each('h5', h('11pt', '#55534e'))
   each('h6', h('10.5pt', '#8a867c'))
   // 正文：中文文档的通行排法 —— 两端对齐 + 固定行距
   const body = 'font-size:10.5pt;line-height:1.72;text-align:justify;'
-  each('p', `${body}margin:0 0 6pt;`, '.wc-code,.wc-callout')
+  each('p', `${body}margin:0 0 6pt;`, '.wc-code,.wc-callout,.pv-tab-pane,.pv-tab-label,.pv-details-title')
   each('li', `${body}margin:0 0 3pt;`)
   each('ul,ol', 'margin:0 0 8pt;padding-left:22pt;')
   each('blockquote',
-    'margin:10pt 0;padding:4pt 0 4pt 12pt;border-left:4.5pt solid #2f6f52;background:#f2f5f3;color:#55534e;')
+    'margin:10pt 0 10pt 12pt;padding:4pt 0 4pt 12pt;border-left:3pt solid #2f6f52;background:#f2f5f3;color:#55534e;')
   each('code', 'font-family:Consolas,"Courier New",monospace;font-size:9.5pt;background:#f4f2ec;',
     '.wc-code')
   each('a', 'color:#2f6f52;text-decoration:underline;')
   each('mark', 'background:#f6e3a8;')
   each('del,s', 'color:#8a867c;')
-  each('hr', 'border:none;border-top:1pt solid #dedbd4;margin:14pt 0;')
-  each('img', 'max-width:100%;border:0;')
-  each('figcaption', 'font-size:9pt;color:#8a867c;margin-top:4pt;')
+  // 图片：居中 + 不超页宽
+  each('img', 'border:0;display:block;margin:8pt auto;')
+  each('figure', 'margin:10pt 0;text-align:center;')
+  each('figcaption', 'font-size:9pt;color:#8a867c;margin-top:4pt;text-align:center;', '.pv-code-title')
   each('.pv-task', 'font-family:"Segoe UI Symbol",Arial,sans-serif;')
   each('.pv-code-lang', 'font-size:8.5pt;color:#8a867c;font-family:Consolas,"Courier New",monospace;')
-  each('.pv-line.is-hl', 'background:#eef4f0;')
-  // 正文数据表
-  each('table:not(.wc-code):not(.wc-callout)', 'border-collapse:collapse;width:100%;margin:10pt 0;')
-  each('table:not(.wc-code):not(.wc-callout) th',
-    'border:1pt solid #dedbd4;background:#f2f1ed;font-weight:bold;padding:6pt 9pt;')
-  each('table:not(.wc-code):not(.wc-callout) td',
-    'border:1pt solid #dedbd4;padding:6pt 9pt;')
+  each('.pv-code-title', 'font-weight:bold;font-size:9.5pt;color:#55534e;margin:0 0 3pt;')
+  // 行号 span
+  each('.wc-ln', 'font-family:Consolas,"Courier New",monospace;font-size:8pt;color:#8a867c;')
+  // 高亮行
+  each('p[style*="background:#eef4f0"]', '')
+  // 正文数据表：对齐尊重原表的 align 属性（左/右对齐别被居中盖掉）
+  const tableCellCss = (el: Element, base: string) => {
+    const align = el.getAttribute('align')
+    return `${base}text-align:${align && align !== 'center' ? align : 'center'};`
+  }
+  for (const el of Array.from(
+    root.querySelectorAll('table:not(.wc-code):not(.wc-callout):not(.wc-hr) th'),
+  )) {
+    stamp(el, tableCellCss(el, 'border:1pt solid #dedbd4;background:#f2f1ed;font-weight:bold;padding:6pt 9pt;'))
+  }
+  for (const el of Array.from(
+    root.querySelectorAll('table:not(.wc-code):not(.wc-callout):not(.wc-hr) td'),
+  )) {
+    stamp(el, tableCellCss(el, 'border:1pt solid #dedbd4;padding:6pt 9pt;'))
+  }
   // 代码块表格
   each('table.wc-code td',
-    'border:1pt solid #e2ded4;background:#f7f6f2;padding:8pt 10pt;font-family:Consolas,"Courier New",monospace;font-size:9pt;line-height:1.6;')
-  each('table.wc-code td pre', 'margin:0;padding:0;border:0;background:transparent;')
+    'border:1pt solid #e2ded4;background:#f7f6f2;padding:8pt 10pt;font-family:Consolas,"Courier New",monospace;font-size:9pt;line-height:1.6;text-align:left;')
   // 提示块表格：左边一条类型色粗边是它的身份
   for (const el of Array.from(root.querySelectorAll('table.wc-callout'))) {
     const type = el.getAttribute('data-type') ?? 'note'
@@ -1644,7 +1820,7 @@ function inlineWordStyles(root: HTMLElement) {
     stamp(el, 'border-collapse:collapse;width:100%;margin:12pt 0;')
     for (const td of Array.from(el.querySelectorAll('td'))) {
       stamp(td,
-        `border:1pt solid #dedbd4;border-left:4.5pt solid ${bar};background:${bg};padding:8pt 11pt;`)
+        `border:1pt solid #dedbd4;border-left:4.5pt solid ${bar};background:${bg};padding:8pt 11pt;text-align:left;`)
     }
     const head = el.querySelector('.pv-callout-head')
     if (head) stamp(head, 'font-weight:bold;margin:0 0 3pt;')
@@ -1656,21 +1832,36 @@ function inlineWordStyles(root: HTMLElement) {
     const cls = Array.from(el.classList).find((c) => WORD_HL_COLORS[c])
     if (cls) stamp(el, `color:${WORD_HL_COLORS[cls]};`)
   }
+  // 分栏标签摊平后的样式
+  each('.pv-tab-label', 'font-weight:bold;font-size:10pt;color:#2f6f52;margin:8pt 0 3pt;')
+  each('.pv-tab-pane', 'margin:0 0 8pt;padding:6pt 10pt;border:1pt solid #dedbd4;background:#f7f6f3;')
+  each('.pv-tab-pane p', 'margin:0 0 4pt;text-align:justify;font-size:10.5pt;line-height:1.72;')
+  // callout 内部段落（被 each('p') 跳过，这里补打）
+  each('.wc-callout p', 'margin:0 0 4pt;text-align:left;font-size:10pt;line-height:1.6;')
+  // 折叠块展开后
+  each('.pv-details', 'margin:10pt 0;')
+  each('.pv-details-title', 'font-weight:bold;color:#55534e;margin:0 0 4pt;')
+  // Mermaid 图表居中
+  each('.pv-mermaid', 'text-align:center;margin:10pt 0;')
+  // 脚注区
+  each('.footnotes', 'margin-top:16pt;padding-top:6pt;border-top:1pt solid #dedbd4;font-size:9pt;color:#55534e;')
 
   /* 代码的每一行必须是**真的块级元素**。
      预览里一行就是一个 `<span class="pv-line">`，换行靠 CSS `display:block` 撑；
-     Word / WPS 不认这条规则，整段代码于是糊成一行 —— 用户看到的就是
-     「代码块里面的东西不显示」。换成 `<p>` 后 Word 一定当段落处理，
-     margin 清零，行与行之间就是正常的一行间距。
-     行内那些高亮 span 原样搬过去，行高亮（`is-hl`）的底色也跟着走。 */
+     Word / WPS 不认这条规则，整段代码于是糊成一行。
+     换成 `<p>` 后 Word 一定当段落处理。
+     注意：wordify 已经把 pre/code/.pv-code-box 外壳拆掉了，这里的 .pv-line
+     直接在 table.wc-code 的 td 里，所以 p 上要带全等宽字体与换行规则。 */
   for (const el of Array.from(root.querySelectorAll('.pv-line'))) {
     const p = document.createElement('p')
-    let css = 'margin:0;padding:0;line-height:1.55;'
+    let css = 'margin:0;padding:0;line-height:1.55;text-align:left;' +
+      'font-family:Consolas,"Courier New",monospace;font-size:9pt;' +
+      'white-space:pre-wrap;word-break:break-all;color:#3b3934;'
     if (el.classList.contains('is-hl')) css += 'background:#eef4f0;'
     const old = el.getAttribute('style')
     p.setAttribute('style', old ? `${css};${old}` : css)
     while (el.firstChild) p.appendChild(el.firstChild)
-    // 空行留一个不换行空格，不然 Word 会把它并掉，代码的行数就少了
+    // 空行留一个不换行空格，不然 Word 会把它并掉
     if (!p.firstChild) p.appendChild(document.createTextNode('\u00A0'))
     // 缩进：HTML 会把行首的空格并掉，换成不换行空格才保得住代码的层次
     const lead = p.firstChild
@@ -1682,6 +1873,11 @@ function inlineWordStyles(root: HTMLElement) {
       }
     }
     el.replaceWith(p)
+  }
+
+  // callout 最后一段去掉底部间距（必须在所有 p 样式之后执行，确保覆盖生效）
+  for (const el of Array.from(root.querySelectorAll('.wc-callout .pv-callout-body > p:last-child'))) {
+    stamp(el, 'margin-bottom:0;')
   }
 }
 
@@ -1697,7 +1893,7 @@ function inlineWordStyles(root: HTMLElement) {
  */
 const WORD_IMG_MAX_PX = 580
 
-async function fitWordImages(root: HTMLElement) {
+export async function fitWordImages(root: HTMLElement) {
   const imgs = Array.from(root.querySelectorAll('img'))
   await Promise.all(
     imgs.map(
@@ -1728,6 +1924,106 @@ async function fitWordImages(root: HTMLElement) {
 }
 
 /** Markdown → 正文 HTML（和预览同一套解析与高亮） */
+
+/* ── MathML → OMML（Word 原生公式格式） ──
+   Word / WPS 对 W3C MathML 支持极差（实测会把公式显示成 LaTeX 源码）。
+   OMML 才是它们的一等公民：HTML 里嵌 <m:oMath>、根元素声明 m 命名空间，
+   两种打开器都会转成真正的公式对象。这里把 KaTeX 输出的 MathML 递归
+   翻译成 OMML，覆盖常见节点（分数 / 上下标 / 根式 / 运算符 / 文本）。 */
+
+function ommLText(s: string): string {
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+}
+
+function mathmlToOmmL(node: ChildNode): string {
+  if (node.nodeType === Node.TEXT_NODE) {
+    const t = (node.textContent ?? '').trim()
+    if (!t) return ''
+    return `<m:r><m:t xml:space="preserve">${ommLText(t)}</m:t></m:r>`
+  }
+  if (node.nodeType !== Node.ELEMENT_NODE) return ''
+  const el = node as Element
+  const tag = el.tagName.toLowerCase()
+  const kids = () => Array.from(el.childNodes).map(mathmlToOmmL).join('')
+  const child = (i: number) => (el.children[i] ? mathmlToOmmL(el.children[i]!) : '')
+  switch (tag) {
+    case 'math':
+    case 'semantics':
+    case 'mrow':
+    case 'mstyle':
+    case 'menclose':
+    case 'mtr':
+    case 'mtd':
+    case 'mtable':
+      return kids()
+    case 'mi':
+      // 变量名斜体，像真正的公式
+      return `<m:r><m:rPr><m:sty m:val="i"/></m:rPr><m:t>${ommLText(el.textContent ?? '')}</m:t></m:r>`
+    case 'mn':
+    case 'mo':
+    case 'mtext':
+      return `<m:r><m:t>${ommLText(el.textContent ?? '')}</m:t></m:r>`
+    case 'mspace':
+      return `<m:r><m:t xml:space="preserve"> </m:t></m:r>`
+    case 'msup':
+      return `<m:sSup><m:e>${child(0)}</m:e><m:sup>${child(1)}</m:sup></m:sSup>`
+    case 'msub':
+      return `<m:sSub><m:e>${child(0)}</m:e><m:sub>${child(1)}</m:sub></m:sSub>`
+    case 'msubsup':
+      return `<m:sSubSup><m:e>${child(0)}</m:e><m:sub>${child(1)}</m:sub><m:sup>${child(2)}</m:sup></m:sSubSup>`
+    case 'mfrac':
+      return `<m:f><m:num>${child(0)}</m:num><m:den>${child(1)}</m:den></m:f>`
+    case 'msqrt':
+      return `<m:rad><m:deg/><m:e>${kids()}</m:e></m:rad>`
+    case 'mroot':
+      return `<m:rad><m:deg>${child(1)}</m:deg><m:e>${child(0)}</m:e></m:rad>`
+    case 'mover':
+    case 'munder':
+    case 'munderover':
+    case 'mphantom':
+      return kids()
+    case 'annotation':
+    case 'mprescripts':
+    case 'none':
+      return ''
+    default:
+      return kids()
+  }
+}
+
+/** 把 Word 分支的公式（KaTeX MathML）全部换成 OMML 对象。
+ *
+ * OMML 是大小写敏感的 XML（m:oMath 必须精确匹配），而 DOM 序列化会把
+ * 未声明命名空间的标签小写成 m:omath —— Word 就不认了。所以这里先用
+ * 私用区字符占位，等 innerHTML 序列化完成后再做字符串级替换。 */
+export function mathToOmmL(root: HTMLElement): Array<[string, string]> {
+  const placeholders: Array<[string, string]> = []
+  let idx = 0
+  for (const el of Array.from(
+    root.querySelectorAll('.pv-math.is-rendered, .pv-math-block.is-rendered'),
+  )) {
+    const math = el.querySelector('math')
+    if (!math) continue
+    const inner = Array.from(math.childNodes).map(mathmlToOmmL).join('')
+    const oMath = `<m:oMath>${inner}</m:oMath>`
+    const ph = `\uE000M${idx++}\uE001`
+    if (el.classList.contains('pv-math-block')) {
+      const div = document.createElement('div')
+      div.className = 'pv-math-block'
+      div.setAttribute('style', 'text-align:center;margin:8pt 0;')
+      div.textContent = ph
+      el.replaceWith(div)
+    } else {
+      el.replaceWith(document.createTextNode(ph))
+    }
+    placeholders.push([
+      ph,
+      el.classList.contains('pv-math-block') ? `<m:oMathPara>${oMath}</m:oMathPara>` : oMath,
+    ])
+  }
+  return placeholders
+}
+
 /**
  * 把 Markdown 摊成导出用的 HTML 片段，外加这份笔记**额外需要**的样式。
  *
@@ -1749,7 +2045,7 @@ async function fitWordImages(root: HTMLElement) {
  *
  * 渲染在一个游离的容器里做，不进页面 DOM，所以不会闪一下。
  */
-async function renderExportBody(
+export async function renderExportBody(
   md: string,
   forWord = false,
 ): Promise<{ body: string; extraCss: string }> {
@@ -1759,32 +2055,75 @@ async function renderExportBody(
 
   const hasGraph = body.includes('pv-mermaid-graph')
   const hasMath = body.includes('pv-math')
-  // Word 那条路**总是**要把 HTML 挂上 DOM 过一遍：wordify 要靠 DOM 才能把
-  // 提示块和代码块换成表格。只挂「有图表/公式」的那些篇的话，
-  // 没有图表的笔记导出来就还是一堆 div，边框和底色全丢。
-  if (hasGraph || hasMath || forWord) {
-    const host = document.createElement('div')
-    host.innerHTML = body
-    if (hasGraph) await renderMermaidInHtml(host, { asImage: forWord })
-    if (hasMath) await renderMathInHtml(host, forWord ? { output: 'mathml' } : {})
-    if (forWord) {
-      // 先量图（要等图片 decode 出来才有真实像素），再摊成 Word 的结构
-      await fitWordImages(host)
-      wordify(host)
-    }
-    body = host.innerHTML
+
+  // 导出**总是**要把 HTML 挂上 DOM 过一遍：
+  // · Word 那条路靠 wordify 把提示块/代码块换成表格；
+  // · HTML/PDF 那条路也要做后处理（强制 details 展开、tabs 加标签、去脚注回链）。
+  const host = document.createElement('div')
+  host.innerHTML = body
+  let ommLPlaceholders: Array<[string, string]> = []
+  if (hasGraph) await renderMermaidInHtml(host, { asImage: forWord })
+  if (hasMath) await renderMathInHtml(host, forWord ? { output: 'mathml' } : {})
+
+  if (forWord) {
+    if (hasMath) ommLPlaceholders = mathToOmmL(host)
+    await fitWordImages(host)
+    wordify(host)
+  } else {
+    // HTML/PDF 后处理
+    postProcessForHtml(host)
   }
+
+  body = host.innerHTML
+  // OMML 不能进 DOM（标签会被小写化），序列化之后再从占位符换成真身
+  for (const [ph, om] of ommLPlaceholders) body = body.split(ph).join(om)
 
   // 公式样式（含 base64 字体）只有真有公式时才值得带上，约 340KB
   const extraCss = hasMath && !forWord ? (await import('@/editor/export-style')).katexExportCss() : ''
   return { body, extraCss }
 }
 
+/**
+ * HTML / PDF 导出的后处理。
+ *
+ * 预览里有些交互元素在静态文件里没有意义，导出前统一摊平：
+ *   · <details> 强制展开（加 open 属性），否则导出来是收起的，内容看不见
+ *   · .pv-tab-pane 加 data-label（CSS ::before 要用它显示标签名）
+ *   · 脚注回链 ↩ 移除（静态文件里点不动，留着是一个无意义的箭头）
+ *   · .pv-mermaid-src 移除（图已画好，源码块是加载中的替身）
+ */
+export function postProcessForHtml(root: HTMLElement) {
+  // 强制展开所有折叠块
+  for (const det of Array.from(root.querySelectorAll('details'))) {
+    det.setAttribute('open', '')
+  }
+  // 给每个 tab-pane 加上 data-label（从 tabbar 里取对应文字）
+  for (const tabs of Array.from(root.querySelectorAll('.pv-tabs'))) {
+    const labels = Array.from(tabs.querySelectorAll('.pv-tab')).map(
+      (t) => t.textContent?.trim() ?? '',
+    )
+    const panes = Array.from(tabs.querySelectorAll('.pv-tab-pane'))
+    panes.forEach((pane, i) => {
+      if (!pane.getAttribute('data-label')) {
+        pane.setAttribute('data-label', labels[i] || `标签 ${i + 1}`)
+      }
+    })
+  }
+  // 移除脚注回链
+  for (const el of Array.from(root.querySelectorAll('.pv-fnback'))) {
+    el.remove()
+  }
+  // 移除 mermaid 源码块（图已渲染好）
+  for (const el of Array.from(root.querySelectorAll('.pv-mermaid-src'))) {
+    el.remove()
+  }
+}
+
 function escapeHtmlText(s: string) {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
 }
 
-function htmlDocument(title: string, body: string, extraCss = '') {
+export function htmlDocument(title: string, body: string, extraCss = '') {
   return `<!doctype html>
 <html lang="zh-CN">
 <head>
@@ -1805,8 +2144,8 @@ ${body}
  * 存成 .doc，Word / WPS 打开就是一篇正常文档（标题、列表、表格都在）。
  * 不去拼 OOXML：那需要 ZIP 打包，为一个导出把体积和复杂度都抬上去不值。
  */
-function wordDocument(title: string, body: string) {
-  return `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word" xmlns="http://www.w3.org/TR/REC-html40">
+export function wordDocument(title: string, body: string) {
+  return `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word" xmlns:m="http://schemas.openxmlformats.org/officeDocument/2006/math" xmlns="http://www.w3.org/TR/REC-html40">
 <head>
 <meta charset="utf-8">
 <meta http-equiv="Content-Type" content="text/html; charset=utf-8">

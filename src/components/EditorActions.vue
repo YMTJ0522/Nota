@@ -26,7 +26,10 @@ import HistoryPanel from '@/components/HistoryPanel.vue'
 const { state } = store
 
 /** 顶栏导出菜单的四项。顺序、图标、文案都跟笔记右键菜单那一份保持一致
-    ——两处入口长得不一样，人就会以为它们是两件不同的事。 */
+    ——两处入口长得不一样，人就会以为它们是两件不同的事。
+    Word 只留一项：.docx 那一路靠 OOXML 的 altChunk（Word 自己转内嵌 HTML），
+    WPS 对这个特性支持不稳，容易开出来是空的；.doc 是 HTML 套壳，
+    任何版本都能开，而且排版（逐行段落、图片钉宽）已经在真实笔记上验过。 */
 const EXPORT_ITEMS: { kind: ExportKind; label: string; icon: unknown }[] = [
   { kind: 'pdf', label: '导出 PDF', icon: FileDown },
   { kind: 'word', label: '导出 Word', icon: FileType },

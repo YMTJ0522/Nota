@@ -154,15 +154,15 @@ const word = await evaluate(`(() => {
 /* ── 2. 排版体检：公式 / 宽表格 / 嵌套引用 / 脚注 ── */
 await openNote('排版体检')
 await exportAs('Word')
-/* MathML 是包在 KaTeX 外壳里的（span.katex > math），
-   所以只看 `<math` 有没有，不强求那个壳消失。 */
-await evaluate('void 0')
+/* 公式在 Word 那条路上的终点是 OMML（<m:oMath>，Word 原生公式对象，
+   打开后能直接编辑）—— mathToOmmL() 会把 MathML 换掉，所以成品里
+   本来就看不到 `<math`。断言只要求二者之一在，且不能是裸 `$$`。 */
 const rich = await evaluate(`(() => {
   const data = window.__exportedData?.word || ''
   if (!data) return { fail: 'no data' }
   const cells = data.match(/<t[dh][^>]*style="[^"]*border:1pt solid/g) || []
   return {
-    mathml: data.includes('<math'),
+    mathOk: data.includes('oMath') || data.includes('<math'),
     tableCells: cells.length,
     tableStyled: cells.length >= 15,          // 3 行 × 5 列，含表头
     nestedQuote: (data.match(/<blockquote/g) || []).length >= 2,
@@ -190,7 +190,7 @@ const html = await evaluate(`(() => {
 
 console.log('— word/导出体检 —', JSON.stringify(word))
 console.log('— word/排版体检 —', JSON.stringify(rich))
-console.log('— html/排版体检 —', JSON.stringify(html))
+console.log('— html/导出体检 —', JSON.stringify(html))
 
 /* 落一份真实成品，直接拿 WPS 开 */
 const docx = await evaluate(`window.__exportedData?.word || ''`)
@@ -214,7 +214,7 @@ else {
 }
 if (rich.fail) fails.push('2.' + rich.fail)
 else {
-  if (!rich.mathml) fails.push('2.公式没出 MathML')
+  if (!rich.mathOk) fails.push('2.公式没转成 OMML/MathML')
   if (!rich.tableStyled) fails.push('2.表格单元格没内联边框')
   if (!rich.nestedQuote) fails.push('2.嵌套引用丢了层')
   if (!rich.footnote) fails.push('2.脚注没重建')
