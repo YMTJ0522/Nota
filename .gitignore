@@ -18,5 +18,15 @@ docs/probe-*.png
 # clean.mjs / release.mjs 用改名代替删除而挪走的旧目录
 .trash/
 
+# 预览/导出缓存（主进程按笔记 hash 建的临时目录，运行时自己会涨）
+.preview/
+test-output/
+
+# 手搓的临时探针脚本，不属于项目
+test-*.mjs
+test-*.ts
+test-*.md
+esbuild-test.mjs
+
 # publish-github.mjs 发版时临时拼的 Release 正文（用完即删）
 .tmp-release-body.json
