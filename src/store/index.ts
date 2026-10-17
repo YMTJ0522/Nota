@@ -1362,8 +1362,9 @@ details.pv-details[open] > summary { margin-bottom: .5em; }
 .footnotes { margin-top: 2.5em; padding-top: 1em; border-top: 1px solid var(--line);
   font-size: .9em; color: var(--fg-dim);
   break-inside: avoid; page-break-inside: avoid; }
-.pv-fn-list { margin: 0; padding-left: 1.3em; }
-.pv-fn-n { color: var(--accent); font-weight: 600; }
+.pv-fn-list { margin: 0; padding-left: 0; list-style: none; }
+.pv-fn { list-style: none; }
+.pv-fn-n { color: var(--accent); font-weight: 600; margin-right: .35em; }
 .pv-fnback { display: none; }
 sup a { text-decoration: none; }
 sup.pv-fnref { font-size: .75em; line-height: 0; vertical-align: super; }
@@ -1426,7 +1427,7 @@ body { font-family: "等线","DengXian","Microsoft YaHei","PingFang SC",sans-ser
   font-size: 10.5pt; line-height: 1.72; color: #24231f; background: #ffffff;
   margin: 0; padding: 0; }
 p { margin: 0 0 6pt; text-align: justify; }
-p, li, td, th { mso-line-height-rule: exactly; }
+p, td, th { mso-line-height-rule: exactly; }
 h1, h2, h3, h4, h5, h6 { font-weight: bold; color: #1e1d1a; margin: 14pt 0 6pt;
   line-height: 1.35; page-break-after: avoid; }
 h1 { font-size: 20pt; margin-top: 0; border-bottom: 1pt solid #dedbd4; padding-bottom: 4pt; }
@@ -1435,11 +1436,11 @@ h3 { font-size: 14pt; }
 h4 { font-size: 12.5pt; }
 h5 { font-size: 11pt; color: #55534e; }
 h6 { font-size: 10.5pt; color: #8a867c; }
-ul, ol { margin: 0 0 8pt; padding-left: 22pt; }
-li { margin: 0 0 3pt; text-align: justify; }
+/* 列表已由 wordify 转为内联段落 [data-wc-li]（符号写在段首，缩进用 margin-left，
+   故意不写 class 规则：WPS 对 p.class 规则 + 内联样式的组合解析有 bug） */
 a { color: #2f6f52; text-decoration: underline; }
 strong { font-weight: bold; }
-del, s { color: #8a867c; }
+s { color: #8a867c; text-decoration: line-through; }
 mark { background: #f6e3a8; }
 hr { border: none; border-top: 1pt solid #dedbd4; margin: 14pt 0; }
 blockquote { margin: 10pt 0 10pt 12pt; padding: 4pt 0 4pt 12pt; border-left: 3pt solid #2f6f52;
@@ -1456,9 +1457,11 @@ table.wc-code td { border: 1pt solid #e2ded4; background: #f7f6f2;
 table.wc-code td p { margin: 0; padding: 0; text-align: left;
   font-family: Consolas,"Courier New",monospace; font-size: 9pt; line-height: 1.55;
   white-space: pre-wrap; word-break: break-all; }
-table.wc-code .pv-code-lang { display: block; text-align: right;
-  font-size: 8pt; color: #8a867c; font-weight: bold; margin: 0 0 3pt;
+table.wc-code .pv-code-lang { text-align: left;
+  font-size: 8.5pt; color: #8a867c; margin: 0 0 2pt;
   font-family: Consolas,"Courier New",monospace; }
+table.wc-code .pv-code-title { font-weight: bold; text-align: left;
+  font-size: 9.5pt; color: #55534e; margin: 0 0 4pt; }
 /* 代码高亮走字面色 */
 .cm-hl-keyword { color: #8a4e30 } .cm-hl-string { color: #2d7a56 }
 .cm-hl-number { color: #b56a16 } .cm-hl-func { color: #3d5f8f }
@@ -1492,12 +1495,11 @@ table.wc-callout[data-type='warning'] .pv-callout-title { color: #8c6815 }
 table.wc-callout[data-type='caution'] .pv-callout-title { color: #9c5315 }
 table.wc-callout[data-type='danger'] .pv-callout-title { color: #a53425 }
 table.wc-callout[data-type='quote'] .pv-callout-title { color: #5d5a54 }
-.pv-callout-head { font-weight: bold; margin: 0 0 3pt; }
+.pv-callout-head { font-weight: bold; margin: 0 0 3pt; text-align: left; }
 .pv-callout-title { font-size: 10.5pt; }
 .pv-callout-icon { display: none; }
-.pv-callout-body p { margin: 0 0 4pt; font-size: 10pt; line-height: 1.6; text-align: left; }
-.pv-callout-body > p:first-child { margin-top: 0; }
-.pv-callout-body > p:last-child { margin-bottom: 0; }
+table.wc-callout td > p { margin: 0 0 4pt; font-size: 10pt; line-height: 1.6; text-align: left; }
+table.wc-callout td > p:last-child { margin-bottom: 0; }
 /* 数据表格 */
 table:not(.wc-code):not(.wc-callout) { border-collapse: collapse; width: 100%;
   margin: 10pt 0; font-size: 10pt; mso-table-lspace: 0pt; mso-table-rspace: 0pt; }
@@ -1518,27 +1520,26 @@ figcaption { font-size: 9pt; color: #8a867c; margin-top: 4pt; text-align: center
 .pv-wlink.is-missing, .pv-embed.is-missing { color: #8a867c; }
 .pv-tag { color: #2f6f52; }
 .pv-bid { color: #8a867c; font-size: 9pt; }
-/* 代码块标题与语言标签 */
-.pv-code-title { font-weight: bold; font-size: 9.5pt; color: #55534e;
-  margin: 0 0 3pt; }
-.pv-code-lang { font-size: 8.5pt; color: #8a867c; font-weight: bold; }
+/* 代码块标题与语言标签（已在 table.wc-code 内定义） */
+.pv-code-title { font-weight: bold; font-size: 9.5pt; color: #55534e; }
+.pv-code-lang { font-size: 8.5pt; color: #8a867c; }
 /* 公式降级：MathML 在 WPS 里靠不住，保底给等宽底色 */
 .pv-math, .pv-math-block { font-family: Consolas,monospace; background: #f4f2ec; }
 .pv-math-block { display: block; text-align: center; padding: 6pt 0; margin: 8pt 0; }
 /* Mermaid 图表：居中 */
 .pv-mermaid { text-align: center; margin: 10pt 0; }
 .pv-mermaid img { margin: 0 auto; }
-/* 折叠块：导出时已展开，给个视觉区分 */
-.pv-details { margin: 10pt 0; }
-.pv-details summary { font-weight: bold; color: #55534e; margin-bottom: 4pt; }
-.pv-details-body { padding-left: 12pt; border-left: 2pt solid #dedbd4; }
-/* 分栏标签：导出时摊平，每个标签一段 */
-.pv-tabs { margin: 10pt 0; }
+/* 折叠块：导出时已展开，标题 + 表格 */
+.pv-details-title { font-weight: bold; color: #55534e; margin: 10pt 0 4pt; }
+table.pv-details-body { width: 100%; border-collapse: collapse; margin: 0 0 8pt; }
+table.pv-details-body td { border-left: 3pt solid #dedbd4; padding: 4pt 0 4pt 10pt; }
+/* 分栏标签：导出时摊平，标题段落 + 表格 */
 .pv-tabbar { display: none; }
-.pv-tab-pane { margin: 8pt 0; padding: 6pt 10pt;
-  border: 1pt solid #dedbd4; background: #f7f6f3; }
-.pv-tab-pane p { margin: 0 0 4pt; font-size: 10.5pt; line-height: 1.72; text-align: justify; }
-.pv-tab-label { font-weight: bold; font-size: 10pt; color: #2f6f52; margin: 0 0 4pt; }
+table.pv-tab-pane { width: 100%; border-collapse: collapse; margin: 0 0 8pt; }
+table.pv-tab-pane td { border: 1pt solid #dedbd4; background: #f7f6f3;
+  padding: 6pt 10pt; }
+table.pv-tab-pane p { margin: 0 0 4pt; font-size: 10.5pt; line-height: 1.72; text-align: justify; }
+.pv-tab-label { font-weight: bold; font-size: 10pt; color: #2f6f52; margin: 8pt 0 3pt; }
 /* 脚注 */
 .footnotes { margin-top: 16pt; padding-top: 6pt; border-top: 1pt solid #dedbd4;
   font-size: 9pt; color: #55534e; }
@@ -1573,20 +1574,173 @@ export function wordify(root: HTMLElement) {
     el.replaceWith(table)
   }
 
+  /* ── 0. 待办方框替换为纯文本符号（Word 里没有 checkbox 控件） ──
+     同时给所在的 li 打 data-task-item 标记，供列表转换时识别；
+     替换后 .pv-task 就不存在了，所以标记必须在这一步完成。 */
+  for (const el of Array.from(root.querySelectorAll('.pv-task'))) {
+    const mark = el.classList.contains('on') ? '\u2612' : '\u2610'
+    const li = el.closest('li')
+    if (li) li.setAttribute('data-task-item', '1')
+    // marked 原本在 input 后面就带一个空格，这里只放符号本身，避免双空格
+    el.replaceWith(document.createTextNode(mark + ' '))
+  }
+
+  /* ── 0.5 列表 → 段落（WPS 兼容性关键） ──
+     实测在 WPS 中踩过的坑：
+       1) 原生 <ul>/<ol>/<li> 会让多行项目全部重叠；
+       2) 以 &nbsp;（U+00A0 不换行空格）开头/填充的 <p> 会让行高坍缩；
+       3) 给 <p> 加 class（如 p.wc-li）再让 WORD_CSS 里的 class 规则与
+          内联样式同时生效，WPS 会错误解析行高，再次重叠。
+     可靠的做法：
+       每个 li → 一个【无 class、只有内联样式】的 <p>，用 data-wc-li
+       标记（仅给内联阶段的 jsdom 用，WPS 会忽略 data 属性），
+       符号（•/◦/▪ 或 N.）紧跟一个【普通空格】写在段首，
+       层级缩进用 margin-left（pt），绝不使用 &nbsp;。
+     待办项的符号就是上面替换好的 ☒/☐，不再额外加符号。
+     两阶段：先算好深度/符号，再统一替换。 */
+  const BULLETS = ['\u2022', '\u25E6', '\u25AA'] // • ◦ ▪
+  const INDENT_PT = 21
+  // 脚注里的 li（.pv-fn）编号已由 span.pv-fn-n 提供，不能当普通列表项，
+  // 否则会被再补一个 "1." 前缀，出现 "1.1" 这种重复编号。
+  const listItems = Array.from(root.querySelectorAll('li')).filter(
+    (li) => !li.closest('.footnotes') && !li.classList.contains('pv-fn'),
+  )
+  // 第一阶段：为每个 li 预计算 {depth, symbol}
+  const itemMeta = new Map<HTMLLIElement, { depth: number; symbol: string }>()
+  for (const li of listItems) {
+    let depth = 0
+    let n: Element | null = li.parentElement
+    while (n && n !== root) {
+      if (n.tagName === 'UL' || n.tagName === 'OL') depth += 1
+      n = n.parentElement
+    }
+    depth = Math.max(0, depth - 1)
+
+    const lp = li.parentElement
+    const isOrdered = lp?.tagName === 'OL'
+    const hasTask = li.hasAttribute('data-task-item')
+
+    let symbol = ''
+    if (hasTask) {
+      // 待办符号已由第 0 步放进正文，不再额外加符号
+      symbol = ''
+    } else if (isOrdered) {
+      const directLi = Array.from(lp?.children || []).filter(
+        (c) => c.tagName === 'LI',
+      )
+      symbol = `${directLi.indexOf(li) + 1}.`
+    } else {
+      symbol = BULLETS[Math.min(depth, BULLETS.length - 1)]
+    }
+    itemMeta.set(li, { depth, symbol })
+  }
+  // 第二阶段：li → <p>；嵌套列表保留在 p 之后，稍后随 ul/ol 拆除
+  for (const li of listItems) {
+    const meta = itemMeta.get(li)!
+    const p = document.createElement('p')
+    // 用 data 属性而非 class：WPS 对 p.class 选择器 + 内联样式的组合解析有 bug
+    p.setAttribute('data-wc-li', '1')
+    const indent = meta.depth * INDENT_PT
+    p.setAttribute(
+      'style',
+      `font-size:10.5pt;line-height:1.72;color:#24231f;text-align:left;margin:0 0 3pt ${indent}pt;`,
+    )
+
+    // 嵌套列表不能放进段落
+    const nested = Array.from(li.children).filter(
+      (c) => c.tagName === 'UL' || c.tagName === 'OL',
+    )
+
+    // 非待办项：在段首写符号 + 一个普通空格（禁止 &nbsp;）
+    if (meta.symbol) {
+      p.appendChild(document.createTextNode(`${meta.symbol} `))
+    }
+
+    // 移动 li 的非嵌套内容到 p；解包内部的 <p>（松散列表里 li 会包一层 p，
+    // 直接嵌套 <p> 非法，必须拆平）
+    for (const child of Array.from(li.childNodes)) {
+      const el = child.nodeType === 1 ? (child as Element) : null
+      if (el && (el.tagName === 'UL' || el.tagName === 'OL')) continue
+      if (el && el.tagName === 'P') {
+        while (el.firstChild) p.appendChild(el.firstChild)
+        el.remove()
+      } else {
+        p.appendChild(child)
+      }
+    }
+
+    const frag = document.createDocumentFragment()
+    frag.appendChild(p)
+    frag.appendChild(document.createTextNode('\n'))
+    for (const nl of nested) frag.appendChild(nl)
+    li.replaceWith(frag)
+  }
+  // 脚注条目：li.pv-fn → 普通 <p>，编号保留在 span.pv-fn-n 里，不加列表符号
+  for (const li of Array.from(root.querySelectorAll('.footnotes li.pv-fn, .pv-fn-list li'))) {
+    const p = document.createElement('p')
+    for (const child of Array.from(li.childNodes)) p.appendChild(child)
+    li.replaceWith(p)
+  }
+  // 脚注容器 <section> 换成 <div>：WPS 不认 section，连顶部分隔线（border-top）
+  // 都不渲染；换成 div 后配合 inlineWordStyles 的 display:block 才能正常出边线。
+  // 顶部分隔线用 hr 同款表格（WPS 对 div 的 border-top 不渲染，只认表格边框）。
+  for (const sec of Array.from(root.querySelectorAll('section.footnotes'))) {
+    const div = document.createElement('div')
+    div.className = 'footnotes'
+    // 分隔线表格
+    const line = document.createElement('table')
+    line.className = 'wc-hr wc-fn-line'
+    line.setAttribute('style', 'width:100%;border-collapse:collapse;margin:10pt 0 4pt;')
+    const tr = document.createElement('tr')
+    const td = document.createElement('td')
+    td.setAttribute('style', 'border:none;border-top:1pt solid #dedbd4;padding:0;height:0;')
+    td.innerHTML = '&nbsp;'
+    tr.appendChild(td)
+    line.appendChild(tr)
+    div.appendChild(line)
+    for (const child of Array.from(sec.childNodes)) div.appendChild(child)
+    sec.replaceWith(div)
+  }
+  // 拆除所有 ul/ol 容器
+  for (const list of Array.from(root.querySelectorAll('ul, ol'))) {
+    const parent = list.parentNode
+    if (parent) {
+      while (list.firstChild) parent.insertBefore(list.firstChild, list)
+      parent.removeChild(list)
+    }
+  }
+
   /* ── 1. 解包 .pv-table-wrap ──
      预览里表格外面套了一层 div 用来做圆角和 overflow，Word 不认这些，
-     留着反而让表格多一层缩进。直接把 table 提出来。 */
+     留着反而让表格表格多一层缩进。直接把 table 提出来。 */
   for (const wrap of Array.from(root.querySelectorAll('.pv-table-wrap'))) {
     const table = wrap.querySelector('table')
     if (table) wrap.replaceWith(table)
     else wrap.remove()
   }
 
+  /* ── 1.5 数据表格单元格：裸文本包进 <p> ──
+     实测在 WPS 中，th/td 里直接放文本节点（"张三"、"28"）会出现重影叠字
+     （像是默认段落格式与单元格格式各渲染了一遍）；把内容包进一个 <p> 后
+     渲染就干净了。代码块 / 提示块 / 分栏 / 折叠的表格已经各自处理过，跳过。 */
+  const DATA_TBL_SKIP =
+    '.wc-code,.wc-callout,.wc-hr,.pv-tab-pane,.pv-details-body'
+  for (const cell of Array.from(root.querySelectorAll('th, td'))) {
+    if (cell.closest(DATA_TBL_SKIP)) continue
+    // 已经以 p 为块级子项，就不重复包
+    if (cell.querySelector(':scope > p')) continue
+    if (!(cell.textContent ?? '').trim() && !cell.querySelector('img')) continue
+    const p = document.createElement('p')
+    p.setAttribute('data-cell-p', '1')
+    while (cell.firstChild) p.appendChild(cell.firstChild)
+    cell.appendChild(p)
+  }
+
   /* ── 2. 分栏标签摊平 ──
-     Word 没有 tab 交互，把每个 pane 变成带标题的段落块。 */
+     Word 没有 tab 交互，把每个 pane 变成带标题的段落块。
+     标题用 <p>（WPS 只认 p 是块级，div/span 会跟下一行挤在一起）。 */
   for (const tabs of Array.from(root.querySelectorAll('.pv-tabs'))) {
     const frag = document.createDocumentFragment()
-    // 从 tabbar 里取标签文字
     const labels = Array.from(tabs.querySelectorAll('.pv-tab')).map(
       (t) => t.textContent?.trim() ?? '',
     )
@@ -1595,48 +1749,103 @@ export function wordify(root: HTMLElement) {
       const label = labels[i] || pane.getAttribute('data-label') || `标签 ${i + 1}`
       const titleP = document.createElement('p')
       titleP.className = 'pv-tab-label'
-      titleP.textContent = `▎${label}`
+      titleP.textContent = `\u258E${label}`
       frag.appendChild(titleP)
-      const div = document.createElement('div')
-      div.className = 'pv-tab-pane'
-      while (pane.firstChild) div.appendChild(pane.firstChild)
-      frag.appendChild(div)
+      // pane 改用表格包一层，确保边框和底色在 WPS 里能显示
+      const table = document.createElement('table')
+      table.className = 'pv-tab-pane'
+      const tr = document.createElement('tr')
+      const td = document.createElement('td')
+      while (pane.firstChild) td.appendChild(pane.firstChild)
+      tr.appendChild(td)
+      table.appendChild(tr)
+      frag.appendChild(table)
     })
     tabs.replaceWith(frag)
   }
 
   /* ── 3. 折叠块展开 ──
      <details>/<summary> 是 HTML5 元素，Word 不认。
-     换成：summary → 加粗段落，body → 带左边线的 div。 */
+     换成：标题段落 + 内容，用单格表格画边框。 */
   for (const det of Array.from(root.querySelectorAll('details.pv-details, details.pv-fold'))) {
-    const div = document.createElement('div')
-    div.className = 'pv-details'
+    const frag = document.createDocumentFragment()
     const summary = det.querySelector('summary')
     if (summary) {
       const p = document.createElement('p')
       p.className = 'pv-details-title'
       while (summary.firstChild) p.appendChild(summary.firstChild)
-      div.appendChild(p)
+      frag.appendChild(p)
       summary.remove()
     }
-    const bodyDiv = det.querySelector('.pv-details-body')
-    if (bodyDiv) {
-      while (bodyDiv.firstChild) div.appendChild(bodyDiv.firstChild)
-      bodyDiv.remove()
+    // 内容用单格表格包
+    const bodyTable = document.createElement('table')
+    bodyTable.className = 'pv-details-body'
+    const tr = document.createElement('tr')
+    const td = document.createElement('td')
+    while (det.firstChild) {
+      const el = det.firstChild
+      if (el.nodeType === 1 && (el as Element).classList.contains('pv-details-body')) {
+        const bodyEl = el as Element
+        while (bodyEl.firstChild) td.appendChild(bodyEl.firstChild)
+        det.removeChild(el)
+      } else {
+        td.appendChild(el)
+      }
     }
-    while (det.firstChild) div.appendChild(det.firstChild)
-    det.replaceWith(div)
+    tr.appendChild(td)
+    bodyTable.appendChild(tr)
+    frag.appendChild(bodyTable)
+    det.replaceWith(frag)
   }
 
   /* ── 4. 提示块 → 单格表格 ── */
   for (const el of Array.from(root.querySelectorAll('.pv-callout'))) {
-    // Word / WPS 不认行内 <svg>，图标删掉（类型色条已经表达身份）
+    // Word / WPS 不认行内 <svg>，图标删掉
     el.querySelectorAll('.pv-callout-icon').forEach((n) => n.remove())
+    /* 标题单独剥成「无 class + 一份干净内联样式」的 <p>。
+       实测（WPS，用户截图）：标题段落同时挂着 class 和若干条叠上去的内联样式时，
+       WPS 会把行高算成半个字，标题被纵向裁掉上半截 —— 只能看见「说明」的下半。
+       Word 那边正常，所以这个坑只在 WPS 上现形。
+       写法跟列表项那节一致：不给 class（改挂 data 属性，WPS 会忽略），
+       样式留到 inlineWordStyles 里一次写全，不再叠加。 */
+    for (const head of Array.from(el.querySelectorAll('.pv-callout-head'))) {
+      const p = document.createElement('p')
+      p.setAttribute('data-wc-callout-head', '1')
+      p.textContent = (head.textContent ?? '').trim()
+      head.replaceWith(p)
+    }
+    // 正文里的 div 换成 p，确保 WPS 里正确换行
+    for (const div of Array.from(el.querySelectorAll('.pv-callout-body'))) {
+      if (div.tagName.toLowerCase() !== 'div') continue
+      const p = document.createElement('p')
+      p.className = div.className
+      while (div.firstChild) p.appendChild(div.firstChild)
+      div.replaceWith(p)
+    }
+    // callout-body 是个 p，里面的子 p 不合法；把 body p 拆掉，里面的 p 提出来
+    const body = el.querySelector('p.pv-callout-body')
+    if (body) {
+      const parent = body.parentNode
+      if (parent) {
+        while (body.firstChild) {
+          const child = body.firstChild
+          if (child.nodeType === 1 && (child as Element).tagName === 'P') {
+            parent.insertBefore(child, body)
+          } else {
+            // 裸文本节点包成 p
+            const np = document.createElement('p')
+            np.appendChild(child)
+            parent.insertBefore(np, body)
+          }
+        }
+        parent.removeChild(body)
+      }
+    }
     toCell(el, 'wc-callout', ['data-type'])
   }
 
   /* ── 5. 行号：CSS 计数器在 Word 里不存在，改成真实文字 ──
-     必须在 pre 被替换成表格之前做：属性挂在 pre 上，替换后就找不到了。 */
+     必须在 pre 被替换成表格之前做。 */
   for (const pre of Array.from(root.querySelectorAll('pre[data-line-numbers]'))) {
     const lines = pre.querySelectorAll('.pv-line')
     lines.forEach((line, i) => {
@@ -1648,10 +1857,7 @@ export function wordify(root: HTMLElement) {
     pre.removeAttribute('data-line-numbers')
   }
 
-  /* ── 6. 代码块 → 单格表格 ──
-     必须包整个 .pv-code-box（含语言标签），不能只包 pre：
-     只包 pre 的话，.pv-code-lang 会飘在表格外面，排版断裂。
-     带标题的 figure 整块包进去。 */
+  /* ── 6. 代码块 → 单格表格 ── */
   for (const el of Array.from(root.querySelectorAll('.pv-code-box'))) {
     if (el.closest('figure.pv-code-fig')) continue
     if (el.closest('table.wc-code')) continue
@@ -1660,18 +1866,14 @@ export function wordify(root: HTMLElement) {
   for (const el of Array.from(root.querySelectorAll('figure.pv-code-fig'))) {
     toCell(el, 'wc-code')
   }
-  /* 兜底：没有 .pv-code-box 包裹的裸 pre（理论上不会出现，保险起见） */
   for (const el of Array.from(root.querySelectorAll('pre'))) {
     if (el.closest('table.wc-code')) continue
     toCell(el, 'wc-code')
   }
 
-  /* ── 7. 拆除代码块里的行内外壳 ──
-     toCell 之后 td 里的结构是：.pv-code-box > pre > code > .pv-line
-     而 inlineWordStyles 会把 .pv-line 换成 <p>（块级）。
-     <code> 是行内元素，<pre> 也不该嵌套 <p>，Word 解析时会把结构拆散，
-     导致代码全部挤成一行。这里把 code / pre / .pv-code-box 逐层拆掉，
-     让 td 里直接是 .pv-code-lang + 代码行，干净利落。 */
+  /* ── 7. 拆除代码块里的行内外壳，并把标题/语言标签换成 p ──
+     WPS 不把 figcaption/span 当块级元素，它们会和第一行代码挤在一起。
+     全部换成 <p> 才能保证独占一行。 */
   const unwrap = (el: Element) => {
     const parent = el.parentNode
     if (!parent) return
@@ -1681,19 +1883,30 @@ export function wordify(root: HTMLElement) {
   for (const code of Array.from(root.querySelectorAll('table.wc-code code'))) unwrap(code)
   for (const pre of Array.from(root.querySelectorAll('table.wc-code pre'))) unwrap(pre)
   for (const box of Array.from(root.querySelectorAll('table.wc-code .pv-code-box'))) unwrap(box)
-
-  /* ── 8. 待办方框 ── */
-  for (const el of Array.from(root.querySelectorAll('.pv-task'))) {
-    el.textContent = el.classList.contains('on') ? '\u2612' : '\u2610'
+  // figcaption（代码块标题）→ p
+  for (const cap of Array.from(root.querySelectorAll('table.wc-code figcaption'))) {
+    const p = document.createElement('p')
+    p.className = 'pv-code-title'
+    while (cap.firstChild) p.appendChild(cap.firstChild)
+    cap.replaceWith(p)
+  }
+  // span.pv-code-lang（语言标签）→ p
+  for (const lang of Array.from(root.querySelectorAll('table.wc-code span.pv-code-lang'))) {
+    const p = document.createElement('p')
+    p.className = 'pv-code-lang'
+    while (lang.firstChild) p.appendChild(lang.firstChild)
+    lang.replaceWith(p)
   }
 
-  /* ── 9. 段落内的 <br> 拆成独立段落 ──
-     Word 把 HTML 的 <br> 当成「软回车」，而软回车**同样参与两端对齐**：
-     一个段落里挤出多行时（`**作者：豆包**<br>**版本：v2.0**<br>…`），
-     每一行都会被强行拉满整行宽，短行的字间距就被扯得七零八落 ——
-     用户看到的「作者　：　　豆　包」就是这么来的。
-     拆成各自独立的 <p> 之后，每段只有一行，那是段落末行，justify 不碰它。
-     行距给一点点（2pt）而不是归零：这些行原本是同段，拆开后不该散得太开。 */
+  /* ── 8. 删除线：<del> 在 WPS 里可能显示 [Unknown]，换成 <s> 并加内联样式 ── */
+  for (const del of Array.from(root.querySelectorAll('del, s'))) {
+    const s = document.createElement('s')
+    s.setAttribute('style', 'text-decoration:line-through;')
+    while (del.firstChild) s.appendChild(del.firstChild)
+    del.replaceWith(s)
+  }
+
+  /* ── 9. 段落内的 <br> 拆成独立段落 ── */
   for (const p of Array.from(root.querySelectorAll('p'))) {
     if (!p.querySelector('br')) continue
     const base = p.getAttribute('style') ?? ''
@@ -1706,7 +1919,6 @@ export function wordify(root: HTMLElement) {
     let cur = makeP()
     for (const kid of Array.from(p.childNodes)) {
       if (kid.nodeType === 1 && (kid as Element).tagName === 'BR') {
-        // 空行留一个不换行空格，否则 Word 会把它整个并掉
         if (!cur.firstChild) cur.appendChild(document.createTextNode('\u00A0'))
         frag.appendChild(cur)
         cur = makeP()
@@ -1728,8 +1940,7 @@ export function wordify(root: HTMLElement) {
     el.remove()
   }
 
-  /* ── 12. hr 换成 Word 认的结构 ──
-     Word 对 CSS border-top 的 <hr> 支持不稳定，换成一个单格表格画线。 */
+  /* ── 12. hr 换成 Word 认的结构 ── */
   for (const hr of Array.from(root.querySelectorAll('hr'))) {
     const table = document.createElement('table')
     table.className = 'wc-hr'
@@ -1805,39 +2016,47 @@ export function inlineWordStyles(root: HTMLElement) {
   each('h6', h('10.5pt', '#8a867c'))
   // 正文：中文文档的通行排法 —— 两端对齐 + 固定行距
   const body = 'font-size:10.5pt;line-height:1.72;text-align:justify;'
-  each('p', `${body}margin:0 0 6pt;`, '.wc-code,.wc-callout,.pv-tab-pane,.pv-tab-label,.pv-details-title')
-  each('li', `${body}margin:0 0 3pt;`)
-  each('ul,ol', 'margin:0 0 8pt;padding-left:22pt;')
+  each('p', `${body}margin:0 0 6pt;`,
+    '.wc-code,.wc-callout,.pv-tab-pane,.pv-tab-label,.pv-details-title,[data-wc-li],.footnotes,[data-cell-p]')
+  // 数据表格单元格里的 p：零边距、紧凑行距，对齐继承 td/th（不设 text-align）
+  each('[data-cell-p]', 'margin:0;line-height:1.5;')
+  // 注意：列表项 [data-wc-li] 的完整样式（含动态 margin-left 缩进）已在 wordify
+  // 创建时一次性内联，这里【不要再 stamp】，否则重复样式产生 ";;" 空声明，
+  // WPS 解析到后会把行高判成 0，导致多行列表项全部叠在一起。
+  // 引用块
   each('blockquote',
     'margin:10pt 0 10pt 12pt;padding:4pt 0 4pt 12pt;border-left:3pt solid #2f6f52;background:#f2f5f3;color:#55534e;')
   each('code', 'font-family:Consolas,"Courier New",monospace;font-size:9.5pt;background:#f4f2ec;',
     '.wc-code')
   each('a', 'color:#2f6f52;text-decoration:underline;')
   each('mark', 'background:#f6e3a8;')
-  each('del,s', 'color:#8a867c;')
+  each('s', 'color:#8a867c;text-decoration:line-through;')
   // 图片：居中 + 不超页宽
   each('img', 'border:0;display:block;margin:8pt auto;')
   each('figure', 'margin:10pt 0;text-align:center;')
-  each('figcaption', 'font-size:9pt;color:#8a867c;margin-top:4pt;text-align:center;', '.pv-code-title')
-  each('.pv-task', 'font-family:"Segoe UI Symbol",Arial,sans-serif;')
-  each('.pv-code-lang', 'font-size:8.5pt;color:#8a867c;font-family:Consolas,"Courier New",monospace;')
-  each('.pv-code-title', 'font-weight:bold;font-size:9.5pt;color:#55534e;margin:0 0 3pt;')
+  // 代码块内的语言标签和标题（wordify 已将它们从 span/figcaption 改为 p）
+  each('table.wc-code .pv-code-lang',
+    'font-size:8.5pt;color:#8a867c;font-family:Consolas,"Courier New",monospace;margin:0 0 2pt;text-align:left;')
+  each('table.wc-code .pv-code-title',
+    'font-weight:bold;font-size:9.5pt;color:#55534e;margin:0 0 4pt;text-align:left;')
   // 行号 span
-  each('.wc-ln', 'font-family:Consolas,"Courier New",monospace;font-size:8pt;color:#8a867c;')
-  // 高亮行
-  each('p[style*="background:#eef4f0"]', '')
-  // 正文数据表：对齐尊重原表的 align 属性（左/右对齐别被居中盖掉）
+  each('.wc-ln', 'font-family:Consolas,"Courier New",monospace;font-size:8pt;color:#b0ada5;')
+  // 兜底：所有残留 div 强制块级（WPS 可能默认不换行）
+  each('div', 'display:block;')
+  // 正文数据表：对齐尊重原表的 align 属性
+  // 字体只用 Windows 上确定存在的（等线/雅黑）—— 写 Mac 字体（如 Songti SC）
+  // 会让 WPS 回退渲染异常，表头/单元格出现重影叠字。
   const tableCellCss = (el: Element, base: string) => {
     const align = el.getAttribute('align')
-    return `${base}text-align:${align && align !== 'center' ? align : 'center'};`
+    return `${base}text-align:${align && align !== 'center' ? align : 'center'};font-family:"DengXian","Microsoft YaHei",sans-serif;`
   }
   for (const el of Array.from(
-    root.querySelectorAll('table:not(.wc-code):not(.wc-callout):not(.wc-hr) th'),
+    root.querySelectorAll('table:not(.wc-code):not(.wc-callout):not(.wc-hr):not(.pv-tab-pane):not(.pv-details-body) th'),
   )) {
     stamp(el, tableCellCss(el, 'border:1pt solid #dedbd4;background:#f2f1ed;font-weight:bold;padding:6pt 9pt;'))
   }
   for (const el of Array.from(
-    root.querySelectorAll('table:not(.wc-code):not(.wc-callout):not(.wc-hr) td'),
+    root.querySelectorAll('table:not(.wc-code):not(.wc-callout):not(.wc-hr):not(.pv-tab-pane):not(.pv-details-body) td'),
   )) {
     stamp(el, tableCellCss(el, 'border:1pt solid #dedbd4;padding:6pt 9pt;'))
   }
@@ -1864,29 +2083,46 @@ export function inlineWordStyles(root: HTMLElement) {
       stamp(td,
         `border:1pt solid #dedbd4;border-left:4.5pt solid ${bar};background:${bg};padding:8pt 11pt;text-align:left;`)
     }
-    const head = el.querySelector('.pv-callout-head')
-    if (head) stamp(head, 'font-weight:bold;margin:0 0 3pt;')
-    const title = el.querySelector('.pv-callout-title')
-    if (title) stamp(title, `font-size:10.5pt;color:${bar};`)
+    /* 标题段落：整份样式一次写全（setAttribute 覆盖，不是 stamp 叠加）。
+       WPS 只要看到这行 <p> 上既有 class 又有层层叠上去的内联样式，就会把
+       行高算错、把标题纵向裁掉一半；样式叠一次就够，字号行高都给绝对值。 */
+    for (const hp of Array.from(el.querySelectorAll('p[data-wc-callout-head]'))) {
+      hp.setAttribute(
+        'style',
+        `margin:0 0 4pt;font-size:10.5pt;line-height:15pt;font-weight:bold;color:${bar};text-align:left;`,
+      )
+    }
+    // callout 内所有正文段落（标题不在其列：它上面已经写全，再叠就白费）
+    const bodyPs: HTMLElement[] = []
+    for (const p of Array.from(el.querySelectorAll<HTMLElement>('td > p'))) {
+      if (p.hasAttribute('data-wc-callout-head')) continue
+      stamp(p, 'margin:0 0 4pt;text-align:left;font-size:10pt;line-height:1.6;')
+      bodyPs.push(p)
+    }
+    if (bodyPs.length > 0) stamp(bodyPs[bodyPs.length - 1], 'margin-bottom:0;')
   }
   // 代码高亮：类选择器在 WPS 里靠不住，颜色直接写到 span 上
   for (const el of Array.from(root.querySelectorAll('[class*="cm-hl-"]'))) {
     const cls = Array.from(el.classList).find((c) => WORD_HL_COLORS[c])
     if (cls) stamp(el, `color:${WORD_HL_COLORS[cls]};`)
   }
-  // 分栏标签摊平后的样式
-  each('.pv-tab-label', 'font-weight:bold;font-size:10pt;color:#2f6f52;margin:8pt 0 3pt;')
-  each('.pv-tab-pane', 'margin:0 0 8pt;padding:6pt 10pt;border:1pt solid #dedbd4;background:#f7f6f3;')
-  each('.pv-tab-pane p', 'margin:0 0 4pt;text-align:justify;font-size:10.5pt;line-height:1.72;')
-  // callout 内部段落（被 each('p') 跳过，这里补打）
-  each('.wc-callout p', 'margin:0 0 4pt;text-align:left;font-size:10pt;line-height:1.6;')
-  // 折叠块展开后
-  each('.pv-details', 'margin:10pt 0;')
-  each('.pv-details-title', 'font-weight:bold;color:#55534e;margin:0 0 4pt;')
+  // 分栏标签：标题段落 + 内容表格（wordify 已将 pane div 改为 table）
+  each('.pv-tab-label', 'font-weight:bold;font-size:10pt;color:#2f6f52;margin:8pt 0 3pt;text-align:left;')
+  each('table.pv-tab-pane', 'border-collapse:collapse;width:100%;margin:0 0 8pt;')
+  each('table.pv-tab-pane td', 'border:1pt solid #dedbd4;background:#f7f6f3;padding:6pt 10pt;text-align:left;')
+  each('table.pv-tab-pane p', 'margin:0 0 4pt;text-align:justify;font-size:10.5pt;line-height:1.72;')
+  // 折叠块：标题段落 + 内容表格
+  each('.pv-details-title', 'font-weight:bold;color:#55534e;margin:10pt 0 4pt;text-align:left;')
+  each('table.pv-details-body', 'border-collapse:collapse;width:100%;margin:0 0 8pt;')
+  each('table.pv-details-body td', 'border-left:3pt solid #dedbd4;padding:4pt 0 4pt 10pt;text-align:left;')
+  each('table.pv-details-body p', 'margin:0 0 4pt;text-align:justify;font-size:10.5pt;line-height:1.72;')
   // Mermaid 图表居中
   each('.pv-mermaid', 'text-align:center;margin:10pt 0;')
   // 脚注区
-  each('.footnotes', 'margin-top:16pt;padding-top:6pt;border-top:1pt solid #dedbd4;font-size:9pt;color:#55534e;')
+  each('.footnotes', 'margin-top:8pt;padding-top:0;font-size:9pt;color:#55534e;display:block;')
+  each('.footnotes p', 'margin:0 0 3pt;font-size:9pt;line-height:1.5;text-align:left;')
+  each('.footnotes .pv-fn-n', 'color:#2f6f52;font-weight:bold;margin-right:4pt;')
+  each('sup.pv-fnref', 'font-size:8pt;color:#2f6f52;')
 
   /* 代码的每一行必须是**真的块级元素**。
      预览里一行就是一个 `<span class="pv-line">`，换行靠 CSS `display:block` 撑；
@@ -1915,11 +2151,6 @@ export function inlineWordStyles(root: HTMLElement) {
       }
     }
     el.replaceWith(p)
-  }
-
-  // callout 最后一段去掉底部间距（必须在所有 p 样式之后执行，确保覆盖生效）
-  for (const el of Array.from(root.querySelectorAll('.wc-callout .pv-callout-body > p:last-child'))) {
-    stamp(el, 'margin-bottom:0;')
   }
 }
 
@@ -2033,6 +2264,147 @@ function mathmlToOmmL(node: ChildNode): string {
   }
 }
 
+/**
+ * Word 分支的**块级**公式：按屏幕上的样子拍成 PNG。
+ *
+ * 为什么不能靠 OMML：OMML 确实写得进 .doc（`<m:oMath>` 结构完整），可 Word
+ * 打开 HTML 套壳的 .doc 时根本不解析它，只取里面的文本 —— 一行公式最后塌成
+ * `∫0∞e−x2,dx=√π/2` 这种谁也读不出来的东西。Word 自己「另存为网页」时也是
+ * 把公式转成图片的，这里就照它的做法办。
+ *
+ * 只动块级：行内公式夹在正文里，换成图片会让整行的行高跳一下，
+ * 而 Word 把行内 OMML 摊平之后通常还读得通（`α+β=γ`）。
+ *
+ * 渲染用 KaTeX 的 HTML（不是 MathML）：KaTeX 的排版靠 CSS，所以要把
+ * katexExportCss() 整份塞进 SVG 的 <style> —— 那份 CSS 里的 @font-face
+ * 是 base64 内嵌的，图片里也能拿到字形，跟屏幕上长一样。
+ */
+/** SVG → PNG，**拍完按非白像素裁掉四周空白**。
+ *
+ * 为什么要裁：KaTeX 的积分号、根式、分式是画在布局盒子外面的（负偏移定位），
+ * 按盒子尺寸切必然切掉一截 —— 实测分式的下半截整块没了。所以先按「盒子尺寸
+ * 加一大圈余量」拍，再扫一遍像素找真正的墨迹范围，最后连尺寸一起回给调用方。 */
+async function shootSvg(
+  svg: string,
+  sw: number,
+  sh: number,
+): Promise<{ url: string; w: number; h: number } | null> {
+  const SCALE = 2 // 2 倍图，打印也清楚
+  const url = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`
+  try {
+    const img = new Image()
+    await new Promise<void>((res, rej) => {
+      img.onload = () => res()
+      img.onerror = () => rej(new Error('svg load failed'))
+      img.src = url
+    })
+    const c = document.createElement('canvas')
+    c.width = Math.round(sw * SCALE)
+    c.height = Math.round(sh * SCALE)
+    const ctx = c.getContext('2d')
+    if (!ctx) return null
+    ctx.fillStyle = '#ffffff'
+    ctx.fillRect(0, 0, c.width, c.height)
+    ctx.drawImage(img, 0, 0, c.width, c.height)
+
+    const px = ctx.getImageData(0, 0, c.width, c.height).data
+    let x0 = c.width
+    let y0 = c.height
+    let x1 = -1
+    let y1 = -1
+    for (let y = 0; y < c.height; y++) {
+      for (let x = 0; x < c.width; x++) {
+        const i = (y * c.width + x) * 4
+        // 不到 248 就算墨迹（抗锯齿的浅边也算，免得切掉笔画尖）
+        if (px[i] < 248 || px[i + 1] < 248 || px[i + 2] < 248) {
+          if (x < x0) x0 = x
+          if (x > x1) x1 = x
+          if (y < y0) y0 = y
+          if (y > y1) y1 = y
+        }
+      }
+    }
+    if (x1 < 0) return null // 整张白：公式没画出来，别塞一张空白图
+    const m = 2 * SCALE // 裁完再留一点白，不贴着笔画切
+    x0 = Math.max(0, x0 - m)
+    y0 = Math.max(0, y0 - m)
+    x1 = Math.min(c.width - 1, x1 + m)
+    y1 = Math.min(c.height - 1, y1 + m)
+    const w = x1 - x0 + 1
+    const h = y1 - y0 + 1
+    const out = document.createElement('canvas')
+    out.width = w
+    out.height = h
+    const octx = out.getContext('2d')
+    if (!octx) return null
+    octx.fillStyle = '#ffffff'
+    octx.fillRect(0, 0, w, h)
+    octx.drawImage(c, x0, y0, w, h, 0, 0, w, h)
+    return { url: out.toDataURL('image/png'), w: w / SCALE, h: h / SCALE }
+  } catch {
+    return null
+  }
+}
+
+async function rasterizeMathBlocks(root: HTMLElement): Promise<void> {
+  const blocks = Array.from(root.querySelectorAll<HTMLElement>('.pv-math-block.is-rendered'))
+  if (!blocks.length) return
+  const css = (await import('@/editor/export-style')).katexExportCss()
+
+  /* 量尺寸必须先有真实布局。导出用的 host 是游离节点（不进页面 DOM，免得闪一下），
+     在它里面 getBoundingClientRect 一律是 0 —— 所以临时挂一层离屏舞台来排。 */
+  const stage = document.createElement('div')
+  stage.setAttribute(
+    'style',
+    // 给得足够宽：窄了公式会折行（KaTeX 会把一条公式拆成多个 .base），
+    // 折出来的图在 Word 里是上下两截，看着像算错。宽出来的空白最后由裁边去掉。
+    'position:fixed;left:-20000px;top:0;width:1400px;visibility:hidden;pointer-events:none;',
+  )
+  document.body.appendChild(stage)
+  try {
+    for (const el of blocks) {
+      const clone = el.cloneNode(true) as HTMLElement
+      clone.setAttribute(
+        'style',
+        'display:block;margin:0;padding:0;background:transparent;text-align:center;color:#2a2b28;font-size:16px;',
+      )
+      stage.appendChild(clone)
+      /* 只量高度，宽度交给「超宽容器 + 拍完裁边」。
+         以前量宽度踩过两次：量块级盒子会撑满舞台（图里全是白），
+         量第一个 .base 又会漏掉后面的分式（公式被折成两行）。 */
+      const ch = Math.ceil(clone.getBoundingClientRect().height)
+      const html = clone.innerHTML
+      clone.remove()
+      if (ch < 2) continue
+
+      // 四周留一大圈再拍，pixel 裁边会把多余的空白去掉（见 shootSvg）
+      const PAD = 28
+      const cw = 1400
+      const sw = cw + PAD * 2
+      const sh = ch + PAD * 2
+      const svg =
+        `<svg xmlns="http://www.w3.org/2000/svg" width="${sw}" height="${sh}" viewBox="0 0 ${sw} ${sh}">` +
+        // .katex-display 自带 1em 上下外边距，不清掉公式会被顶下去一截
+        `<style>${css}\n.katex-display{margin:0!important;padding:0!important;}</style>` +
+        `<foreignObject x="0" y="0" width="${sw}" height="${sh}">` +
+        `<div xmlns="http://www.w3.org/1999/xhtml" ` +
+        `style="padding:${PAD}px;width:${cw}px;color:#2a2b28;font-size:16px;text-align:left;">${html}</div>` +
+        `</foreignObject></svg>`
+      const shot = await shootSvg(svg, sw, sh)
+      // 光栅化失败就留着原来的节点：OMML 至少还能塌成文本，比图丢了强
+      if (!shot) continue
+      const img = document.createElement('img')
+      img.setAttribute('src', shot.url)
+      img.setAttribute('width', String(Math.round(shot.w)))
+      img.setAttribute('height', String(Math.round(shot.h)))
+      img.setAttribute('style', `width:${Math.round(shot.w)}px;height:${Math.round(shot.h)}px;`)
+      el.replaceWith(img)
+    }
+  } finally {
+    stage.remove()
+  }
+}
+
 /** 把 Word 分支的公式（KaTeX MathML）全部换成 OMML 对象。
  *
  * OMML 是大小写敏感的 XML（m:oMath 必须精确匹配），而 DOM 序列化会把
@@ -2107,10 +2479,18 @@ export async function renderExportBody(
   // light: true —— 导出的终点永远是白底（Word 白纸 / PDF 白页 / HTML 白背景），
   // 深色主题下算出的浅色线条放上去会整张隐形，所以强制按浅色渲染。
   if (hasGraph) await renderMermaidInHtml(host, { asImage: forWord, light: true })
-  if (hasMath) await renderMathInHtml(host, forWord ? { output: 'mathml' } : {})
+  /* 两条路都要 KaTeX 的 HTML 排版：
+     · HTML/PDF 直接用它现成的那套 span；
+     · Word 拿它拍成图片（块级公式），行内再转 OMML。
+     以前 Word 走的是 output:'mathml'（只有 <math>，没有排版），那样块级公式
+     就只能塌成文本，没法拍照。 */
+  if (hasMath) await renderMathInHtml(host)
 
   if (forWord) {
-    if (hasMath) ommLPlaceholders = mathToOmmL(host)
+    if (hasMath) {
+      await rasterizeMathBlocks(host)
+      ommLPlaceholders = mathToOmmL(host)
+    }
     await fitWordImages(host)
     wordify(host)
   } else {

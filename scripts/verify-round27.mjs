@@ -5,7 +5,11 @@
  *  · 段落里的 `<br>` 拆成独立 `<p>` —— Word 把 `<br>` 当软回车，
  *    软回车也参与两端对齐，于是每行都被拉满整行宽、字间距爆炸；
  *  · 长代码块不再一律 page-break-inside:avoid —— 四十行的块只能整块
- *    推到下页，上一页留下半页空白。
+ *    推到下页，上一页留下半页空白；
+ *  · Word 里的**块级公式改为图片** —— OMML 写进 .doc 也白搭，Word 打开
+ *    HTML 套壳时不解析它，公式塌成一行裸文本；
+ *  · 提示块标题改成「无 class + 单份内联样式」—— 两份样式叠在一起时
+ *    WPS 会把行高算错，标题被纵向裁掉一半。
  *
  * 断言都在页面内做（导出数据动辄几百 KB，拖回 node 没意义）。
  * 用法：node scripts/verify-round27.mjs
@@ -35,6 +39,15 @@ const NOTE = [
   '```bash',
   ...Array.from({ length: 20 }, (_, i) => `echo "line ${i + 1}"`),
   '```',
+  '',
+  '## 公式与提示块',
+  '',
+  '行内 $\\alpha+\\beta=\\gamma$ 一句。',
+  '',
+  '$$\\int_0^\\infty e^{-x^2} dx = \\frac{\\sqrt{\\pi}}{2}$$',
+  '',
+  '> [!NOTE] 说明',
+  '> 提示块的正文。',
 ].join('\n')
 
 const { send, evaluate, sleep, close } = await launch({ port: 4474, size: [1500, 940] })
@@ -136,6 +149,34 @@ const pdf = await evaluate(`(() => {
 console.log('— 3. PDF 源浅色 —', JSON.stringify(pdf))
 if (pdf.fail) fails.push('3.' + pdf.fail)
 else if (pdf.darkHits.length) fails.push('3.PDF 图上仍是深色 ' + pdf.darkHits.join(','))
+
+/* ── 4. Word：块级公式是图片；提示块标题只有一份干净样式 ── */
+const word2 = await evaluate(`(() => {
+  const d = window.__exportedData?.word || ''
+  if (!d) return { fail: 'no data' }
+  // 块级公式应当已经拍成图片：正文里不该再剩 <math>，也不该有 OMML 占位残留
+  const mathLeft = (d.match(/<math/g) || []).length
+  const omathLeft = (d.match(/m:oMath/g) || []).length
+  // 公式图是窄图（图表那张被压到 580），拿宽度区分
+  const narrowImg = (d.match(/<img[^>]*width="(\\d+)"/g) || [])
+    .map(s => Number(/width="(\\d+)"/.exec(s)[1]))
+    .some(n => n > 40 && n < 500)
+  // 提示块标题：不能带 class（WPS 那个行高 bug 的触发条件），且行高给了绝对值
+  const headHasClass = d.includes('class="pv-callout-head"')
+  const headStyled = /data-wc-callout-head="1"[^>]*style="[^"]*line-height:15pt/.test(d)
+  return { mathLeft, omathLeft, narrowImg, headHasClass, headStyled }
+})()`)
+console.log('— 4. Word/公式与提示块 —', JSON.stringify(word2))
+if (word2.fail) fails.push('4.' + word2.fail)
+else {
+  if (word2.mathLeft > 0) fails.push('4.还有 <math> 没转（块级公式应当已拍成图）')
+  // 行内公式仍走 OMML（Word 会把行内 OMML 摊平成能读的文本），所以 m:oMath 该有；
+  // 真正不许留的是块级那条 —— 它一旦留在 OMML 里就会塌成一串裸文本。
+  if (word2.omathLeft < 1) fails.push('4.行内公式的 OMML 没了（不该连它一起删）')
+  if (!word2.narrowImg) fails.push('4.没看到公式图片')
+  if (word2.headHasClass) fails.push('4.提示块标题仍带 class（WPS 会裁掉半截）')
+  if (!word2.headStyled) fails.push('4.提示块标题没拿到写全的样式')
+}
 
 console.log(fails.length ? 'ROUND27 FAIL: ' + fails.join(' | ') : 'ROUND27 PASS')
 await close()

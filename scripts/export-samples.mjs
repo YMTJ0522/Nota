@@ -80,8 +80,12 @@ async function exportAs(label) {
   return { ok: true, len: (data || '').length, data }
 }
 
+/* 落盘的扩展名要如实：PDF 这一路拿到的其实不是 PDF 字节，
+   而是交给 printToPDF 的那份 **HTML 源** —— 主进程里由它生成真 PDF。
+   以前这里直接写成 `.pdf`，外面一 open 就懵（拿 HTML 当 PDF 读）。
+   现在叫 `.pdfsrc.html`，要真 PDF 就再过一遍 scripts/app-pdf.cjs。 */
 const out = {}
-for (const [label, ext] of [['Word', 'doc'], ['PDF', 'pdf'], ['HTML', 'html']]) {
+for (const [label, ext] of [['Word', 'doc'], ['PDF', 'pdfsrc.html'], ['HTML', 'html']]) {
   const r = await exportAs(label)
   if (!r.ok) { out[label] = r; continue }
   writeFileSync(`${OUT}.${ext}`, r.data, 'utf8')

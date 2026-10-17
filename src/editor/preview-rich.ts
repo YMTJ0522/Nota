@@ -1078,7 +1078,12 @@ function mermaidThemeVariables(forceLight = false): Record<string, string> {
      整张图看上去像一堆描边空框。三成半才看得出「这是个有颜色的块」。 */
   const node = mix(P.a, bg, dark ? 0.36 : 0.15)
   const nodeHeavy = mix(P.a, bg, dark ? 0.6 : 0.46)
-  const edge = mix(fgDim, bg, 0.55)
+  /* 连线与箭头归「纸上也要认得出来」那一类，得比装饰线（--n-line）重。
+     浅色这档原来拿 fgDim 兑 0.55，压在 #fbfaf6 上只有 #bdb9b0 ——
+     屏幕上看着还行，打到纸上就是一缕灰雾，连线几乎和纸同色。
+     改成按正文色兑 0.45，落到 #92928f：细，但一眼看得见往哪连。
+     深色那档不动：底本来就暗，fgDim 兑出来已经够亮。 */
+  const edge = dark ? mix(fgDim, bg, 0.55) : mix(fg, bg, 0.45)
 
   /* 字体不能写成 `var(--n-font-ui)`：mermaid 把它塞进 SVG 的 font-family
      属性里，那里没有 CSS 变量这个东西，写什么都认不出来 ——
@@ -1117,13 +1122,13 @@ function mermaidThemeVariables(forceLight = false): Record<string, string> {
     signalColor: edge,
     signalTextColor: fg,
     labelBoxBkgColor: surface,
-    labelBoxBorderColor: line,
+    labelBoxBorderColor: edge,
     labelTextColor: fg,
     loopTextColor: fg,
     /* 便签沿用「便利贴是黄的」这个直觉：琥珀兑开，浅色下更淡一点 */
     noteBkgColor: mix(P.b, bg, dark ? 0.22 : 0.32),
     noteTextColor: fg,
-    noteBorderColor: line,
+    noteBorderColor: edge,
     /* 类图 / 状态图 / 甘特图 */
     classText: fg,
     labelBackground: surface,
@@ -1193,6 +1198,29 @@ function ensureMermaidTheme(forceLight = false) {
   appliedThemeKey = key
 }
 
+/**
+ * xychart 的线条色**不走 themeVariables**，initialize 里给的
+ * `xyChart.plotColorPalette` 在 mermaid 11.17 上实测也吃不动 ——
+ * 配了照样画成内置的 `#FFF4DD` 那一套浅黄，落在白纸上淡得几乎看不出折线。
+ * 与其跟它的配置系统较劲，直接在**输出**上改：折线/柱子的分组类名是
+ * `line-plot-N` / `bar-plot-N`，按序号取色板里对应的一色替换掉。
+ * 折线改 stroke，柱子改 fill（rect 的边框色不动）。
+ */
+function recolorXyChart(svg: string, palette: string[]): string {
+  if (!palette.length) return svg
+  return svg.replace(
+    /<g class="(line|bar)-plot-(\d+)">([\s\S]*?)<\/g>/g,
+    (_m, kind: string, idx: string, body: string) => {
+      const c = palette[Number(idx) % palette.length]
+      const patched =
+        kind === 'line'
+          ? body.replace(/stroke="[^"]*"/g, `stroke="${c}"`)
+          : body.replace(/fill="(?!none)[^"]*"/g, `fill="${c}"`)
+      return `<g class="${kind}-plot-${idx}">${patched}</g>`
+    },
+  )
+}
+
 export async function renderMermaidInHtml(
   root: HTMLElement,
   opts: { asImage?: boolean; light?: boolean } = {},
@@ -1212,11 +1240,18 @@ export async function renderMermaidInHtml(
     return
   }
   let n = 0
+  const palette = Object.values(
+    MERMAID_PALETTE[opts.light ? 'light' : darkMode() ? 'dark' : 'light'],
+  )
   for (const el of Array.from(targets)) {
     const code = el.dataset.graph ?? ''
     if (!code) continue
     try {
-      const { svg } = (await mermaidMod.render(`pv-mmd-${Date.now()}-${n++}`, code)) as { svg: string }
+      const { svg: rawSvg } = (await mermaidMod.render(
+        `pv-mmd-${Date.now()}-${n++}`,
+        code,
+      )) as { svg: string }
+      const svg = recolorXyChart(rawSvg, palette)
       if (opts.asImage) {
         const png = await svgToPng(svg)
         // 光栅化失败就退回 SVG：Word 可能认不出它，但总比把图弄丢好
@@ -1246,7 +1281,7 @@ export async function renderMermaidInHtml(
  * `width="100%"`，`naturalWidth` 拿到的是 0，画出来会是一张空图。
  * 底色铺白 —— Word 里透明 PNG 常常会连内容一起看不见。
  */
-async function svgToPng(svg: string): Promise<string | null> {
+export async function svgToPng(svg: string): Promise<string | null> {
   const vb = /viewBox="([\d.\-\s]+)"/.exec(svg)?.[1]?.trim().split(/[\s,]+/).map(Number)
   let w = vb && vb.length === 4 ? vb[2] : 0
   let h = vb && vb.length === 4 ? vb[3] : 0
