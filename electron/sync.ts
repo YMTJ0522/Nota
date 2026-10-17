@@ -13,6 +13,12 @@
  *     也不悄悄覆盖掉谁的字 —— 笔记丢字是没法原谅的；
  *   · 删除不做同步（没有墓碑记录，贸然删云端太危险），这版先明说。
  *
+ * 速度上的三条底线（2.7.2 重做）：
+ *   · 目录**按需建**，不再只建根目录 —— 子目录缺父集合会让 PUT 直接 404；
+ *   · 传输并发 5 路、列目录并发 4 路，不再一个文件一个来回地串；
+ *   · 传完不再额外发 HEAD 问 Last-Modified（PUT 响应里就有），
+ *     真要问也只问那些没带的。
+ *
  * 状态记在 `<工作区>/.nota-sync/state.json`：每个文件上次同步时
  * 本地的 mtime 与云端的 Last-Modified。它自己不参与同步。
  */
@@ -158,23 +164,54 @@ async function listDir(url: string, cfg: SyncConfig): Promise<RemoteEntry[]> {
   return out
 }
 
-/** 递归建远端目录（逐段 MKCOL；405 = 已存在，不算错） */
-async function ensureRemoteDir(url: string, cfg: SyncConfig) {
-  const base = new URL(baseUrl(cfg))
+/**
+ * 递归建远端目录（逐段 MKCOL；405 / 409 = 已存在，不算错）。
+ *
+ * `made` 是这一轮的缓存：同一轮里几十个文件落在同一个目录下时，
+ * 不该每个文件都重走一遍 MKCOL 链。键用规整过的绝对路径。
+ */
+async function ensureRemoteDir(url: string, cfg: SyncConfig, made: Set<string>) {
   const target = new URL(url)
+  if (made.has(hrefKey(target.toString()))) return
+  const base = new URL(baseUrl(cfg))
   const segs = target.pathname.split('/').filter(Boolean)
   const baseSegs = base.pathname.split('/').filter(Boolean)
   let cur = `${base.protocol}//${base.host}`
   for (let i = 0; i < segs.length; i += 1) {
     cur += '/' + segs[i]
     if (i < baseSegs.length) continue // base 自带的段不用建
-    try {
-      const res = await davFetch(cur + '/', 'MKCOL', cfg)
-      if (!res.ok && res.status !== 405) throw new Error(`建目录失败（${res.status}）`)
-    } catch (e) {
-      if (!String(e).includes('405')) throw e
+    const ck = hrefKey(cur)
+    if (made.has(ck)) continue
+    let res = await davFetch(cur + '/', 'MKCOL', cfg)
+    if (res.status === 409) {
+      // 409 = 父集合还不存在。先补上上一段，再试一次 ——
+      // 只在这一段上重试，不能因为「没建成」就写进 made，
+      // 否则后面的 PUT 撞 404 想自愈时会被这个缓存直接挡住。
+      const parent = cur.slice(0, cur.lastIndexOf('/'))
+      await ensureRemoteDir(parent, cfg, made)
+      res = await davFetch(cur + '/', 'MKCOL', cfg)
     }
+    // 405：服务器把它当成「资源已存在」。其余（401 / 403 / 507）都是真错，得让人看见。
+    if (!res.ok && res.status !== 405) {
+      throw new Error(`建目录 ${ck} 失败（${res.status}）`)
+    }
+    made.add(ck)
   }
+  made.add(hrefKey(target.toString()))
+}
+
+/** 并发跑一批异步任务：上限 n 路，任意一个抛错就整体失败（错误信息更好定位）。 */
+async function pool<T>(items: readonly T[], n: number, fn: (item: T) => Promise<void>) {
+  let cursor = 0
+  const workers = Array.from({ length: Math.max(1, Math.min(n, items.length)) }, async () => {
+    for (;;) {
+      const i = cursor
+      cursor += 1
+      if (i >= items.length) return
+      await fn(items[i])
+    }
+  })
+  await Promise.all(workers)
 }
 
 /* ── 本地遍历 ── */
@@ -242,35 +279,49 @@ export async function testConnection(cfg: SyncConfig): Promise<{ ok: boolean; er
 
 export async function syncWorkspace(root: string, cfg: SyncConfig): Promise<SyncResult> {
   const r: SyncResult = { ok: false, uploaded: 0, downloaded: 0, conflicts: 0, skipped: 0 }
+  /* 这一轮里已经确认存在的远端目录。
+     以前只有根目录会建，子目录从来没建过 —— 本地有 `Docker/xxx.md` 时
+     PUT 到 `笔记/Docker/xxx.md`，服务器找不到父集合，回 404，
+     整轮同步就停在那儿（用户看到的「上传 xx 失败（404）」就是它）。 */
+  const made = new Set<string>()
+  /* 状态要能「边做边记」：一个文件失败不代表前面成功的白干，
+     否则下次重跑会把已经传上去的几十篇再传一遍 —— 也是慢的一大来源。 */
+  let st: SyncState = {}
+  let dirty = false
   try {
-    await ensureRemoteDir(dirUrl(cfg), cfg)
-    const st = await readState(root)
+    await ensureRemoteDir(dirUrl(cfg), cfg, made)
+    st = await readState(root)
     const localFiles = await walkLocal(root)
     const localSet = new Set(localFiles)
 
-    // 远端递归列表：逐个目录 PROPFIND（depth-infinity 很多服务器不支持）
+    // 远端递归列表：逐个目录 PROPFIND（depth-infinity 很多服务器不支持）。
+    // 同一层并发 4 路 —— 串行时每多一层子目录就多等一个来回。
     const remoteFiles = new Map<string, RemoteEntry>()
-    const queue: { url: string; prefix: string }[] = [
-      { url: dirUrl(cfg), prefix: '' },
-    ]
+    let level: { url: string; prefix: string }[] = [{ url: dirUrl(cfg), prefix: '' }]
     let guard = 0
-    while (queue.length && guard++ < 5000) {
-      const { url, prefix } = queue.shift()!
-      const entries = await listDir(url, cfg)
-      // PROPFIND 会连目录自己一起带回来。不认出来的话它会被当成
-      // 「一个同名子目录」再塞回队列 —— 于是无限往下钻，整轮同步卡死。
-      // 比的是规整过的路径（解码 + 去尾斜杠），因为 URL 上那段是编码过的，
-      // 而服务器给的 href 未必编码，两种写法要能认成同一个。
-      const self = hrefKey(url)
-      for (const e of entries) {
-        if (hrefKey(e.href) === self) continue
-        if (e.isDir) {
-          queue.push({ url: `${e.href}/`, prefix: prefix ? `${prefix}/${e.name}` : e.name })
-        } else {
-          const rel = prefix ? `${prefix}/${e.name}` : e.name
-          remoteFiles.set(rel, e)
+    while (level.length && guard++ < 500) {
+      const next: { url: string; prefix: string }[] = []
+      await pool(level, 4, async (job) => {
+        const entries = await listDir(job.url, cfg)
+        // PROPFIND 会连目录自己一起带回来。不认出来的话它会被当成
+        // 「一个同名子目录」再塞回队列 —— 于是无限往下钻，整轮同步卡死。
+        // 比的是规整过的路径（解码 + 去尾斜杠），因为 URL 上那段是编码过的，
+        // 而服务器给的 href 未必编码，两种写法要能认成同一个。
+        const self = hrefKey(job.url)
+        for (const e of entries) {
+          if (hrefKey(e.href) === self) continue
+          if (e.isDir) {
+            next.push({
+              url: `${e.href}/`,
+              prefix: job.prefix ? `${job.prefix}/${e.name}` : e.name,
+            })
+          } else {
+            const rel = job.prefix ? `${job.prefix}/${e.name}` : e.name
+            remoteFiles.set(rel, e)
+          }
         }
-      }
+      })
+      level = next
     }
 
     const stamp = () => {
@@ -279,11 +330,17 @@ export async function syncWorkspace(root: string, cfg: SyncConfig): Promise<Sync
       return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`
     }
 
-    // ① 本地 → 云端
-    for (const rel of localFiles) {
-      const abs = path.join(root, rel)
-      const stat = await fs.stat(abs)
-      const lm = stat.mtimeMs
+    // 先把本地每个文件的 mtime 一次性量完，再决定谁要传 ——
+    // 以前在循环里逐个 stat，跟网络请求混在一起串着等。
+    const locals: { rel: string; lm: number }[] = []
+    await pool(localFiles, 8, async (rel) => {
+      const s = await fs.stat(path.join(root, rel))
+      locals.push({ rel, lm: s.mtimeMs })
+    })
+
+    /* ① 本地 → 云端。决定方向的判断是纯内存的，先算完再并发传。 */
+    const toUpload: { rel: string; lm: number }[] = []
+    for (const { rel, lm } of locals) {
       const rec = st[rel]
       const remote = remoteFiles.get(rel)
       const localChanged = !rec || rec.localMtime !== lm
@@ -298,35 +355,30 @@ export async function syncWorkspace(root: string, cfg: SyncConfig): Promise<Sync
         const ext = path.extname(rel)
         const base = rel.slice(0, rel.length - ext.length)
         const conflictRel = `${base}.conflict-${stamp()}${ext}`
-        await fs.copyFile(abs, path.join(root, conflictRel))
+        await fs.copyFile(path.join(root, rel), path.join(root, conflictRel))
         say(`冲突：${rel} 两边都改过，本地版本留底为 ${path.basename(conflictRel)}`)
         r.conflicts += 1
       }
       if (localChanged || !remote || (rec && remote.mtime <= rec.remoteMtime)) {
-        const bytes = await fs.readFile(abs)
-        const url = `${dirUrl(cfg)}/${rel.split('/').map(encodeURIComponent).join('/')}`
-        // body 必须是二进制视图：直接给 string 会按 utf8 再编一遍，二进制文件必坏
-        const res = await net.fetch(url, {
-          method: 'PUT',
-          headers: {
-            Authorization: authHeader(cfg),
-            'Content-Type': 'application/octet-stream',
-          },
-          body: new Uint8Array(bytes),
-        })
-        if (!res.ok) throw new Error(`上传 ${rel} 失败（${res.status}）`)
-        r.uploaded += 1
-        say(`↑ ${rel}`)
-        const remoteNow = await statRemote(url, cfg)
-        st[rel] = { localMtime: lm, remoteMtime: remoteNow ?? Date.now() }
-        continue
+        toUpload.push({ rel, lm })
+      } else {
+        // 只有远端改过 → 落到 ② 里处理
+        r.skipped += 1
       }
-      // 只有远端改过 → 落到 ② 里处理
-      r.skipped += 1
     }
 
-    // ② 云端 → 本地（本地没有的，或云端更新且本地没动过的）
-    for (const [rel, remote] of remoteFiles) {
+    await pool(toUpload, 5, async ({ rel, lm }) => {
+      const url = `${dirUrl(cfg)}/${rel.split('/').map(encodeURIComponent).join('/')}`
+      const remoteNow = await putFile(root, rel, url, cfg, made)
+      st[rel] = { localMtime: lm, remoteMtime: remoteNow ?? Date.now() }
+      dirty = true
+      r.uploaded += 1
+      say(`↑ ${rel}`)
+    })
+
+    /* ② 云端 → 本地（本地没有的，或云端更新且本地没动过的） */
+    const toDownload: { rel: string; remote: RemoteEntry }[] = []
+    await pool([...remoteFiles], 8, async ([rel, remote]) => {
       const abs = path.join(root, rel)
       const rec = st[rel]
       let lm = 0
@@ -336,32 +388,87 @@ export async function syncWorkspace(root: string, cfg: SyncConfig): Promise<Sync
         /* 本地没有这个文件 */
       }
       const localChanged = rec ? rec.localMtime !== lm : lm > 0
-      if (localSet.has(rel) && !localChanged && remote.mtime <= (rec?.remoteMtime ?? 0)) {
-        continue // ① 里处理过了
-      }
-      if (localSet.has(rel) && localChanged) continue // ① 里已按冲突/上传处理
-      // 下载
+      if (localSet.has(rel) && !localChanged && remote.mtime <= (rec?.remoteMtime ?? 0)) return
+      if (localSet.has(rel) && localChanged) return // ① 里已按冲突/上传处理
+      toDownload.push({ rel, remote })
+    })
+
+    await pool(toDownload, 5, async ({ rel, remote }) => {
+      const abs = path.join(root, rel)
       const url = `${dirUrl(cfg)}/${rel.split('/').map(encodeURIComponent).join('/')}`
       const res = await davFetch(url, 'GET', cfg)
       if (!res.ok) throw new Error(`下载 ${rel} 失败（${res.status}）`)
       const buf = Buffer.from(await res.arrayBuffer())
       await fs.mkdir(path.dirname(abs), { recursive: true })
       await fs.writeFile(abs, buf)
+      st[rel] = { localMtime: (await fs.stat(abs)).mtimeMs, remoteMtime: remote.mtime }
+      dirty = true
       r.downloaded += 1
       say(`↓ ${rel}`)
-      st[rel] = { localMtime: (await fs.stat(abs)).mtimeMs, remoteMtime: remote.mtime }
-    }
+    })
 
-    await writeState(root, st)
     r.ok = true
     return r
   } catch (e) {
     r.error = String(e)
     return r
+  } finally {
+    // 即使中途失败也把已完成的记下来，下一轮不用重传一遍
+    if (dirty) {
+      try {
+        await writeState(root, st)
+      } catch {
+        /* 状态写不进去不该盖掉真正的错误 */
+      }
+    }
   }
 }
 
-/** PUT 之后再问一次 Last-Modified，把状态记准（拿不到就用当下时间兜底） */
+/**
+ * PUT 一个文件。
+ *
+ * 两件以前做得不对的事：
+ *  · **没建父目录** —— 404 的真凶。撞上就补建一次再重试；
+ *  · **传完还额外发一次 HEAD 只为问 Last-Modified** —— 每个文件多半个来回。
+ *    PUT 的响应本身多半就带这个头，直接用；真没有才回退去 HEAD。
+ */
+async function putFile(
+  root: string,
+  rel: string,
+  url: string,
+  cfg: SyncConfig,
+  made: Set<string>,
+): Promise<number | null> {
+  const send = async () => {
+    const bytes = await fs.readFile(path.join(root, rel))
+    return net.fetch(url, {
+      method: 'PUT',
+      headers: {
+        Authorization: authHeader(cfg),
+        'Content-Type': 'application/octet-stream',
+      },
+      // body 必须是二进制视图：直接给 string 会按 utf8 再编一遍，二进制文件必坏
+      body: new Uint8Array(bytes),
+    })
+  }
+
+  let res = await send()
+  if (res.status === 404) {
+    // 父集合还不存在。按 URL 反推出父目录补建，再试一次。
+    const slash = url.lastIndexOf('/')
+    if (slash > 0) {
+      await ensureRemoteDir(url.slice(0, slash), cfg, made)
+      res = await send()
+    }
+  }
+  if (!res.ok) throw new Error(`上传 ${rel} 失败（${res.status}）`)
+
+  const lm = Date.parse(res.headers.get('last-modified') ?? '')
+  if (!Number.isNaN(lm)) return lm
+  return statRemote(url, cfg)
+}
+
+/** 兜底：PUT 响应里没带 Last-Modified 时才单独问一次（不再每个文件都问） */
 async function statRemote(url: string, cfg: SyncConfig): Promise<number | null> {
   try {
     const res = await davFetch(url, 'HEAD', cfg)
