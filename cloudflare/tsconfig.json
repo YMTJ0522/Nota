@@ -1,0 +1,17 @@
+{
+  "//": "Cloudflare 那套单独校验：这里跑的是 Worker 运行时（WebCrypto + D1 + R2），不是浏览器，也不是 Electron。混在主 tsconfig 里会被 DOM 的 fetch 类型和 vite 的类型拖进来，所以单开一份。用法：npx tsc -p cloudflare/tsconfig.json",
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "strict": true,
+    "noUncheckedIndexedAccess": false,
+    "lib": ["ES2022", "DOM"],
+    "types": [],
+    "noEmit": true,
+    "skipLibCheck": true,
+    "isolatedModules": true,
+    "forceConsistentCasingInFileNames": true
+  },
+  "include": ["src/**/*.ts"]
+}

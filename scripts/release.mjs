@@ -58,6 +58,24 @@ const pkg = JSON.parse(raw)
 const current = pkg.version
 const target = NO_BUMP ? current : nextVersion(current, PATCH)
 
+/**
+ * 官网那套（下载文件名、页面上写的版本）用的是 cloudflare/wrangler.toml 里的 VERSION。
+ * 三个地方（package.json / 安装包文件名 / wrangler.toml）靠人记着对齐，一定会漏 ——
+ * 漏了的表现是「官网上写 2.7.3，下载下来是 2.7.2」，而且没人会发现。
+ * 所以打包时顺手把它一起改掉。
+ */
+function syncCloudflareVersion(v) {
+  const tomlPath = path.join(ROOT, 'cloudflare', 'wrangler.toml')
+  if (!fs.existsSync(tomlPath)) return null
+  const toml = fs.readFileSync(tomlPath, 'utf-8')
+  const re = /^VERSION\s*=\s*"[^"]*"/m
+  if (!re.test(toml)) return null
+  const old = (/^VERSION\s*=\s*"([^"]*)"/m.exec(toml) ?? [])[1]
+  if (old === v) return { changed: false, old, next: v }
+  fs.writeFileSync(tomlPath, toml.replace(re, `VERSION = "${v}"`), 'utf-8')
+  return { changed: true, old, next: v }
+}
+
 console.log(`\n当前版本：${current}`)
 console.log(NO_BUMP ? '按 --no-bump，沿用当前版本' : `新版本：  ${target}${PATCH ? '（--patch 修订号）' : ''}`)
 
@@ -124,6 +142,7 @@ async function main() {
   if (DRY) {
     console.log('\n[dry-run] 将要执行：')
     console.log(`  - 版本 ${current} → ${target}`)
+    console.log('  - 同步 cloudflare/wrangler.toml 的 VERSION（官网与下载文件名用）')
     console.log('  - 清空 release/ 下所有 .exe / .blockmap / .yml（保留 win-unpacked）')
     console.log('  - 清空 dist/')
     console.log('  - npm run build')
@@ -137,6 +156,9 @@ async function main() {
     fs.writeFileSync(PKG, `${JSON.stringify(pkg, null, 2)}\n`, 'utf-8')
     console.log(`✓ package.json 已更新为 ${target}`)
   }
+
+  const cfv = syncCloudflareVersion(pkg.version)
+  if (cfv?.changed) console.log(`✓ cloudflare/wrangler.toml 的 VERSION ${cfv.old} → ${cfv.next}`)
 
   const removed = cleanRelease()
   if (removed.length) {
