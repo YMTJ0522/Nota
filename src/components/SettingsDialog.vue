@@ -60,6 +60,16 @@ const SECTIONS: { id: SectionId; label: string; icon: unknown }[] = [
 const section = ref<SectionId>('general')
 const current = computed(() => SECTIONS.find((s) => s.id === section.value)!)
 
+/**
+ * 换分区时把内容区拨回顶部。
+ * 上一页滚到一半，下一页会接在那个位置上 —— 尤其是从「关于」那种长页
+ * 切回「通用」这种短页，一进来就是中间那一截，看着像点错了。
+ */
+const bodyEl = ref<HTMLElement | null>(null)
+function resetScroll() {
+  if (bodyEl.value) bodyEl.value.scrollTop = 0
+}
+
 /** 外部（工具栏 AI 菜单、聊天页的设置按钮）指定分区时跟过去 */
 watch(
   () => [props.open, props.section] as const,
@@ -299,673 +309,680 @@ async function changeWorkspace() {
             </button>
           </header>
 
-          <div class="st-body">
-            <!-- ══ 通用 ══ -->
-            <template v-if="section === 'general'">
-              <div class="st-row">
-                <div class="st-label">
-                  <span class="st-name">工作区</span>
-                  <span class="st-desc" :title="state.root ?? ''">
-                    {{ rootTail || '尚未选择目录' }}
-                  </span>
+          <div ref="bodyEl" class="st-body">
+            <!-- 换分区：旧的一页先淡出，新的再淡入（mode="out-in"）。
+                 不做重叠是因为各页高度差得多，叠在一起会先被拉长再回弹，
+                 比直接硬切还难看。 -->
+            <Transition name="st-swap" mode="out-in" @enter="resetScroll">
+              <div :key="section" class="st-sec">
+              <!-- ══ 通用 ══ -->
+              <template v-if="section === 'general'">
+                <div class="st-row">
+                  <div class="st-label">
+                    <span class="st-name">工作区</span>
+                    <span class="st-desc" :title="state.root ?? ''">
+                      {{ rootTail || '尚未选择目录' }}
+                    </span>
+                  </div>
+                  <button class="st-btn" @click="changeWorkspace">更换目录</button>
                 </div>
-                <button class="st-btn" @click="changeWorkspace">更换目录</button>
-              </div>
 
-              <div class="st-row">
-                <div class="st-label">
-                  <span class="st-name">笔记数量</span>
-                  <span class="st-desc">当前工作区里所有 .md 文件</span>
+                <div class="st-row">
+                  <div class="st-label">
+                    <span class="st-name">笔记数量</span>
+                    <span class="st-desc">当前工作区里所有 .md 文件</span>
+                  </div>
+                  <span class="st-value">{{ store.allFiles.value.length }}</span>
                 </div>
-                <span class="st-value">{{ store.allFiles.value.length }}</span>
-              </div>
 
-              <div class="st-row">
-                <div class="st-label">
-                  <span class="st-name">默认视图</span>
-                  <span class="st-desc">打开笔记时的初始模式，也可用 Ctrl+1 / 2 / 3 随时切换</span>
-                </div>
-                <div class="st-seg" role="radiogroup" aria-label="默认视图">
-                  <button
-                    v-for="v in VIEWS"
-                    :key="v.id"
-                    class="st-seg-btn"
-                    role="radio"
-                    :aria-checked="state.viewMode === v.id"
-                    :class="{ on: state.viewMode === v.id }"
-                    @click="store.setViewMode(v.id)"
-                  >
-                    <component :is="v.icon" :size="13" :stroke-width="1.9" /><span>{{ v.label }}</span>
-                  </button>
-                </div>
-              </div>
-
-              <div class="st-row">
-                <div class="st-label">
-                  <span class="st-name">自动保存</span>
-                  <span class="st-desc">停止输入 600ms 后自动写入磁盘</span>
-                </div>
-                <button
-                  class="st-switch"
-                  role="switch"
-                  :aria-checked="state.autoSave"
-                  :class="{ on: state.autoSave }"
-                  @click="store.setAutoSave(!state.autoSave)"
-                >
-                  <span class="st-knob" />
-                </button>
-              </div>
-
-              <div class="st-row">
-                <div class="st-label">
-                  <span class="st-name">显示侧边栏</span>
-                  <span class="st-desc">左侧的资料库导航，也可用 Ctrl+\ 折叠</span>
-                </div>
-                <button
-                  class="st-switch"
-                  role="switch"
-                  :aria-checked="state.sidebar"
-                  :class="{ on: state.sidebar }"
-                  @click="store.toggleSidebar()"
-                >
-                  <span class="st-knob" />
-                </button>
-              </div>
-            </template>
-
-            <!-- ══ 外观 ══ -->
-            <template v-else-if="section === 'appearance'">
-              <div class="st-row">
-                <div class="st-label">
-                  <span class="st-name">主题</span>
-                  <span class="st-desc">浅色适合白天，深色适合夜间写作</span>
-                </div>
-                <div class="st-seg" role="radiogroup" aria-label="主题">
-                  <button
-                    class="st-seg-btn"
-                    role="radio"
-                    :aria-checked="state.theme === 'light'"
-                    :class="{ on: state.theme === 'light' }"
-                    @click="store.setTheme('light')"
-                  >
-                    <Sun :size="13" :stroke-width="1.9" /><span>浅色</span>
-                  </button>
-                  <button
-                    class="st-seg-btn"
-                    role="radio"
-                    :aria-checked="state.theme === 'dark'"
-                    :class="{ on: state.theme === 'dark' }"
-                    @click="store.setTheme('dark')"
-                  >
-                    <Moon :size="13" :stroke-width="1.9" /><span>深色</span>
-                  </button>
-                </div>
-              </div>
-
-              <div class="st-row">
-                <div class="st-label">
-                  <span class="st-name">强调色</span>
-                  <span class="st-desc">
-                    作用于链接、选中、按钮等所有强调元素；浅色底和深色底各有一套取值
-                  </span>
-                </div>
-                <div class="st-swatches" role="radiogroup" aria-label="强调色">
-                  <button
-                    v-for="a in ACCENTS"
-                    :key="a.id"
-                    class="st-swatch"
-                    role="radio"
-                    :aria-checked="state.accent === a.id"
-                    :class="{ on: state.accent === a.id }"
-                    :title="a.label"
-                    :style="{ '--swatch-c': swatchOf(a.id) }"
-                    @click="store.setAccent(a.id)"
-                  >
-                    <span
-                      class="st-swatch-dot"
-                      :style="{ background: swatchOf(a.id) }"
-                    />
-                  </button>
-                </div>
-              </div>
-
-              <div class="st-row">
-                <div class="st-label">
-                  <span class="st-name">画布底纹</span>
-                  <span class="st-desc">纸张更接近实体本子，纯色更干净</span>
-                </div>
-                <div class="st-seg" role="radiogroup" aria-label="画布底纹">
-                  <button
-                    v-for="b in BG_STYLES"
-                    :key="b.id"
-                    class="st-seg-btn"
-                    role="radio"
-                    :aria-checked="state.bg === b.id"
-                    :class="{ on: state.bg === b.id }"
-                    @click="store.setPrefs({ bg: b.id as BgStyle })"
-                  >
-                    <span>{{ b.label }}</span>
-                  </button>
-                </div>
-              </div>
-
-              <div class="st-row">
-                <div class="st-label">
-                  <span class="st-name">界面密度</span>
-                  <span class="st-desc">影响侧边栏与列表的行距，紧凑模式一屏能多放几行</span>
-                </div>
-                <div class="st-seg" role="radiogroup" aria-label="界面密度">
-                  <button
-                    v-for="d in DENSITY"
-                    :key="d.id"
-                    class="st-seg-btn"
-                    role="radio"
-                    :aria-checked="state.density === d.id"
-                    :class="{ on: state.density === d.id }"
-                    @click="store.setPrefs({ density: d.id as Density })"
-                  >
-                    <span>{{ d.label }}</span>
-                  </button>
-                </div>
-              </div>
-            </template>
-
-            <!-- ══ 编辑 ══ -->
-            <template v-else-if="section === 'editor'">
-              <div class="st-row">
-                <div class="st-label">
-                  <span class="st-name">正文栏宽</span>
-                  <span class="st-desc">限制一行的最大宽度，读长句时眼睛不用横扫太远</span>
-                </div>
-                <div class="st-seg" role="radiogroup" aria-label="正文栏宽">
-                  <button
-                    v-for="m in MEASURES"
-                    :key="m.id"
-                    class="st-seg-btn"
-                    role="radio"
-                    :aria-checked="state.measure === m.id"
-                    :class="{ on: state.measure === m.id }"
-                    @click="store.setPrefs({ measure: m.id as MeasureName })"
-                  >
-                    <span>{{ m.label }}</span>
-                  </button>
-                </div>
-              </div>
-
-              <div class="st-row">
-                <div class="st-label">
-                  <span class="st-name">正文字号</span>
-                  <span class="st-desc">{{ state.fontSize }} px</span>
-                </div>
-                <input
-                  class="st-range"
-                  type="range"
-                  min="13"
-                  max="19"
-                  step="1"
-                  :value="state.fontSize"
-                  @input="store.setPrefs({ fontSize: Number(($event.target as HTMLInputElement).value) })"
-                />
-              </div>
-
-              <div class="st-row">
-                <div class="st-label">
-                  <span class="st-name">行高</span>
-                  <span class="st-desc">{{ state.lineHeight.toFixed(2) }} — 写长文时 1.8 更舒服</span>
-                </div>
-                <input
-                  class="st-range"
-                  type="range"
-                  min="1.5"
-                  max="2.2"
-                  step="0.05"
-                  :value="state.lineHeight"
-                  @input="store.setPrefs({ lineHeight: Number(($event.target as HTMLInputElement).value) })"
-                />
-              </div>
-
-              <div class="st-row">
-                <div class="st-label">
-                  <span class="st-name">自动换行</span>
-                  <span class="st-desc">长行折回来显示；关掉后横向滚动，适合看表格和长代码块</span>
-                </div>
-                <button
-                  class="st-switch"
-                  role="switch"
-                  :aria-checked="state.lineWrap"
-                  :class="{ on: state.lineWrap }"
-                  @click="store.setPrefs({ lineWrap: !state.lineWrap })"
-                >
-                  <span class="st-knob" />
-                </button>
-              </div>
-
-              <div class="st-row">
-                <div class="st-label">
-                  <span class="st-name">显示行号</span>
-                  <span class="st-desc">编辑器左侧的装订线</span>
-                </div>
-                <button
-                  class="st-switch"
-                  role="switch"
-                  :aria-checked="state.lineNumbers"
-                  :class="{ on: state.lineNumbers }"
-                  @click="store.setPrefs({ lineNumbers: !state.lineNumbers })"
-                >
-                  <span class="st-knob" />
-                </button>
-              </div>
-
-              <div class="st-row">
-                <div class="st-label">
-                  <span class="st-name">显示大纲</span>
-                  <span class="st-desc">资料栏里的「大纲」页签</span>
-                </div>
-                <button
-                  class="st-switch"
-                  role="switch"
-                  :aria-checked="state.outline"
-                  :class="{ on: state.outline }"
-                  @click="store.toggleOutline()"
-                >
-                  <span class="st-knob" />
-                </button>
-              </div>
-            </template>
-
-            <!-- ══ AI 编写 ══
-                 全部按「一行一项」排：左边说清楚这是什么，右边放控件，
-                 输入框统一宽度，让它们在同一条竖线上对齐。 -->
-            <template v-else-if="section === 'ai'">
-              <div class="st-row">
-                <div class="st-label">
-                  <span class="st-name">启用 AI 编写</span>
-                  <span class="st-desc">关掉之后侧边栏不再出现「AI 编写」入口</span>
-                </div>
-                <button
-                  class="st-switch"
-                  role="switch"
-                  :aria-checked="state.ai.enabled"
-                  :class="{ on: state.ai.enabled }"
-                  @click="store.setAiConfig({ enabled: !state.ai.enabled })"
-                >
-                  <span class="st-knob" />
-                </button>
-              </div>
-
-              <div class="st-row">
-                <div class="st-label">
-                  <span class="st-name">服务商预设</span>
-                  <span class="st-desc">都是 OpenAI 兼容接口；本机跑模型选 Ollama 或 LM Studio</span>
-                </div>
-                <!-- 预设用自绘下拉：原生 select 一展开就是一屏系统样式的
-                     蓝色选中块，跟这个界面不是一套东西 -->
-                <div class="st-drop">
-                  <button
-                    class="n-select st-select"
-                    data-role="preset-select"
-                    :class="{ on: presetOpen }"
-                    :aria-expanded="presetOpen"
-                    @click="presetOpen = !presetOpen"
-                  >
-                    <span class="n-select-name">{{ presetLabel }}</span>
-                    <ChevronDown class="n-select-caret" :size="12" :stroke-width="2" />
-                  </button>
-                  <div v-if="presetOpen" class="n-menu n-menu-inline st-drop-menu">
+                <div class="st-row">
+                  <div class="st-label">
+                    <span class="st-name">默认视图</span>
+                    <span class="st-desc">打开笔记时的初始模式，也可用 Ctrl+1 / 2 / 3 随时切换</span>
+                  </div>
+                  <div class="st-seg" role="radiogroup" aria-label="默认视图">
                     <button
-                      class="n-menu-item"
-                      :class="{ on: !presetIndex }"
-                      data-preset="自定义"
-                      @click="pickPreset(-1)"
+                      v-for="v in VIEWS"
+                      :key="v.id"
+                      class="st-seg-btn"
+                      role="radio"
+                      :aria-checked="state.viewMode === v.id"
+                      :class="{ on: state.viewMode === v.id }"
+                      @click="store.setViewMode(v.id)"
                     >
-                      <span class="n-menu-name">自定义…</span>
-                      <Check v-if="!presetIndex" :size="12" :stroke-width="2.2" />
-                    </button>
-                    <button
-                      v-for="(p, i) in AI_PRESETS"
-                      :key="p.label"
-                      class="n-menu-item"
-                      :class="{ on: presetIndex === i + 1 }"
-                      :data-preset="p.label"
-                      @click="pickPreset(i)"
-                    >
-                      <span class="n-menu-name">{{ p.label }}</span>
-                      <Check v-if="presetIndex === i + 1" :size="12" :stroke-width="2.2" />
+                      <component :is="v.icon" :size="13" :stroke-width="1.9" /><span>{{ v.label }}</span>
                     </button>
                   </div>
                 </div>
-              </div>
 
-              <div class="st-row">
-                <div class="st-label">
-                  <span class="st-name">接口地址</span>
-                  <span class="st-desc">末尾不要带 /chat/completions，程序会自动拼</span>
-                </div>
-                <div class="st-field">
-                  <Link2 class="st-field-ico" :size="13" :stroke-width="1.9" />
-                  <input
-                    ref="urlInput"
-                    v-model="state.ai.baseUrl"
-                    class="st-input"
-                    type="text"
-                    placeholder="http://localhost:11434/v1"
-                    spellcheck="false"
-                  />
-                </div>
-              </div>
-
-              <div class="st-row">
-                <div class="st-label">
-                  <span class="st-name">API Key</span>
-                  <span class="st-desc">存在本机 localStorage，不会随笔记上传；本地模型可留空</span>
-                </div>
-                <div class="st-field">
-                  <KeyRound class="st-field-ico" :size="13" :stroke-width="1.9" />
-                  <input
-                    v-model="state.ai.apiKey"
-                    class="st-input"
-                    :type="showKey ? 'text' : 'password'"
-                    placeholder="留空则不发送鉴权头"
-                    spellcheck="false"
-                  />
+                <div class="st-row">
+                  <div class="st-label">
+                    <span class="st-name">自动保存</span>
+                    <span class="st-desc">停止输入 600ms 后自动写入磁盘</span>
+                  </div>
                   <button
-                    class="st-eye"
-                    :title="showKey ? '隐藏' : '显示'"
-                    @click="showKey = !showKey"
+                    class="st-switch"
+                    role="switch"
+                    :aria-checked="state.autoSave"
+                    :class="{ on: state.autoSave }"
+                    @click="store.setAutoSave(!state.autoSave)"
                   >
-                    <EyeOff v-if="showKey" :size="13" :stroke-width="1.9" />
-                    <Eye v-else :size="13" :stroke-width="1.9" />
+                    <span class="st-knob" />
                   </button>
                 </div>
-              </div>
 
-              <div class="st-row">
-                <div class="st-label">
-                  <span class="st-name">模型名称</span>
-                  <span class="st-desc">填服务商文档里写的那个名字，区分大小写</span>
-                </div>
-                <div class="st-field">
-                  <Server class="st-field-ico" :size="13" :stroke-width="1.9" />
-                  <input
-                    v-model="state.ai.model"
-                    class="st-input"
-                    type="text"
-                    placeholder="llama3.2"
-                    spellcheck="false"
-                  />
+                <div class="st-row">
+                  <div class="st-label">
+                    <span class="st-name">显示侧边栏</span>
+                    <span class="st-desc">左侧的资料库导航，也可用 Ctrl+\ 折叠</span>
+                  </div>
                   <button
-                    v-if="testModels.length"
-                    class="st-mini-btn"
-                    @click="showModels = !showModels"
+                    class="st-switch"
+                    role="switch"
+                    :aria-checked="state.sidebar"
+                    :class="{ on: state.sidebar }"
+                    @click="store.toggleSidebar()"
                   >
-                    {{ showModels ? '收起' : `可选 ${testModels.length} 个` }}
+                    <span class="st-knob" />
                   </button>
                 </div>
-              </div>
+              </template>
 
-              <div v-if="showModels && testModels.length" class="st-row st-row-sub">
-                <div class="st-label">
-                  <span class="st-name">可用模型</span>
-                  <span class="st-desc">点一下即填入上方输入框</span>
+              <!-- ══ 外观 ══ -->
+              <template v-else-if="section === 'appearance'">
+                <div class="st-row">
+                  <div class="st-label">
+                    <span class="st-name">主题</span>
+                    <span class="st-desc">浅色适合白天，深色适合夜间写作</span>
+                  </div>
+                  <div class="st-seg" role="radiogroup" aria-label="主题">
+                    <button
+                      class="st-seg-btn"
+                      role="radio"
+                      :aria-checked="state.theme === 'light'"
+                      :class="{ on: state.theme === 'light' }"
+                      @click="store.setTheme('light')"
+                    >
+                      <Sun :size="13" :stroke-width="1.9" /><span>浅色</span>
+                    </button>
+                    <button
+                      class="st-seg-btn"
+                      role="radio"
+                      :aria-checked="state.theme === 'dark'"
+                      :class="{ on: state.theme === 'dark' }"
+                      @click="store.setTheme('dark')"
+                    >
+                      <Moon :size="13" :stroke-width="1.9" /><span>深色</span>
+                    </button>
+                  </div>
                 </div>
-                <div class="st-chips">
+
+                <div class="st-row">
+                  <div class="st-label">
+                    <span class="st-name">强调色</span>
+                    <span class="st-desc">
+                      作用于链接、选中、按钮等所有强调元素；浅色底和深色底各有一套取值
+                    </span>
+                  </div>
+                  <div class="st-swatches" role="radiogroup" aria-label="强调色">
+                    <button
+                      v-for="a in ACCENTS"
+                      :key="a.id"
+                      class="st-swatch"
+                      role="radio"
+                      :aria-checked="state.accent === a.id"
+                      :class="{ on: state.accent === a.id }"
+                      :title="a.label"
+                      :style="{ '--swatch-c': swatchOf(a.id) }"
+                      @click="store.setAccent(a.id)"
+                    >
+                      <span
+                        class="st-swatch-dot"
+                        :style="{ background: swatchOf(a.id) }"
+                      />
+                    </button>
+                  </div>
+                </div>
+
+                <div class="st-row">
+                  <div class="st-label">
+                    <span class="st-name">画布底纹</span>
+                    <span class="st-desc">纸张更接近实体本子，纯色更干净</span>
+                  </div>
+                  <div class="st-seg" role="radiogroup" aria-label="画布底纹">
+                    <button
+                      v-for="b in BG_STYLES"
+                      :key="b.id"
+                      class="st-seg-btn"
+                      role="radio"
+                      :aria-checked="state.bg === b.id"
+                      :class="{ on: state.bg === b.id }"
+                      @click="store.setPrefs({ bg: b.id as BgStyle })"
+                    >
+                      <span>{{ b.label }}</span>
+                    </button>
+                  </div>
+                </div>
+
+                <div class="st-row">
+                  <div class="st-label">
+                    <span class="st-name">界面密度</span>
+                    <span class="st-desc">影响侧边栏与列表的行距，紧凑模式一屏能多放几行</span>
+                  </div>
+                  <div class="st-seg" role="radiogroup" aria-label="界面密度">
+                    <button
+                      v-for="d in DENSITY"
+                      :key="d.id"
+                      class="st-seg-btn"
+                      role="radio"
+                      :aria-checked="state.density === d.id"
+                      :class="{ on: state.density === d.id }"
+                      @click="store.setPrefs({ density: d.id as Density })"
+                    >
+                      <span>{{ d.label }}</span>
+                    </button>
+                  </div>
+                </div>
+              </template>
+
+              <!-- ══ 编辑 ══ -->
+              <template v-else-if="section === 'editor'">
+                <div class="st-row">
+                  <div class="st-label">
+                    <span class="st-name">正文栏宽</span>
+                    <span class="st-desc">限制一行的最大宽度，读长句时眼睛不用横扫太远</span>
+                  </div>
+                  <div class="st-seg" role="radiogroup" aria-label="正文栏宽">
+                    <button
+                      v-for="m in MEASURES"
+                      :key="m.id"
+                      class="st-seg-btn"
+                      role="radio"
+                      :aria-checked="state.measure === m.id"
+                      :class="{ on: state.measure === m.id }"
+                      @click="store.setPrefs({ measure: m.id as MeasureName })"
+                    >
+                      <span>{{ m.label }}</span>
+                    </button>
+                  </div>
+                </div>
+
+                <div class="st-row">
+                  <div class="st-label">
+                    <span class="st-name">正文字号</span>
+                    <span class="st-desc">{{ state.fontSize }} px</span>
+                  </div>
+                  <input
+                    class="st-range"
+                    type="range"
+                    min="13"
+                    max="19"
+                    step="1"
+                    :value="state.fontSize"
+                    @input="store.setPrefs({ fontSize: Number(($event.target as HTMLInputElement).value) })"
+                  />
+                </div>
+
+                <div class="st-row">
+                  <div class="st-label">
+                    <span class="st-name">行高</span>
+                    <span class="st-desc">{{ state.lineHeight.toFixed(2) }} — 写长文时 1.8 更舒服</span>
+                  </div>
+                  <input
+                    class="st-range"
+                    type="range"
+                    min="1.5"
+                    max="2.2"
+                    step="0.05"
+                    :value="state.lineHeight"
+                    @input="store.setPrefs({ lineHeight: Number(($event.target as HTMLInputElement).value) })"
+                  />
+                </div>
+
+                <div class="st-row">
+                  <div class="st-label">
+                    <span class="st-name">自动换行</span>
+                    <span class="st-desc">长行折回来显示；关掉后横向滚动，适合看表格和长代码块</span>
+                  </div>
                   <button
-                    v-for="m in testModels"
-                    :key="m"
-                    class="st-chip"
-                    :class="{ on: state.ai.model === m }"
-                    @click="state.ai.model = m"
+                    class="st-switch"
+                    role="switch"
+                    :aria-checked="state.lineWrap"
+                    :class="{ on: state.lineWrap }"
+                    @click="store.setPrefs({ lineWrap: !state.lineWrap })"
                   >
-                    {{ m }}
+                    <span class="st-knob" />
                   </button>
                 </div>
-              </div>
 
-              <div class="st-row">
-                <div class="st-label">
-                  <span class="st-name">温度</span>
-                  <span class="st-desc">
-                    {{ state.ai.temperature.toFixed(1) }} — 越高越发散，写作建议 0.6~0.8
-                  </span>
-                </div>
-                <input
-                  v-model.number="state.ai.temperature"
-                  class="st-range"
-                  type="range"
-                  min="0"
-                  max="1"
-                  step="0.1"
-                />
-              </div>
-
-              <div class="st-row">
-                <div class="st-label">
-                  <span class="st-name">系统提示词</span>
-                  <span class="st-desc">每次请求都会带上，用来约束语气和语言</span>
-                </div>
-                <textarea
-                  v-model="state.ai.system"
-                  class="st-textarea"
-                  rows="3"
-                  spellcheck="false"
-                />
-              </div>
-
-              <div class="st-row st-row-last">
-                <div class="st-label">
-                  <span class="st-name">测试连接</span>
-                  <span
-                    class="st-desc"
-                    :class="{ 'is-ok': testResult?.ok, 'is-bad': testResult && !testResult.ok }"
+                <div class="st-row">
+                  <div class="st-label">
+                    <span class="st-name">显示行号</span>
+                    <span class="st-desc">编辑器左侧的装订线</span>
+                  </div>
+                  <button
+                    class="st-switch"
+                    role="switch"
+                    :aria-checked="state.lineNumbers"
+                    :class="{ on: state.lineNumbers }"
+                    @click="store.setPrefs({ lineNumbers: !state.lineNumbers })"
                   >
-                    {{ testResult ? testResult.text : '会去拉一次 /models 列表' }}
-                  </span>
+                    <span class="st-knob" />
+                  </button>
                 </div>
-                <button class="st-btn" :disabled="testing" @click="testConnection">
-                  <Loader2 v-if="testing" class="spin" :size="13" :stroke-width="2" />
-                  <span>{{ testing ? '测试中…' : '测试连接' }}</span>
-                </button>
-              </div>
-            </template>
 
-            <!-- ══ 云同步 ══
-                 WebDAV 一条协议覆盖坚果云 / InfiniCloud / 群晖 / Nextcloud。
-                 密码是各家的「应用密码」而不是登录密码（坚果云在网页端
-                 安全选项里生成），存在本机 localStorage，不随笔记上传。 -->
-            <template v-else-if="section === 'sync'">
-              <div class="st-row">
-                <div class="st-label">
-                  <span class="st-name">服务器地址</span>
-                  <span class="st-desc">坚果云填 https://dav.jianguoyun.com/dav/ 就行</span>
-                </div>
-                <div class="st-field">
-                  <Cloud class="st-field-ico" :size="13" :stroke-width="1.9" />
-                  <input
-                    v-model="state.sync.config.url"
-                    class="st-input"
-                    type="text"
-                    placeholder="https://dav.jianguoyun.com/dav/"
-                    spellcheck="false"
-                    @change="store.setSyncConfig({ url: state.sync.config.url })"
-                  />
-                </div>
-              </div>
-
-              <div class="st-row">
-                <div class="st-label">
-                  <span class="st-name">账号</span>
-                  <span class="st-desc">坚果云是注册邮箱</span>
-                </div>
-                <div class="st-field">
-                  <input
-                    v-model="state.sync.config.username"
-                    class="st-input"
-                    type="text"
-                    placeholder="you@example.com"
-                    spellcheck="false"
-                    @change="store.setSyncConfig({ username: state.sync.config.username })"
-                  />
-                </div>
-              </div>
-
-              <div class="st-row">
-                <div class="st-label">
-                  <span class="st-name">应用密码</span>
-                  <span class="st-desc">在服务商网页端生成；存本机，不随笔记上传</span>
-                </div>
-                <div class="st-field">
-                  <input
-                    v-model="state.sync.config.password"
-                    class="st-input"
-                    type="password"
-                    placeholder="••••••••"
-                    spellcheck="false"
-                    @change="store.setSyncConfig({ password: state.sync.config.password })"
-                  />
-                </div>
-              </div>
-
-              <div class="st-row">
-                <div class="st-label">
-                  <span class="st-name">云端目录</span>
-                  <span class="st-desc">默认用工作区文件夹的名字；没有会自动创建</span>
-                </div>
-                <div class="st-field">
-                  <input
-                    v-model="state.sync.config.dir"
-                    class="st-input"
-                    type="text"
-                    :placeholder="workspaceDirName"
-                    spellcheck="false"
-                    @change="store.setSyncConfig({ dir: state.sync.config.dir })"
-                  />
-                </div>
-              </div>
-
-              <div class="st-row">
-                <div class="st-label">
-                  <span class="st-name">自动同步</span>
-                  <span class="st-desc">打开应用时和每 10 分钟各同步一轮（当前：{{ state.sync.config.auto ? '开' : '关' }}）</span>
-                </div>
-                <button
-                  class="st-switch"
-                  role="switch"
-                  :aria-checked="state.sync.config.auto"
-                  :class="{ on: state.sync.config.auto }"
-                  @click="store.setSyncConfig({ auto: !state.sync.config.auto })"
-                >
-                  <span class="st-knob" />
-                </button>
-              </div>
-
-              <div class="st-row st-row-last">
-                <div class="st-label">
-                  <span class="st-name">立即同步</span>
-                  <span
-                    class="st-desc"
-                    :class="{ 'is-ok': state.sync.status === 'ok', 'is-bad': state.sync.status === 'error' }"
+                <div class="st-row">
+                  <div class="st-label">
+                    <span class="st-name">显示大纲</span>
+                    <span class="st-desc">资料栏里的「大纲」页签</span>
+                  </div>
+                  <button
+                    class="st-switch"
+                    role="switch"
+                    :aria-checked="state.outline"
+                    :class="{ on: state.outline }"
+                    @click="store.toggleOutline()"
                   >
-                    {{ state.sync.message || '上传 / 下载两边改过的文件；冲突会留底不覆盖' }}
-                  </span>
+                    <span class="st-knob" />
+                  </button>
                 </div>
-                <button class="st-btn" :disabled="state.sync.status === 'busy'" @click="store.runSync()">
-                  <RefreshCw
-                    class="spin"
-                    :class="{ 'is-spinning': state.sync.status === 'busy' }"
-                    :size="13"
-                    :stroke-width="2"
+              </template>
+
+              <!-- ══ AI 编写 ══
+                   全部按「一行一项」排：左边说清楚这是什么，右边放控件，
+                   输入框统一宽度，让它们在同一条竖线上对齐。 -->
+              <template v-else-if="section === 'ai'">
+                <div class="st-row">
+                  <div class="st-label">
+                    <span class="st-name">启用 AI 编写</span>
+                    <span class="st-desc">关掉之后侧边栏不再出现「AI 编写」入口</span>
+                  </div>
+                  <button
+                    class="st-switch"
+                    role="switch"
+                    :aria-checked="state.ai.enabled"
+                    :class="{ on: state.ai.enabled }"
+                    @click="store.setAiConfig({ enabled: !state.ai.enabled })"
+                  >
+                    <span class="st-knob" />
+                  </button>
+                </div>
+
+                <div class="st-row">
+                  <div class="st-label">
+                    <span class="st-name">服务商预设</span>
+                    <span class="st-desc">都是 OpenAI 兼容接口；本机跑模型选 Ollama 或 LM Studio</span>
+                  </div>
+                  <!-- 预设用自绘下拉：原生 select 一展开就是一屏系统样式的
+                       蓝色选中块，跟这个界面不是一套东西 -->
+                  <div class="st-drop">
+                    <button
+                      class="n-select st-select"
+                      data-role="preset-select"
+                      :class="{ on: presetOpen }"
+                      :aria-expanded="presetOpen"
+                      @click="presetOpen = !presetOpen"
+                    >
+                      <span class="n-select-name">{{ presetLabel }}</span>
+                      <ChevronDown class="n-select-caret" :size="12" :stroke-width="2" />
+                    </button>
+                    <div v-if="presetOpen" class="n-menu n-menu-inline st-drop-menu">
+                      <button
+                        class="n-menu-item"
+                        :class="{ on: !presetIndex }"
+                        data-preset="自定义"
+                        @click="pickPreset(-1)"
+                      >
+                        <span class="n-menu-name">自定义…</span>
+                        <Check v-if="!presetIndex" :size="12" :stroke-width="2.2" />
+                      </button>
+                      <button
+                        v-for="(p, i) in AI_PRESETS"
+                        :key="p.label"
+                        class="n-menu-item"
+                        :class="{ on: presetIndex === i + 1 }"
+                        :data-preset="p.label"
+                        @click="pickPreset(i)"
+                      >
+                        <span class="n-menu-name">{{ p.label }}</span>
+                        <Check v-if="presetIndex === i + 1" :size="12" :stroke-width="2.2" />
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="st-row">
+                  <div class="st-label">
+                    <span class="st-name">接口地址</span>
+                    <span class="st-desc">末尾不要带 /chat/completions，程序会自动拼</span>
+                  </div>
+                  <div class="st-field">
+                    <Link2 class="st-field-ico" :size="13" :stroke-width="1.9" />
+                    <input
+                      ref="urlInput"
+                      v-model="state.ai.baseUrl"
+                      class="st-input"
+                      type="text"
+                      placeholder="http://localhost:11434/v1"
+                      spellcheck="false"
+                    />
+                  </div>
+                </div>
+
+                <div class="st-row">
+                  <div class="st-label">
+                    <span class="st-name">API Key</span>
+                    <span class="st-desc">存在本机 localStorage，不会随笔记上传；本地模型可留空</span>
+                  </div>
+                  <div class="st-field">
+                    <KeyRound class="st-field-ico" :size="13" :stroke-width="1.9" />
+                    <input
+                      v-model="state.ai.apiKey"
+                      class="st-input"
+                      :type="showKey ? 'text' : 'password'"
+                      placeholder="留空则不发送鉴权头"
+                      spellcheck="false"
+                    />
+                    <button
+                      class="st-eye"
+                      :title="showKey ? '隐藏' : '显示'"
+                      @click="showKey = !showKey"
+                    >
+                      <EyeOff v-if="showKey" :size="13" :stroke-width="1.9" />
+                      <Eye v-else :size="13" :stroke-width="1.9" />
+                    </button>
+                  </div>
+                </div>
+
+                <div class="st-row">
+                  <div class="st-label">
+                    <span class="st-name">模型名称</span>
+                    <span class="st-desc">填服务商文档里写的那个名字，区分大小写</span>
+                  </div>
+                  <div class="st-field">
+                    <Server class="st-field-ico" :size="13" :stroke-width="1.9" />
+                    <input
+                      v-model="state.ai.model"
+                      class="st-input"
+                      type="text"
+                      placeholder="llama3.2"
+                      spellcheck="false"
+                    />
+                    <button
+                      v-if="testModels.length"
+                      class="st-mini-btn"
+                      @click="showModels = !showModels"
+                    >
+                      {{ showModels ? '收起' : `可选 ${testModels.length} 个` }}
+                    </button>
+                  </div>
+                </div>
+
+                <div v-if="showModels && testModels.length" class="st-row st-row-sub">
+                  <div class="st-label">
+                    <span class="st-name">可用模型</span>
+                    <span class="st-desc">点一下即填入上方输入框</span>
+                  </div>
+                  <div class="st-chips">
+                    <button
+                      v-for="m in testModels"
+                      :key="m"
+                      class="st-chip"
+                      :class="{ on: state.ai.model === m }"
+                      @click="state.ai.model = m"
+                    >
+                      {{ m }}
+                    </button>
+                  </div>
+                </div>
+
+                <div class="st-row">
+                  <div class="st-label">
+                    <span class="st-name">温度</span>
+                    <span class="st-desc">
+                      {{ state.ai.temperature.toFixed(1) }} — 越高越发散，写作建议 0.6~0.8
+                    </span>
+                  </div>
+                  <input
+                    v-model.number="state.ai.temperature"
+                    class="st-range"
+                    type="range"
+                    min="0"
+                    max="1"
+                    step="0.1"
                   />
-                  <span>{{ state.sync.status === 'busy' ? '同步中…' : '立即同步' }}</span>
-                </button>
-              </div>
-
-              <div class="st-row">
-                <div class="st-label">
-                  <span class="st-name">测试连接</span>
-                  <span class="st-desc">只验证地址和密码，不动任何文件</span>
                 </div>
-                <button class="st-btn" :disabled="state.sync.status === 'busy'" @click="store.testSync()">
-                  <span>测试连接</span>
-                </button>
-              </div>
 
-              <div class="st-note">
-                这版同步不做删除：在一台设备上删掉的笔记，云端那份会留下来。两边同时改过的文件算冲突——你的本地版本会改名成
-                xxx.conflict-时间.md 留底，再落云端版本，谁的字都不会丢。
-              </div>
-            </template>
+                <div class="st-row">
+                  <div class="st-label">
+                    <span class="st-name">系统提示词</span>
+                    <span class="st-desc">每次请求都会带上，用来约束语气和语言</span>
+                  </div>
+                  <textarea
+                    v-model="state.ai.system"
+                    class="st-textarea"
+                    rows="3"
+                    spellcheck="false"
+                  />
+                </div>
 
-            <!-- ══ 关于 ══
-                 以前是一段说明文字加两张清单，像一份说明书。
-                 改成「一块带标的头图 + 四张特性卡 + 两张清单」：
-                 第一眼看到的是这个应用长什么样、能干什么，
-                 版本号和运行环境退到下面，需要的时候才看。 -->
-            <template v-else>
-              <div class="ab-hero">
-                <span class="ab-hero-glow" aria-hidden="true" />
-                <span class="ab-mark" aria-hidden="true">
-                  <!-- 关于页这枚标用应用图标本身：它是「这个应用长什么样」
-                       的直接回答，52px 也足够撑住位图细节。 -->
-                  <img :src="appIcon" width="48" height="48" alt="Nota" />
-                </span>
-                <span class="ab-hero-meta">
-                  <span class="ab-hero-name">
-                    Nota
-                    <span class="ab-hero-tag">本地优先</span>
+                <div class="st-row st-row-last">
+                  <div class="st-label">
+                    <span class="st-name">测试连接</span>
+                    <span
+                      class="st-desc"
+                      :class="{ 'is-ok': testResult?.ok, 'is-bad': testResult && !testResult.ok }"
+                    >
+                      {{ testResult ? testResult.text : '会去拉一次 /models 列表' }}
+                    </span>
+                  </div>
+                  <button class="st-btn" :disabled="testing" @click="testConnection">
+                    <Loader2 v-if="testing" class="spin" :size="13" :stroke-width="2" />
+                    <span>{{ testing ? '测试中…' : '测试连接' }}</span>
+                  </button>
+                </div>
+              </template>
+
+              <!-- ══ 云同步 ══
+                   WebDAV 一条协议覆盖坚果云 / InfiniCloud / 群晖 / Nextcloud。
+                   密码是各家的「应用密码」而不是登录密码（坚果云在网页端
+                   安全选项里生成），存在本机 localStorage，不随笔记上传。 -->
+              <template v-else-if="section === 'sync'">
+                <div class="st-row">
+                  <div class="st-label">
+                    <span class="st-name">服务器地址</span>
+                    <span class="st-desc">坚果云填 https://dav.jianguoyun.com/dav/ 就行</span>
+                  </div>
+                  <div class="st-field">
+                    <Cloud class="st-field-ico" :size="13" :stroke-width="1.9" />
+                    <input
+                      v-model="state.sync.config.url"
+                      class="st-input"
+                      type="text"
+                      placeholder="https://dav.jianguoyun.com/dav/"
+                      spellcheck="false"
+                      @change="store.setSyncConfig({ url: state.sync.config.url })"
+                    />
+                  </div>
+                </div>
+
+                <div class="st-row">
+                  <div class="st-label">
+                    <span class="st-name">账号</span>
+                    <span class="st-desc">坚果云是注册邮箱</span>
+                  </div>
+                  <div class="st-field">
+                    <input
+                      v-model="state.sync.config.username"
+                      class="st-input"
+                      type="text"
+                      placeholder="you@example.com"
+                      spellcheck="false"
+                      @change="store.setSyncConfig({ username: state.sync.config.username })"
+                    />
+                  </div>
+                </div>
+
+                <div class="st-row">
+                  <div class="st-label">
+                    <span class="st-name">应用密码</span>
+                    <span class="st-desc">在服务商网页端生成；存本机，不随笔记上传</span>
+                  </div>
+                  <div class="st-field">
+                    <input
+                      v-model="state.sync.config.password"
+                      class="st-input"
+                      type="password"
+                      placeholder="••••••••"
+                      spellcheck="false"
+                      @change="store.setSyncConfig({ password: state.sync.config.password })"
+                    />
+                  </div>
+                </div>
+
+                <div class="st-row">
+                  <div class="st-label">
+                    <span class="st-name">云端目录</span>
+                    <span class="st-desc">默认用工作区文件夹的名字；没有会自动创建</span>
+                  </div>
+                  <div class="st-field">
+                    <input
+                      v-model="state.sync.config.dir"
+                      class="st-input"
+                      type="text"
+                      :placeholder="workspaceDirName"
+                      spellcheck="false"
+                      @change="store.setSyncConfig({ dir: state.sync.config.dir })"
+                    />
+                  </div>
+                </div>
+
+                <div class="st-row">
+                  <div class="st-label">
+                    <span class="st-name">自动同步</span>
+                    <span class="st-desc">打开应用时和每 10 分钟各同步一轮（当前：{{ state.sync.config.auto ? '开' : '关' }}）</span>
+                  </div>
+                  <button
+                    class="st-switch"
+                    role="switch"
+                    :aria-checked="state.sync.config.auto"
+                    :class="{ on: state.sync.config.auto }"
+                    @click="store.setSyncConfig({ auto: !state.sync.config.auto })"
+                  >
+                    <span class="st-knob" />
+                  </button>
+                </div>
+
+                <div class="st-row st-row-last">
+                  <div class="st-label">
+                    <span class="st-name">立即同步</span>
+                    <span
+                      class="st-desc"
+                      :class="{ 'is-ok': state.sync.status === 'ok', 'is-bad': state.sync.status === 'error' }"
+                    >
+                      {{ state.sync.message || '上传 / 下载两边改过的文件；冲突会留底不覆盖' }}
+                    </span>
+                  </div>
+                  <button class="st-btn" :disabled="state.sync.status === 'busy'" @click="store.runSync()">
+                    <RefreshCw
+                      class="spin"
+                      :class="{ 'is-spinning': state.sync.status === 'busy' }"
+                      :size="13"
+                      :stroke-width="2"
+                    />
+                    <span>{{ state.sync.status === 'busy' ? '同步中…' : '立即同步' }}</span>
+                  </button>
+                </div>
+
+                <div class="st-row">
+                  <div class="st-label">
+                    <span class="st-name">测试连接</span>
+                    <span class="st-desc">只验证地址和密码，不动任何文件</span>
+                  </div>
+                  <button class="st-btn" :disabled="state.sync.status === 'busy'" @click="store.testSync()">
+                    <span>测试连接</span>
+                  </button>
+                </div>
+
+                <div class="st-note">
+                  这版同步不做删除：在一台设备上删掉的笔记，云端那份会留下来。两边同时改过的文件算冲突——你的本地版本会改名成
+                  xxx.conflict-时间.md 留底，再落云端版本，谁的字都不会丢。
+                </div>
+              </template>
+
+              <!-- ══ 关于 ══
+                   以前是一段说明文字加两张清单，像一份说明书。
+                   改成「一块带标的头图 + 四张特性卡 + 两张清单」：
+                   第一眼看到的是这个应用长什么样、能干什么，
+                   版本号和运行环境退到下面，需要的时候才看。 -->
+              <template v-else>
+                <div class="ab-hero">
+                  <span class="ab-hero-glow" aria-hidden="true" />
+                  <span class="ab-mark" aria-hidden="true">
+                    <!-- 关于页这枚标用应用图标本身：它是「这个应用长什么样」
+                         的直接回答，52px 也足够撑住位图细节。 -->
+                    <img :src="appIcon" width="48" height="48" alt="Nota" />
                   </span>
-                  <span class="ab-hero-ver">
-                    <span class="ab-dot" />
-                    版本 {{ APP_VERSION }}
+                  <span class="ab-hero-meta">
+                    <span class="ab-hero-name">
+                      Nota
+                      <span class="ab-hero-tag">本地优先</span>
+                    </span>
+                    <span class="ab-hero-ver">
+                      <span class="ab-dot" />
+                      版本 {{ APP_VERSION }}
+                    </span>
                   </span>
-                </span>
-                <span class="ab-hero-note">纯本地 · 无账号 · 无服务端</span>
+                  <span class="ab-hero-note">纯本地 · 无账号 · 无服务端</span>
+                </div>
+
+                <p class="ab-lead">
+                  一个轻量的本地 Markdown 笔记应用。笔记就是普通的 <code>.md</code> 文件，
+                  放在你自己选的目录里，随时可以用别的编辑器打开、用 Git 管理、直接拷走。
+                  没有账号，没有服务端，没有云端同步 —— 所有东西都留在你自己的磁盘上。
+                </p>
+
+                <div class="ab-cards">
+                  <div v-for="f in ABOUT_FEATURES" :key="f.title" class="ab-card">
+                    <span class="ab-card-ico"><component :is="f.icon" :size="15" :stroke-width="1.9" /></span>
+                    <span class="ab-card-title">{{ f.title }}</span>
+                    <span class="ab-card-desc">{{ f.desc }}</span>
+                  </div>
+                </div>
+
+                <div class="st-h4">运行环境</div>
+                <div class="ab-env">
+                  <div class="ab-env-cell">
+                    <span class="ab-env-k">Electron</span>
+                    <span class="ab-env-v">{{ env.electron || '—' }}</span>
+                  </div>
+                  <div class="ab-env-cell">
+                    <span class="ab-env-k">Chromium</span>
+                    <span class="ab-env-v">{{ env.chrome || '—' }}</span>
+                  </div>
+                  <div class="ab-env-cell">
+                    <span class="ab-env-k">Node</span>
+                    <span class="ab-env-v">{{ env.node || '—' }}</span>
+                  </div>
+                  <div class="ab-env-cell">
+                    <span class="ab-env-k">平台</span>
+                    <span class="ab-env-v">{{ envText }}</span>
+                  </div>
+                </div>
+
+                <div class="st-h4">快捷键</div>
+                <div class="ab-keys">
+                  <div v-for="k in ABOUT_KEYS" :key="k.label" class="ab-key">
+                    <span>{{ k.label }}</span><kbd>{{ k.key }}</kbd>
+                  </div>
+                </div>
+
+                <p class="ab-foot">
+                  © 2026 YMTJ0522 · 用 Electron + Vue 3 + CodeMirror 6 写的本地小工具
+                </p>
+              </template>
               </div>
-
-              <p class="ab-lead">
-                一个轻量的本地 Markdown 笔记应用。笔记就是普通的 <code>.md</code> 文件，
-                放在你自己选的目录里，随时可以用别的编辑器打开、用 Git 管理、直接拷走。
-                没有账号，没有服务端，没有云端同步 —— 所有东西都留在你自己的磁盘上。
-              </p>
-
-              <div class="ab-cards">
-                <div v-for="f in ABOUT_FEATURES" :key="f.title" class="ab-card">
-                  <span class="ab-card-ico"><component :is="f.icon" :size="15" :stroke-width="1.9" /></span>
-                  <span class="ab-card-title">{{ f.title }}</span>
-                  <span class="ab-card-desc">{{ f.desc }}</span>
-                </div>
-              </div>
-
-              <div class="st-h4">运行环境</div>
-              <div class="ab-env">
-                <div class="ab-env-cell">
-                  <span class="ab-env-k">Electron</span>
-                  <span class="ab-env-v">{{ env.electron || '—' }}</span>
-                </div>
-                <div class="ab-env-cell">
-                  <span class="ab-env-k">Chromium</span>
-                  <span class="ab-env-v">{{ env.chrome || '—' }}</span>
-                </div>
-                <div class="ab-env-cell">
-                  <span class="ab-env-k">Node</span>
-                  <span class="ab-env-v">{{ env.node || '—' }}</span>
-                </div>
-                <div class="ab-env-cell">
-                  <span class="ab-env-k">平台</span>
-                  <span class="ab-env-v">{{ envText }}</span>
-                </div>
-              </div>
-
-              <div class="st-h4">快捷键</div>
-              <div class="ab-keys">
-                <div v-for="k in ABOUT_KEYS" :key="k.label" class="ab-key">
-                  <span>{{ k.label }}</span><kbd>{{ k.key }}</kbd>
-                </div>
-              </div>
-
-              <p class="ab-foot">
-                © 2026 YMTJ0522 · 用 Electron + Vue 3 + CodeMirror 6 写的本地小工具
-              </p>
-            </template>
+            </Transition>
           </div>
 
           <!-- 底栏：只回滚当前这页，不做全局清除 -->
@@ -992,7 +1009,8 @@ async function changeWorkspace() {
   justify-content: center;
   padding: 24px;
   background: var(--n-mask);
-  backdrop-filter: blur(2px);
+  /* 不用 backdrop-filter：全窗模糊在软件合成下会把每次重绘拖到个位数帧率（实测 60 → 7），
+     而 2px 的模糊肉眼几乎看不出来。改用纯色遮罩，遮罩本身已经够分层了。 */
   animation: st-fade 120ms var(--n-ease);
 }
 
@@ -1122,6 +1140,34 @@ async function changeWorkspace() {
   min-height: 0;
   overflow-y: auto;
   padding: 6px 20px 18px;
+}
+
+.st-sec {
+  min-width: 0;
+}
+
+/* 换分区：淡 + 一点上移，**不做左右位移** ——
+   左右一动就会被读成「翻页」，可这里只是同一块面板换了内容。
+   出去快、进来稍慢：先让位，再稳稳落定。 */
+.st-swap-leave-active {
+  /* 出去要快：从淡完到新内容挂载之间有段空白，留久了读起来是「闪了一下」。
+     70ms 差不多是一眨眼的边缘，能看出来在退场，又来不及让人觉得空了。 */
+  transition: opacity 70ms var(--n-ease);
+}
+
+.st-swap-leave-to {
+  opacity: 0;
+}
+
+.st-swap-enter-active {
+  transition:
+    opacity 170ms var(--n-ease),
+    transform 170ms var(--n-ease);
+}
+
+.st-swap-enter-from {
+  opacity: 0;
+  transform: translateY(5px);
 }
 
 /* ── 行：左侧说明，右侧控件 ──

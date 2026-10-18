@@ -255,7 +255,8 @@ function onKey(e: KeyboardEvent) {
   align-items: center;
   justify-content: center;
   background: var(--n-mask);
-  backdrop-filter: blur(2px);
+  /* 不用 backdrop-filter：全窗模糊在软件合成下会把每次重绘拖到个位数帧率（实测 60 → 7），
+     而 2px 的模糊肉眼几乎看不出来。改用纯色遮罩，遮罩本身已经够分层了。 */
   animation: ip-fade 120ms var(--n-ease);
 }
 

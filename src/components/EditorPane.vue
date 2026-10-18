@@ -1541,34 +1541,91 @@ onBeforeUnmount(() => {
   window.removeEventListener('nota:tag', onTagRequest)
   window.removeEventListener('nota:heading', onHeadingRequest)
 })
+/** 切笔记：先暗下去 → 在暗的时候换内容 → 再亮回来。见下面 watch 里的说明 */
+const pvwEl = ref<HTMLElement | null>(null)
+/** 连续切笔记时用来认领「最后一次」，前面的那几次直接让位 */
+let swapSeq = 0
+/** 正在跑的动画，下一次切换前要收掉 */
+let swapping: Animation[] = []
 
-/** 切笔记时的淡入开关。动画结束后由定时器撤掉，避免它一直挂着 */
-const swapping = ref(false)
-let swapTimer = 0
+const DIM_MS = 90
+const BACK_MS = 200
+const SWAP_EASE = 'cubic-bezier(.4, 0, .2, 1)'
+const noMotion = () => window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false
+
+/** 从「当前实际透明度」开始压暗 —— 上一次还没演完就切走时，这样不会先闪回全亮 */
+function dimTo(el: HTMLElement, to: number): Animation | null {
+  if (noMotion()) return null
+  const from = Number.parseFloat(getComputedStyle(el).opacity)
+  return el.animate([{ opacity: Number.isFinite(from) ? from : 1 }, { opacity: to }], {
+    duration: DIM_MS,
+    easing: SWAP_EASE,
+    fill: 'forwards',
+  })
+}
+
+function backTo(el: HTMLElement, from: number, rise: boolean): Animation | null {
+  if (noMotion()) return null
+  return el.animate(
+    rise
+      ? [
+          { opacity: from, transform: 'translateY(5px)' },
+          { opacity: 1, transform: 'none' },
+        ]
+      : [{ opacity: from }, { opacity: 1 }],
+    { duration: BACK_MS, easing: SWAP_EASE, fill: 'forwards' },
+  )
+}
 
 /**
- * 切笔记：重排预览，并把这一篇的内容交给编辑器。
+ * 切笔记：先暗下去 → 在暗的时候换内容 → 再亮回来。
  *
- * 加一层过渡是为了遮住「换的那一下」。真正的卡来自 render()：它同步把整篇
- * 重新解析、重画公式和图表，一步占满一帧，所以原来的观感是「点下去 —— 停一下
- * —— 内容啪地换成新的」。现在先把淡入挂上再重排，换内容那一下落在透明度
- * 还没满的时候，眼睛看到的是"淡进来"，而不是"跳一下"。
+ * 为什么不用「CSS 过渡 + 挂 class」：试过，不成立。class 挂上到摘掉只隔两帧，
+ * 浏览器还没来及重算样式就变回去了，透明度从头到尾都是 1 —— 屏幕上什么都没发生。
+ * 这不是「时长没调够」，而是「挂 class 这个动作本身不保证被看见」。
  *
- * 只淡不位移：CodeMirror 在这两百毫秒里会量坐标，加位移会让它量到偏的值
- * （见下面 .pane-in 那段的说明）。预览侧不归它管，所以那边可以带一点位移。
+ * 所以改用 Web Animations：`animation.finished` 走真实时间轴，不依赖某一帧
+ * 恰好被画出来，也就能确定地停在暗处把重活干完。真正的卡在 render()——
+ * 它同步重解析整篇、重画公式和图表。让这件事发生在暗的这段时间里，
+ * 眼睛看到的是「暗一下 → 亮回来，内容已经换了」，而不是「停一下 → 啪地跳成新的」。
+ * 遮住的不是耗时，是那一下突兀。
+ *
+ * 编辑器侧只动透明度：CodeMirror 这段时间会量坐标，位移会让它量到偏的值。
+ * 预览侧不归它管，所以亮回来时可以带一点上浮。
  */
 watch(
   () => state.activePath,
   async () => {
-    swapping.value = false
-    await nextTick()
-    swapping.value = true
+    const my = ++swapSeq
+    const ed = edWrap.value
+    const pv = pvwEl.value
+
+    const outs = [ed ? dimTo(ed, 0.35) : null, pv ? dimTo(pv, 0.3) : null].filter(
+      (a): a is Animation => !!a,
+    )
+    for (const a of swapping) if (!outs.includes(a)) a.cancel()
+    swapping = outs
+
+    if (outs.length) await Promise.all(outs.map((a) => a.finished.catch(() => {})))
+    // 这期间又切到别的笔记了：让后一次去换内容，这次别插手
+    if (my !== swapSeq) return
+
     render()
     await nextTick()
     pushDoc(state.draft)
     view?.focus()
-    window.clearTimeout(swapTimer)
-    swapTimer = window.setTimeout(() => (swapping.value = false), 240)
+    await nextTick()
+
+    const backs = [ed ? backTo(ed, 0.35, false) : null, pv ? backTo(pv, 0.3, true) : null].filter(
+      (a): a is Animation => !!a,
+    )
+    if (!backs.length) return
+    swapping = swapping.concat(backs)
+    await Promise.all(backs.map((a) => a.finished.catch(() => {})))
+    if (my !== swapSeq) return
+    // 撤掉 forwards 留下的最终值，别让它一直压着样式
+    for (const a of swapping) a.cancel()
+    swapping = []
   }
 )
 
@@ -1765,7 +1822,7 @@ defineExpose({ getView: () => view })
     />
 
     <div class="stage" :data-layout="mode">
-      <div ref="edWrap" v-show="showEditor" class="ed-wrap" :class="{ 'note-swap': swapping }">
+      <div ref="edWrap" v-show="showEditor" class="ed-wrap">
         <div ref="host" class="host" @contextmenu="onContextMenu" />
 
         <!-- 查找条。CodeMirror 原生面板把替换框和一堆开关全摊开，占两行还
@@ -1869,7 +1926,7 @@ defineExpose({ getView: () => view })
           </div>
         </div>
       </div>
-      <div v-if="showPreview" class="pvw" :class="{ 'note-swap': swapping }">
+      <div v-if="showPreview" ref="pvwEl" class="pvw">
         <div
           ref="previewRef"
           class="preview md-body"
@@ -2318,37 +2375,10 @@ defineExpose({ getView: () => view })
   }
 }
 
-/* ── 切笔记的淡入 ──
-   起点不放在 0：真从全透明起，碰上慢一帧的情况会先看到一片底色，
-   反而更像"闪了一下"。半透明起步读起来是"对上焦"。
-   预览这边可以带一点位移 —— 它不归 CodeMirror 管，不会影响测量。 */
-.ed-wrap.note-swap {
-  animation: n-note-fade 220ms var(--n-ease);
-}
-
-.pvw.note-swap {
-  animation: n-note-rise 220ms var(--n-ease);
-}
-
-@keyframes n-note-fade {
-  from {
-    opacity: 0.55;
-  }
-  to {
-    opacity: 1;
-  }
-}
-
-@keyframes n-note-rise {
-  from {
-    opacity: 0.4;
-    transform: translateY(4px);
-  }
-  to {
-    opacity: 1;
-    transform: none;
-  }
-}
+/* ── 切笔记的暗-换-亮 ──
+   全部交给 Web Animations（见 script 里那段 watch），这里不再留 CSS 规则：
+   之前用 transition + class 试过，class 存活时间短于一次样式重算，
+   浏览器压根没看见中间状态，屏幕上什么都没发生 —— 留着只会误导下一个人。 */
 
 .host {
   flex: 1;
