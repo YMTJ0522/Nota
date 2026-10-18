@@ -8,6 +8,7 @@ import EditorPane from '@/components/EditorPane.vue'
 import GraphView from '@/components/GraphView.vue'
 import SearchPalette from '@/components/SearchPalette.vue'
 import WelcomeView from '@/components/WelcomeView.vue'
+import TourOverlay from '@/components/TourOverlay.vue'
 import WindowControls from '@/components/WindowControls.vue'
 import ToastHost from '@/components/ToastHost.vue'
 
@@ -31,11 +32,40 @@ function onLibrary(e: Event) {
  */
 const search = ref<{ open: boolean; body: boolean }>({ open: false, body: false })
 
+/**
+ * 新手引导。两条路进来：
+ *   · 第一次打开工作区时自动放一遍（放完记一笔，之后不再打扰）；
+ *   · 侧栏底栏那枚问号，随时重看。
+ * 记在 localStorage 而不是工作区里：换一个目录不该再被引导一遍，
+ * 人已经知道界面长什么样了。
+ */
+const TOUR_KEY = 'nota-tour-seen'
+const tourOpen = ref(false)
+
+function openTour() {
+  tourOpen.value = true
+}
+
+function closeTour() {
+  tourOpen.value = false
+  try {
+    localStorage.setItem(TOUR_KEY, '1')
+  } catch {
+    /* 隐私模式下写不进去也无所谓，顶多下次再看一遍 */
+  }
+}
+
+function onTour() {
+  openTour()
+}
+
 /** 窗口宽度：中间那一列的「自适应」要跟着它走，所以得是个响应式的值。
     用 ResizeObserver 而不是 resize 事件 —— 窗口最大化、系统缩放、
     拖分隔线之外的各种尺寸变化都能收到。 */
 const winW = ref(window.innerWidth)
 let ro: ResizeObserver | null = null
+/** 首次自动引导的定时器，卸载时要清掉（否则开发时热更新会攒一串） */
+let tourTimer = 0
 
 /** 各栏宽度由 SplitHandle 拖着改，这里只负责把它们写到 CSS 变量上。
     中间那一列没被人拖过时走「自适应」：窗口宽它就宽，但始终给编辑区留够地方。 */
@@ -129,6 +159,7 @@ onMounted(async () => {
   window.addEventListener('keydown', onKey)
   window.addEventListener('nota:palette', onPalette)
   window.addEventListener('nota:library', onLibrary)
+  window.addEventListener('nota:tour', onTour)
   document.addEventListener('click', onLinkClick)
   ro = new ResizeObserver(() => {
     winW.value = window.innerWidth
@@ -136,15 +167,42 @@ onMounted(async () => {
   ro.observe(document.documentElement)
 })
 
+/**
+ * 第一次有工作区时自动放一遍引导。
+ *
+ * 必须盯 `state.root` 而不是写在 onMounted 里：首屏是先让用户「打开一个目录」，
+ * 那一下发生在挂载之后很久。挂在 onMounted 上就只有「恢复上次工作区」这一条路
+ * 会触发，新用户从欢迎页进来反而一次都看不到 —— 正是最该看到的那批人。
+ *
+ * 延迟 800ms：刚恢复完那几十毫秒里布局还在收（侧栏、资料栏的宽度都按窗口现算），
+ * 这时候量出来的框是错的，洞会歪。
+ */
+watch(
+  () => state.root,
+  (root) => {
+    if (!root) return
+    try {
+      if (localStorage.getItem(TOUR_KEY)) return
+    } catch {
+      return // 读不到就不自动放，别为了引导把启动搞挂
+    }
+    window.clearTimeout(tourTimer)
+    tourTimer = window.setTimeout(openTour, 800)
+  },
+  { immediate: true },
+)
+
 /* 资料栏常驻，宽度靠 `effectiveColumnWidth` 自己收上限（见 store），
    侧栏那边也有一道上限（`sidebarNow`）。两道都只跟当前窗口现算，
    所以窗口怎么变都不需要额外再收放一次 —— 以前这里挂着一个
    「窄到放不下就把整栏收掉」的 watcher，现在那条路不存在了。 */
 
 onBeforeUnmount(() => {
+  window.clearTimeout(tourTimer)
   window.removeEventListener('keydown', onKey)
   window.removeEventListener('nota:palette', onPalette)
   window.removeEventListener('nota:library', onLibrary)
+  window.removeEventListener('nota:tour', onTour)
   document.removeEventListener('click', onLinkClick)
   ro?.disconnect()
 })
@@ -190,6 +248,9 @@ onBeforeUnmount(() => {
 
     <!-- 全应用共用的轻提示：把各处抛出的 nota:toast 接住 -->
     <ToastHost />
+
+    <!-- 新手引导：挖洞高亮 + 气泡。挂在最外层，任何视图下都能放 -->
+    <TourOverlay :open="tourOpen" @close="closeTour" />
   </div>
 </template>
 

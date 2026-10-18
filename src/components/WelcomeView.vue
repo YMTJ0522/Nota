@@ -1,15 +1,9 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
-import { CircleHelp, Folder } from 'lucide-vue-next'
+import { computed } from 'vue'
+import { Folder } from 'lucide-vue-next'
 import { store } from '@/store'
 import appIcon from '@/assets/app-icon.png'
-import GuideDialog from '@/components/GuideDialog.vue'
 
-/**
- * 首屏是新人唯一一定会看见的地方，所以指南在这里留一个入口。
- * 不做「首次自动弹出」：他这会儿连目录都没开，弹一页说明书只会挡住「打开一个目录」。
- */
-const guideOpen = ref(false)
 
 const features = [
   ['纯本地', '文件躺在你自己的目录里，不联网、不上传'],
@@ -50,10 +44,7 @@ async function pickRoot(dir: string) {
       <button class="cta" @click="pick">打开一个目录</button>
       <p class="tip">或者按 <kbd>Ctrl</kbd> + <kbd>O</kbd></p>
 
-      <button class="howto" @click="guideOpen = true">
-        <CircleHelp :size="12" :stroke-width="1.9" />
-        <span>第一次用？看看各个区域是干什么的</span>
-      </button>
+      <p class="howto-hint">进去之后会带你过一遍界面，看一遍就懂</p>
 
       <!-- 最近打开过的文件夹。
            侧栏底部也有同一份列表，但那儿得先开着一个工作区才看得见 ——
@@ -76,7 +67,6 @@ async function pickRoot(dir: string) {
       </ul>
     </div>
 
-    <GuideDialog :open="guideOpen" @close="guideOpen = false" />
   </div>
 </template>
 
@@ -141,27 +131,12 @@ h1 {
   color: var(--n-fg-faint);
 }
 
-/* 指向使用指南的那一行。做成低调的文字按钮而不是第二枚实心按钮：
+/* 预告一下进去会有引导。只做一句话，不给按钮：
    首屏只该有一个「下一步」，其余都是旁支。 */
-.howto {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  margin-bottom: 26px;
-  padding: 2px 2px;
+.howto-hint {
+  margin: 0 0 26px;
   font-size: 12px;
   color: var(--n-fg-faint);
-  border-radius: var(--n-r-sm);
-  transition: color var(--n-dur) var(--n-ease);
-}
-
-.howto svg {
-  fill: none;
-  stroke: currentColor;
-}
-
-.howto:hover {
-  color: var(--n-accent);
 }
 
 /* ── 最近打开 ── */

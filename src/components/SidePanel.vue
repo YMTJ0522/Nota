@@ -28,7 +28,6 @@ import type { NavFilter, SettingsSection, TreeNode } from '@/store'
 import TreeNodeItem from './TreeNodeItem.vue'
 import TagChip from '@/components/TagChip.vue'
 import SettingsDialog from '@/components/SettingsDialog.vue'
-import GuideDialog from '@/components/GuideDialog.vue'
 import NoteContextMenu, { type NoteExportKind } from '@/components/NoteContextMenu.vue'
 import MarkDialog from '@/components/MarkDialog.vue'
 import FolderContextMenu from '@/components/FolderContextMenu.vue'
@@ -41,11 +40,12 @@ const { state } = store
 
 const settingsOpen = ref(false)
 /**
- * 使用指南。跟设置放一起（两枚都是「关于这个应用」而不是「关于某篇笔记」），
- * 但不并进设置里 —— 新人第一次要知道的是「这块地方干什么」，
- * 藏在设置第二层他就"先随便点点看看"，点错了才发现解释在别处。
+ * 新手引导挂在 App 那一层（要能盖住整个窗口、还要量三栏的框），
+ * 这里只负责发个事件把它叫起来。
  */
-const guideOpen = ref(false)
+function openTour() {
+  window.dispatchEvent(new CustomEvent('nota:tour'))
+}
 /** 设置面板要停在哪个分区（工具栏 AI 菜单的「模型设置…」会指定） */
 const settingsSection = ref<SettingsSection>('general')
 const folderInput = ref<HTMLInputElement | null>(null)
@@ -693,7 +693,7 @@ onBeforeUnmount(() => document.removeEventListener('pointerdown', onDocPointer))
         </div>
 
         <span v-if="state.root" class="foot-sub">{{ navCounts.all }} 篇</span>
-        <button class="foot-btn" data-tip="使用指南" @click="guideOpen = true">
+        <button class="foot-btn" data-tip="重看引导" @click="openTour">
           <CircleHelp :size="16" :stroke-width="1.9" />
         </button>
         <button class="foot-btn" data-tip="设置" @click="settingsOpen = true">
@@ -743,7 +743,7 @@ onBeforeUnmount(() => document.removeEventListener('pointerdown', onDocPointer))
         >
           <component :is="t.icon" :size="16" :stroke-width="1.9" />
         </button>
-        <button class="rail-btn" data-tip="使用指南" @click="guideOpen = true">
+        <button class="rail-btn" data-tip="重看引导" @click="openTour">
           <CircleHelp :size="16" :stroke-width="1.9" />
         </button>
         <button class="rail-btn" data-tip="设置" @click="settingsOpen = true">
@@ -907,7 +907,6 @@ onBeforeUnmount(() => document.removeEventListener('pointerdown', onDocPointer))
     />
 
     <SettingsDialog :open="settingsOpen" :section="settingsSection" @close="settingsOpen = false" />
-    <GuideDialog :open="guideOpen" @close="guideOpen = false" />
   </aside>
 </template>
 

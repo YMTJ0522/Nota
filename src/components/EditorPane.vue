@@ -1542,14 +1542,33 @@ onBeforeUnmount(() => {
   window.removeEventListener('nota:heading', onHeadingRequest)
 })
 
-// 切笔记：重排预览，并把这一篇的内容交给编辑器
+/** 切笔记时的淡入开关。动画结束后由定时器撤掉，避免它一直挂着 */
+const swapping = ref(false)
+let swapTimer = 0
+
+/**
+ * 切笔记：重排预览，并把这一篇的内容交给编辑器。
+ *
+ * 加一层过渡是为了遮住「换的那一下」。真正的卡来自 render()：它同步把整篇
+ * 重新解析、重画公式和图表，一步占满一帧，所以原来的观感是「点下去 —— 停一下
+ * —— 内容啪地换成新的」。现在先把淡入挂上再重排，换内容那一下落在透明度
+ * 还没满的时候，眼睛看到的是"淡进来"，而不是"跳一下"。
+ *
+ * 只淡不位移：CodeMirror 在这两百毫秒里会量坐标，加位移会让它量到偏的值
+ * （见下面 .pane-in 那段的说明）。预览侧不归它管，所以那边可以带一点位移。
+ */
 watch(
   () => state.activePath,
   async () => {
+    swapping.value = false
+    await nextTick()
+    swapping.value = true
     render()
     await nextTick()
     pushDoc(state.draft)
     view?.focus()
+    window.clearTimeout(swapTimer)
+    swapTimer = window.setTimeout(() => (swapping.value = false), 240)
   }
 )
 
@@ -1746,7 +1765,7 @@ defineExpose({ getView: () => view })
     />
 
     <div class="stage" :data-layout="mode">
-      <div ref="edWrap" v-show="showEditor" class="ed-wrap">
+      <div ref="edWrap" v-show="showEditor" class="ed-wrap" :class="{ 'note-swap': swapping }">
         <div ref="host" class="host" @contextmenu="onContextMenu" />
 
         <!-- 查找条。CodeMirror 原生面板把替换框和一堆开关全摊开，占两行还
@@ -1850,7 +1869,7 @@ defineExpose({ getView: () => view })
           </div>
         </div>
       </div>
-      <div v-if="showPreview" class="pvw">
+      <div v-if="showPreview" class="pvw" :class="{ 'note-swap': swapping }">
         <div
           ref="previewRef"
           class="preview md-body"
@@ -2296,6 +2315,38 @@ defineExpose({ getView: () => view })
   }
   to {
     opacity: 1;
+  }
+}
+
+/* ── 切笔记的淡入 ──
+   起点不放在 0：真从全透明起，碰上慢一帧的情况会先看到一片底色，
+   反而更像"闪了一下"。半透明起步读起来是"对上焦"。
+   预览这边可以带一点位移 —— 它不归 CodeMirror 管，不会影响测量。 */
+.ed-wrap.note-swap {
+  animation: n-note-fade 220ms var(--n-ease);
+}
+
+.pvw.note-swap {
+  animation: n-note-rise 220ms var(--n-ease);
+}
+
+@keyframes n-note-fade {
+  from {
+    opacity: 0.55;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes n-note-rise {
+  from {
+    opacity: 0.4;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
   }
 }
 
