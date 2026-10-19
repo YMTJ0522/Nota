@@ -61,6 +61,34 @@ function fail(msg) {
   process.exit(1)
 }
 
+/* 用 API Token 直连 Cloudflare。wrangler 自己会读这个环境变量，
+   这里再手写一层是为了做 wrangler 命令行没暴露的事（比如查/删 DNS 记录）。 */
+let API_TOKEN = ''
+
+async function cfApi(pathname, opts = {}) {
+  const r = await fetch(`https://api.cloudflare.com/client/v4${pathname}`, {
+    ...opts,
+    headers: { Authorization: `Bearer ${API_TOKEN}`, 'Content-Type': 'application/json', ...(opts.headers || {}) },
+  })
+  const body = await r.json().catch(() => ({}))
+  if (!body.success) {
+    const e = (body.errors ?? []).map((x) => `${x.code} ${x.message}`).join('; ')
+    throw new Error(e || `HTTP ${r.status}`)
+  }
+  return body.result
+}
+
+/** 从最长到最短逐段猜 zone：ymtj.hyper99.top → hyper99.top */
+async function findZone(host) {
+  const segs = host.split('.')
+  for (let i = 1; i < segs.length - 1; i += 1) {
+    const name = segs.slice(i).join('.')
+    const list = await cfApi(`/zones?name=${encodeURIComponent(name)}`)
+    if (list.length) return list[0]
+  }
+  return null
+}
+
 /* ── 读配置 ── */
 
 const toml = fs.readFileSync(TOML, 'utf8')
@@ -124,11 +152,24 @@ async function main() {
 
   /* ── 1. 登录 ── */
   say('确认 Cloudflare 登录状态')
-  const who = wr(['whoami'], { quiet: true, allowFail: true })
-  if (!DRY && !who.ok) {
-    fail('还没登录。先在终端跑一次 `npx wrangler login`（会开浏览器），再回来跑这个脚本。')
+  // 两条路都行：浏览器 OAuth（wrangler login）或 API Token。
+  // Token 这条路是后加的 —— 有些网络能调 api.cloudflare.com，却打不开
+  // dash.cloudflare.com 的登录页（403），那时候连登录都做不到，只能靠 token。
+  const token = process.env.CLOUDFLARE_API_TOKEN || ''
+  API_TOKEN = token
+  if (token) {
+    good(`用环境里的 CLOUDFLARE_API_TOKEN（${token.slice(0, 6)}…${token.slice(-4)}）`)
+  } else {
+    const who = wr(['whoami'], { quiet: true, allowFail: true })
+    if (!DRY && !who.ok) {
+      fail(
+        '还没登录，也没有 CLOUDFLARE_API_TOKEN。\n' +
+          '    能打开 dash.cloudflare.com 就跑 `npx wrangler login`；\n' +
+          '    打不开（登录页 403）就去面板建一个 API Token，设进环境变量再跑这个脚本。',
+      )
+    }
+    if (!DRY && who.out) console.log(who.out.split('\n').map((l) => '    ' + l).join('\n'))
   }
-  if (!DRY && who.out) console.log(who.out.split('\n').map((l) => '    ' + l).join('\n'))
 
   /* ── 2. 建库 ── */
   say(`D1 数据库 ${dbName}`)
@@ -213,6 +254,43 @@ async function main() {
   }
 
   /* ── 7. 发版 ── */
+  /* ── 8.5 清掉占着这个主机名的旧记录 ──
+     custom_domain 要求这个主机名上没有任何现存的 A/AAAA/CNAME。
+     域名以前指过别的地方（换站、试过别的托管）就会留一条，
+     deploy 会直接报记录冲突，而报错信息不会告诉你该删哪一条。 */
+  if (routeDomain && !/example\.com/.test(routeDomain)) {
+    say(`检查 ${routeDomain} 上有没有会冲突的解析记录`)
+    if (!token) {
+      note('没有 CLOUDFLARE_API_TOKEN，跳过自动检查')
+      note('如果 deploy 报「记录已存在」，去面板 DNS 页面把这条删掉再重跑')
+    } else if (DRY) {
+      note(`会查 ${routeDomain} 的 A/AAAA/CNAME 记录，有就删掉`)
+    } else {
+      try {
+        const zone = await findZone(routeDomain)
+        if (!zone) {
+          warn(`账号下没找到 ${routeDomain} 所属的 zone —— 域名可能不在这个账号里`)
+        } else {
+          const recs = await cfApi(`/zones/${zone.id}/dns_records?name=${routeDomain}`)
+          const hostile = recs.filter((r) => ['A', 'AAAA', 'CNAME'].includes(r.type))
+          if (!hostile.length) {
+            good('没有冲突记录')
+          } else {
+            for (const r of hostile) {
+              note(`删掉 ${r.type} ${r.name} → ${r.content}（proxied=${r.proxied}）`)
+              await cfApi(`/zones/${zone.id}/dns_records/${r.id}`, { method: 'DELETE' })
+            }
+            good(`已清掉 ${hostile.length} 条，deploy 时会重建指向 Worker 的那条`)
+          }
+        }
+      } catch (e) {
+        warn(`自动检查失败：${e.message}`)
+        note('不影响后面的步骤，deploy 报冲突的话再手动删')
+      }
+    }
+  }
+
+  /* ── 9. 发布 ── */
   say('发布 Worker')
   wr(['deploy'])
   if (!DRY) good('已发布')
