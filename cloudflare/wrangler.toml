@@ -1,9 +1,7 @@
 # Nota 官网 + 下载 + 后台（Cloudflare Workers + D1 + R2）
 #
-# 部署前要改三处：
-#   1. database_id —— 跑完 `wrangler d1 create nota` 会打印出来，粘进来
-#   2. bucket_name —— R2 桶名，自己起一个（默认 nota-downloads）
-#   3. routes 里的域名 —— 换成你自己的
+# 部署前要改一处：
+#   database_id —— 跑完 `wrangler d1 create nota` 会打印出来，粘进来
 #
 # 密钥不要写在任何文件里：
 #   wrangler secret put SESSION_SECRET
@@ -16,7 +14,7 @@ compatibility_date = "2025-01-01"
 # 发版时改这一个值，别的地方不用动。
 # （其实也不用手动改：npm run pack 会把它跟 package.json 对齐）
 [vars]
-VERSION = "2.7.1"
+VERSION = "2.7.2"
 
 # 官网静态文件。只有 /d /api /admin 三条路先过 Worker，
 # 其余（/、/icon.png、/shots/*）由边缘直接吐，不占 Worker 调用次数。
@@ -34,10 +32,11 @@ database_id = "REPLACE_WITH_YOUR_DATABASE_ID"
 binding = "FILES"
 bucket_name = "nota-downloads"
 
-# 换成你自己的域名。custom_domain 会顺手把 DNS 和证书一起配好，
-# 前提是域名已经接在同一个 Cloudflare 账号下。
+# 站点域名。custom_domain 会顺手把 DNS 和证书一起配好，
+# 前提是 hyper99.top 这个 zone 已经接在同一个 Cloudflare 账号下 ——
+# ymtj 这条子域不用自己先建 A/CNAME，wrangler 会写。
 [[routes]]
-pattern = "nota.example.com"
+pattern = "ymtj.hyper99.top"
 custom_domain = true
 
 [observability]

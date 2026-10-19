@@ -103,7 +103,7 @@ async function main() {
   }
 
   if (!routeDomain || /example\.com/.test(routeDomain)) {
-    warn('routes 里还是 nota.example.com —— 换成你自己的域名再跑，否则会发到一个不存在的主机上')
+    warn(`routes 里的域名是「${routeDomain || '空的'}」—— 换成真实域名再跑，否则会发到一个不存在的主机上`)
     note('改 cloudflare/wrangler.toml 里 [[routes]] 的 pattern；没有域名就先把这一段删掉，')
     note('发完用默认的 <name>.<账号>.workers.dev 也能访问')
   }

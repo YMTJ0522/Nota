@@ -44,16 +44,21 @@ node scripts/cf-deploy.mjs         # 真的做
 
 ### 域名
 
-`wrangler.toml` 里的 `[[routes]]` 默认是 `nota.example.com`，换成你自己的：
+`wrangler.toml` 里的 `[[routes]]` 已经填好 `ymtj.hyper99.top`：
 
 ```toml
 [[routes]]
-pattern = "nota.你的域名.com"
+pattern = "ymtj.hyper99.top"
 custom_domain = true
 ```
 
-`custom_domain` 会顺手把 DNS 和证书配好，前提是域名在这个账号下。
-没有域名就把整段删掉，用默认的 `<name>.<账号>.workers.dev` 也能访问。
+`custom_domain` 会顺手把 DNS 和证书配好，前提是 `hyper99.top` 这个 zone
+已经接在同一个 Cloudflare 账号下。**子域不用自己先加 A / CNAME 记录**，
+wrangler 会写一条指向 Worker 的解析；如果那条记录你自己提前建过，先把
+它删掉，否则 `deploy` 会报记录冲突。
+
+换域名只改这一处。没有域名就把整段删掉，用默认的
+`<name>.<账号>.workers.dev` 也能访问（但下载和后台会跑在 workers.dev 上）。
 
 ## 第一次登录
 
