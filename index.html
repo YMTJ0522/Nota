@@ -190,12 +190,18 @@ kbd{
 }
 .cell .ic svg{fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
 .c-4{grid-column:span 4}.c-3{grid-column:span 3}.c-2{grid-column:span 2}
-/* 大格子里放一张真截图当背景层： hover 时轻微上浮放大 */
-.cell-shot{position:absolute;right:-40px;bottom:-46px;width:62%;border-radius:12px;
-  border:1px solid var(--line-2);box-shadow:var(--shadow-lg);opacity:.92;
-  transition:transform .45s var(--ease)}
-.cell:hover .cell-shot{transform:translateY(-8px) rotate(-1deg)}
+/* 大格子底部挂一条真截图。
+   之前是把整窗截图绝对定位压在右下角当装饰层 —— 它的左上角正好盖住正文，
+   「谁的字都不会被悄悄覆盖」这半句被图片吃掉了。而且 3000px 宽的界面缩到
+   400px 之后文字全糊成一团灰，既看不清也不好看。
+   改成出血到卡片两边的横条：只露出窗口上半截，正文独占上方，谁都不挡谁。 */
 .cell.c-4{min-height:300px}
+.cell.has-shot{display:flex;flex-direction:column;padding-bottom:0}
+.cell-shot{
+  display:block;width:calc(100% + 52px);height:130px;margin:22px -26px 0;
+  object-fit:cover;object-position:top center;
+  border-top:1px solid var(--line);
+}
 
 /* ══ 功能特写：一图一文，左右交替，图带倾斜揭示 ══ */
 .show{display:grid;grid-template-columns:1fr 1.15fr;gap:64px;align-items:center;padding:46px 0}
@@ -264,6 +270,7 @@ kbd{
   .bento{grid-template-columns:1fr 1fr}
   .c-4,.c-3,.c-2{grid-column:span 2}
   .cell-shot{display:none}
+  .cell.has-shot{padding-bottom:26px}
   .show{grid-template-columns:1fr;gap:28px}
   .show.rev .show-shot{order:0}
   .stats{grid-template-columns:1fr 1fr}
@@ -355,11 +362,11 @@ kbd{
       <p>没有插件市场，没有强制注册，没有「协作邀请」。该有的编辑能力一个不少，不该打扰的一样都没有。</p>
     </div>
     <div class="bento">
-      <div class="cell c-4 rv">
+      <div class="cell c-4 has-shot rv">
         <div class="ic"><svg viewBox="0 0 24 24" width="19" height="19"><rect x="4" y="10" width="16" height="10" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg></div>
         <h3>纯本地，也陪你上云</h3>
         <p>笔记就是你目录里的 .md 文件，断网照常写。想跨设备时填一个 WebDAV 地址——同步在后台按文件比对新旧，冲突会留底，谁的字都不会被悄悄覆盖。</p>
-        <img class="cell-shot" src="shots/search.png" alt="" loading="lazy">
+        <img class="cell-shot" src="shots/peek.png" alt="" loading="lazy">
       </div>
       <div class="cell c-2 rv" style="transition-delay:.08s">
         <div class="ic"><svg viewBox="0 0 24 24" width="19" height="19"><path d="M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.7 1.7"/><path d="M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7l1.7-1.7"/></svg></div>
