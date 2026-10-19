@@ -51,7 +51,7 @@ echo "    最新版本：$VER"
 
 # ── 3. 静态站 ──
 say "下载站点文件"
-mkdir -p "$ROOT/dl" "$ROOT/shots"
+mkdir -p "$ROOT/d" "$ROOT/shots"
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 
@@ -59,8 +59,8 @@ curl -fsSL "https://codeload.github.com/${REPO}/tar.gz/refs/heads/main" -o "$TMP
 tar -xzf "$TMP/src.tar.gz" -C "$TMP"
 SRC="$TMP/Nota-main"
 
-[ -f "$SRC/deploy/server/public/index.html" ] || die "压缩包里没有 deploy/server/public/index.html"
-install -m 644 "$SRC/deploy/server/public/index.html" "$ROOT/index.html"
+[ -f "$SRC/site/index.html" ] || die "压缩包里没有 site/index.html"
+install -m 644 "$SRC/site/index.html" "$ROOT/index.html"
 install -m 644 "$SRC/site/icon.png" "$ROOT/icon.png"
 cp -f "$SRC"/site/shots/*.png "$ROOT/shots/" 2>/dev/null || true
 echo "    页面与截图就位"
@@ -68,7 +68,7 @@ echo "    页面与截图就位"
 # ── 4. 安装包 ──
 say "下载安装包（约 150 MB，看带宽）"
 for kind in Setup; do
-  dst="$ROOT/dl/Nota-${kind}.exe"
+  dst="$ROOT/d/setup.exe"
   if [ -f "$dst" ]; then
     echo "    Nota-${kind}.exe 已存在，跳过"
     continue
@@ -77,7 +77,7 @@ for kind in Setup; do
     "https://github.com/${REPO}/releases/download/v${VER}/Nota-${kind}-${VER}.exe" \
     || die "下载 Nota-${kind}-${VER}.exe 失败"
 done
-ls -lh "$ROOT/dl/"
+ls -lh "$ROOT/d/"
 
 # ── 5. info.json：页面上显示的版本与体积 ──
 sz() { stat -c %s "$1" 2>/dev/null || stat -f %z "$1"; }
@@ -85,7 +85,7 @@ cat > "$ROOT/info.json" <<JSON
 {
   "version": "${VER}",
   "assets": {
-    "setup": { "name": "Nota-Setup-${VER}.exe", "size": $(sz "$ROOT/dl/Nota-Setup.exe") }
+    "setup": { "name": "Nota-Setup-${VER}.exe", "size": $(sz "$ROOT/d/setup.exe") }
   }
 }
 JSON
@@ -106,12 +106,12 @@ server {
     index index.html;
 
     # 下载入口：别名到实际文件，文件名带版本，浏览器存盘时看得出来
-    location = /d/setup {
-        alias ${ROOT}/dl/Nota-Setup.exe;
+    location = /d/setup.exe {
+        alias ${ROOT}/d/setup.exe;
         default_type application/octet-stream;
         add_header Content-Disposition 'attachment; filename="Nota-Setup-${VER}.exe"';
     }
-    # 版本信息给页面脚本读，别让它去问 GitHub
+    # 版本信息给页面脚本读，不走外网接口
     location = /info.json {
         default_type application/json;
         add_header Cache-Control "no-cache";
@@ -187,14 +187,14 @@ cat <<TIP
 \033[32m完成\033[0m
 
   站点   http://${DOMAIN}
-  下载   http://${DOMAIN}/d/setup
+  下载   http://${DOMAIN}/d/setup.exe
 
 如果浏览器打不开，但上面「本机访问」是 200，
 那就是云平台安全组没放行 80/443 —— 那个只能在网页控制台点。
 
 看下载量：
 
-  grep -c '"GET /d/setup' /var/log/nginx/access.log
+  grep -c '"GET /d/setup.exe' /var/log/nginx/access.log
 
 （logrotate 会轮转，历史量看 access.log.1 等）
 

@@ -26,6 +26,10 @@
       {
         "target": "nsis",
         "arch": ["x64"]
+      },
+      {
+        "target": "portable",
+        "arch": ["x64"]
       }
     ],
     "icon": "build/icon.ico",
@@ -40,6 +44,9 @@
     "shortcutName": "Nota",
     "deleteAppDataOnUninstall": false,
     "artifactName": "${productName}-Setup-${version}.${ext}"
+  },
+  "portable": {
+    "artifactName": "${productName}-Portable-${version}.${ext}"
   },
   "mac": {
     "target": ["dmg"],

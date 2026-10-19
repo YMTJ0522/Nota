@@ -52,9 +52,9 @@ curl -fsSL "https://codeload.github.com/${REPO}/tar.gz/refs/heads/main" -o "$TMP
   || die "拉取源码包失败"
 tar -xzf "$TMP/src.tar.gz" -C "$TMP"
 SRC="$TMP/Nota-main"
-[ -f "$SRC/deploy/server/public/index.html" ] || die "包里没有服务器版页面"
+[ -f "$SRC/site/index.html" ] || die "包里没有站点页面"
 
-cp -f "$SRC/deploy/server/public/index.html" "$ROOT/index.html"
+cp -f "$SRC/site/index.html" "$ROOT/index.html"
 cp -f "$SRC/site/icon.png" "$ROOT/icon.png"
 cp -f "$SRC"/site/shots/*.png "$ROOT/shots/" 2>/dev/null || true
 

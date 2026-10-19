@@ -517,16 +517,16 @@ kbd{
       <div class="dl-grid">
         <div class="dl-item">
           <h4>安装版</h4>
-          <div class="meta" data-dl-meta="setup">Windows 安装版</div>
-          <!-- 走自己的 /d/setup，不直连 GitHub：这样才能记到下载数，
+          <div class="meta" data-dl-meta="setup">Nota-Setup-2.7.2.exe · 76 MB</div>
+          <!-- 走自己的 /d/setup：这样才能记到下载数，
                文件名也由 Worker 按当前版本号生成。 -->
           <a class="btn btn-primary" data-dl="setup" href="/d/setup">下载安装版</a>
           <span class="btn-sub" style="color:#8f8d80">会写开始菜单与卸载入口</span>
         </div>
       </div>
       <div class="facts">
-        <span data-dl-ver>Windows 10 / 11 · 64 位</span>
-        <span data-dl-note>也可以到 GitHub 的发布页自己挑</span>
+        <span data-dl-ver>当前版本 2.7.2</span>
+        <span>Windows 10 / 11 · 64 位</span>
         <span>界面字体：南西新圆体（随包）</span>
         <span><kbd>Ctrl</kbd>+<kbd>P</kbd> 跳转 · <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>F</kbd> 全文 · <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>G</kbd> 关系图</span>
         <span>开源，MIT</span>
@@ -541,10 +541,6 @@ kbd{
   <div class="wrap foot-in">
     <img src="icon.png" alt="" width="22" height="22" style="border-radius:6px">
     <span>Nota · 一个只做笔记的笔记应用</span>
-    <span class="sp">
-      <a href="https://github.com/YMTJ0522/Nota">GitHub</a> ·
-      <a href="/d/setup">下载</a>
-    </span>
   </div>
 </footer>
 
@@ -583,8 +579,8 @@ const row = document.getElementById('tapeRow')
 if (row) row.innerHTML += row.innerHTML
 
 /* ══ 下载入口：走自己的 Worker ══
-   按钮的 href 直接写 /d/setup，不再指向 GitHub Release ——
-   直连 GitHub 点下去就绕过了计数，后台那份数据也就没法信了。
+   按钮的 href 直接写 /d/setup，文件由 Worker 从自己的存储里吐 ——
+   绕过去就记不到数，后台那份数据也就没法信了。
    文件名由 Worker 按当前版本号拼，所以这里只补两样：
      · 按钮旁边那行文件名和体积（问 /api/info）；
      · 「当前版本」那行字。
