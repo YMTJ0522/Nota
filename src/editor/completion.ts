@@ -13,18 +13,20 @@ import { EditorView, keymap } from '@codemirror/view'
 import { fencedCodeLanguages } from './code-languages'
 
 /**
- * 代码补全。
+ * 代码块补全。
  *
  * 为什么是自己写一份而不是挂现成的：CodeMirror 各语言包**默认不带补全源**
  * （只有 html/css/sql 那几个有），在这个应用里等于“一个走 `codeLanguages`
  * 动态加载进来的围栏语言，永远给不出候选”。所以这份的定位很明确 ——
- * 不假装懂语法，只做两件在笔记里真正省事的事：
+ * 不假装懂语法，只做一件在笔记里真正省事的事：
  *
- *  1. **代码块内**：把这篇笔记里已经出现过的词接上，再补上该语言的常用骨架。
- *     写命令笔记时最烦的是「前面写过 `systemctl restart`，这里又想打一遍」；
- *     文档词补全解决的正是这个，而且不需要任何语言服务。
- *  2. **正文里**：只在人**主动按 Ctrl+Space** 时给候选，不自动弹。
- *     中文写作时每打一个字都弹一层英文词是灾难。
+ *  **只在围栏代码块内**：把这篇笔记里已经出现过的词接上，再补上该语言的常用骨架。
+ *  写命令笔记时最烦的是「前面写过 `systemctl restart`，这里又想打一遍」；
+ *  文档词补全解决的正是这个，而且不需要任何语言服务。
+ *
+ * 正文（围栏以外）**一个候选都不给**，自动弹和手动唤都没有。
+ * 那半套本来是给「中文里想引一下前文术语」准备的，实测没人用得上，
+ * 反而在中文输入法组字时不断冒出英文词 —— 删掉比留着更清净。
  *
  * 语言骨架刻意只写「语法本身就有的东西」（`if __name__ == "__main__":`、
  * `for f in *; do` 这种），不编具体 API —— 编出来的 API 是假的，
@@ -278,10 +280,8 @@ function snippetOptions(lang: string, token = ''): Completion[] {
 /**
  * 唯一的补全源。
  *
- * 分岔点只有一个：**光标在不在围栏代码块里**。
- * 在块里 → 打字就自动给候选（片段 + 文档词）；
- * 在正文里 → 只有显式 Ctrl+Space 才给，而且只给文档词
- *           （结构片段交给现成的 `/` 斜杠菜单，不搞两套）。
+ * 只有一种情况给候选：**光标在围栏代码块里**。
+ * 正文一律返回 null —— 自动弹不给，Ctrl+Shift+Space 手动唤也不给。
  */
 function notaCompletion(ctx: CompletionContext): CompletionResult | null {
   const { state } = ctx
@@ -296,14 +296,7 @@ function notaCompletion(ctx: CompletionContext): CompletionResult | null {
   if (!ctx.explicit && token.length < 2) return null
 
   const fence = fenceContextAt(state, ctx.pos)
-
-  if (!fence) {
-    // 正文：只认显式召唤
-    if (!ctx.explicit) return null
-    const options = wordOptions(state, token)
-    if (!options.length) return null
-    return { from: match?.from ?? ctx.pos, options, validFor: TOKEN_RE }
-  }
+  if (!fence) return null
 
   const options = [...snippetOptions(fence.lang, token), ...wordOptions(state, token)]
   if (!options.length) return null
@@ -320,7 +313,8 @@ function notaCompletion(ctx: CompletionContext): CompletionResult | null {
  * 主键位用 Ctrl+Shift+Space：跟系统与常见输入法都不撞，按键形制又和
  * 「默认那个 Ctrl-Space」同一家族，好记。Alt-/ 留着当别名 —— 老用户已经顺手了。
  *
- * 代码块里的补全本来就是打字自动来的，所以这个键只在正文里真正用得上。
+ * 正文不再有候选，所以这个键只在代码块里真正用得上（那里打字也会自动弹，
+ * 手动唤是给「刚打完一个词、想把上一段出现过的名字捞回来」用的）。
  */
 const MANUAL_KEY = 'Mod-Shift-Space'
 const MANUAL_KEY_ALT = 'Alt-/'

@@ -99,8 +99,8 @@ export function baseExtensions(options: {
     // 围栏右上角那枚「语言」标签：写完之后想改语言就点它，
     // 打字过程中不再弹任何东西（见 code-lang-chip.ts 顶上的说明）
     codeLangChipExtensions(),
-    // 补全：代码块里打字自动给候选，正文里 Ctrl+Space 手动唤出
-    // （见 completion.ts —— 正文不自动弹，是为了不打断中文写作）
+    // 补全：只在围栏代码块里给候选，正文一个字都不弹
+    // （见 completion.ts —— 中文写作时冒英文词是纯干扰）
     markdownCompletion(),
     // 粘贴 / 拖入图片：直接存进工作区 attachments/ 并写下相对引用
     mediaDrop(),
