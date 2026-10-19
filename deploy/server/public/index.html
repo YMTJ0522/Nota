@@ -238,7 +238,7 @@ kbd{
 }
 .dl h2{font-size:clamp(26px,3.6vw,38px);color:#fff;letter-spacing:-.03em}
 .dl .sub{margin-top:12px;color:#a7a598}
-.dl-grid{display:grid;grid-template-columns:1fr 1fr;gap:18px;max-width:660px;margin:38px auto 0}
+.dl-grid{display:grid;grid-template-columns:1fr;gap:18px;max-width:380px;margin:38px auto 0}
 .dl-item{
   padding:26px;border-radius:var(--radius);background:rgb(255 255 255/.045);
   border:1px solid rgb(255 255 255/.1);backdrop-filter:blur(6px);
@@ -309,12 +309,8 @@ kbd{
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12m0 0 5-5m-5 5-5-5"/><path d="M4 19h16"/></svg>
         下载安装包
       </a>
-      <a class="btn btn-ghost" href="https://github.com/YMTJ0522/Nota">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m8 9-3 3 3 3m8-6 3 3-3 3m-2-9-4 18"/></svg>
-        在 GitHub 上看
-      </a>
     </div>
-    <p class="hero-note rv" style="transition-delay:.3s">Windows 10 / 11 · 安装版 76 MB，免安装版 70 MB</p>
+    <p class="hero-note rv" style="transition-delay:.3s">Windows 10 / 11 · 安装版 76 MB</p>
 
     <div class="device-wrap rv" style="transition-delay:.18s">
       <div class="device" id="device">
@@ -525,13 +521,7 @@ kbd{
           <!-- href 先指向「最新发布页」兜底；脚本拿到 Release 资源后会换成直链，
                点了就直接下载，不经过 GitHub 的页面 -->
           <a class="btn btn-primary" data-dl="setup" href="/d/setup.exe">下载安装版</a>
-          <span class="btn-sub" style="color:#8f8d80">会写开始菜单与卸载入口，推荐</span>
-        </div>
-        <div class="dl-item">
-          <h4>免安装版</h4>
-          <div class="meta" data-dl-meta="portable">Windows 免安装版</div>
-          <a class="btn btn-ghost" style="background:rgb(255 255 255/.06);border-color:rgb(255 255 255/.16);color:#fff" data-dl="portable" href="/d/portable.exe">下载免安装版</a>
-          <span class="btn-sub" style="color:#8f8d80">拷进 U 盘双击就跑，不写注册表</span>
+          <span class="btn-sub" style="color:#8f8d80">会写开始菜单与卸载入口</span>
         </div>
       </div>
       <div class="facts">
@@ -599,12 +589,10 @@ if (row) row.innerHTML += row.innerHTML
      · 按钮 href 换成资源的 browser_download_url —— 点下去直接下载，
        不经过 GitHub 的那个发布页；
      · 文件名、体积、版本号一并换成真实的。
-   GitHub 在 GitHub 上发新版，这里也就跟着变，两边不用对表。
+   GitHub 上发了新版，这里也就跟着变，两边不用对表。
    接口取不到（网络不通 / 限流）就保持 HTML 里写好的兜底链接，
    按钮照样能点，只是落到发布页让人自己挑。 */
-;/* 自建服务器版：下载走本机 /d/*，版本号读同目录的 info.json。
-   不去问 GitHub —— 国内访客问 api.github.com 经常转圈好几秒，
-   而这页本来就是给「别人打开就能下」用的。 */
+;/* 自建服务器版：下载走本机 /d/*，版本号读同目录的 info.json */
 ;(function localInfo() {
   var mb = function (n) { return n > 0 ? (n / 1048576).toFixed(0) + ' MB' : '' }
   var apply = function (kind, a) {
@@ -619,7 +607,6 @@ if (row) row.innerHTML += row.innerHTML
     .then(function (d) {
       var as = d.assets || {}
       apply('setup', as.setup)
-      apply('portable', as.portable)
       if (d.version) {
         var v = document.querySelector('[data-dl-ver]')
         if (v) v.textContent = '当前版本 ' + d.version

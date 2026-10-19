@@ -238,7 +238,7 @@ kbd{
 }
 .dl h2{font-size:clamp(26px,3.6vw,38px);color:#fff;letter-spacing:-.03em}
 .dl .sub{margin-top:12px;color:#a7a598}
-.dl-grid{display:grid;grid-template-columns:1fr 1fr;gap:18px;max-width:660px;margin:38px auto 0}
+.dl-grid{display:grid;grid-template-columns:1fr;gap:18px;max-width:380px;margin:38px auto 0}
 .dl-item{
   padding:26px;border-radius:var(--radius);background:rgb(255 255 255/.045);
   border:1px solid rgb(255 255 255/.1);backdrop-filter:blur(6px);
@@ -309,12 +309,8 @@ kbd{
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12m0 0 5-5m-5 5-5-5"/><path d="M4 19h16"/></svg>
         下载安装包
       </a>
-      <a class="btn btn-ghost" href="https://github.com/YMTJ0522/Nota">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m8 9-3 3 3 3m8-6 3 3-3 3m-2-9-4 18"/></svg>
-        在 GitHub 上看
-      </a>
     </div>
-    <p class="hero-note rv" style="transition-delay:.3s">Windows 10 / 11 · 安装版 76 MB，免安装版 70 MB</p>
+    <p class="hero-note rv" style="transition-delay:.3s">Windows 10 / 11 · 安装版 76 MB</p>
 
     <div class="device-wrap rv" style="transition-delay:.18s">
       <div class="device" id="device">
@@ -525,13 +521,7 @@ kbd{
           <!-- 走自己的 /d/setup，不直连 GitHub：这样才能记到下载数，
                文件名也由 Worker 按当前版本号生成。 -->
           <a class="btn btn-primary" data-dl="setup" href="/d/setup">下载安装版</a>
-          <span class="btn-sub" style="color:#8f8d80">会写开始菜单与卸载入口，推荐</span>
-        </div>
-        <div class="dl-item">
-          <h4>免安装版</h4>
-          <div class="meta" data-dl-meta="portable">Windows 免安装版</div>
-          <a class="btn btn-ghost" style="background:rgb(255 255 255/.06);border-color:rgb(255 255 255/.16);color:#fff" data-dl="portable" href="/d/portable">下载免安装版</a>
-          <span class="btn-sub" style="color:#8f8d80">拷进 U 盘双击就跑，不写注册表</span>
+          <span class="btn-sub" style="color:#8f8d80">会写开始菜单与卸载入口</span>
         </div>
       </div>
       <div class="facts">
@@ -593,7 +583,7 @@ const row = document.getElementById('tapeRow')
 if (row) row.innerHTML += row.innerHTML
 
 /* ══ 下载入口：走自己的 Worker ══
-   按钮的 href 直接写 /d/setup、/d/portable，不再指向 GitHub Release ——
+   按钮的 href 直接写 /d/setup，不再指向 GitHub Release ——
    直连 GitHub 点下去就绕过了计数，后台那份数据也就没法信了。
    文件名由 Worker 按当前版本号拼，所以这里只补两样：
      · 按钮旁边那行文件名和体积（问 /api/info）；
@@ -614,7 +604,6 @@ if (row) row.innerHTML += row.innerHTML
     .then(function (d) {
       var as = d.assets || {}
       apply('setup', as.setup)
-      apply('portable', as.portable)
       if (d.version) {
         var v = document.querySelector('[data-dl-ver]')
         if (v) v.textContent = '当前版本 ' + d.version

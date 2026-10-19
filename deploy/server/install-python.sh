@@ -58,7 +58,7 @@ cp -f "$SRC/deploy/server/public/index.html" "$ROOT/index.html"
 cp -f "$SRC/site/icon.png" "$ROOT/icon.png"
 cp -f "$SRC"/site/shots/*.png "$ROOT/shots/" 2>/dev/null || true
 
-for kind in Setup Portable; do
+for kind in Setup; do
   lower="$(echo "$kind" | tr 'A-Z' 'a-z')"
   dst="$ROOT/d/${lower}.exe"
   [ -f "$dst" ] && { echo "    ${lower}.exe 已存在"; continue; }
@@ -74,8 +74,7 @@ cat > "$ROOT/info.json" <<JSON
 {
   "version": "${VER}",
   "assets": {
-    "setup": { "name": "Nota-Setup-${VER}.exe", "size": $(sz "$ROOT/d/setup.exe") },
-    "portable": { "name": "Nota-Portable-${VER}.exe", "size": $(sz "$ROOT/d/portable.exe") }
+    "setup": { "name": "Nota-Setup-${VER}.exe", "size": $(sz "$ROOT/d/setup.exe") }
   }
 }
 JSON
@@ -131,7 +130,7 @@ echo "    服务状态：$(systemctl is-active nota 2>/dev/null || echo 未知)"
 code="$(curl -s -o /dev/null -w '%{http_code}' -H "Host: ${DOMAIN}" "http://127.0.0.1:${PORT}/" || echo 000)"
 echo "    首页：HTTP $code"
 [ "$code" = "200" ] || warn "首页不是 200，看 journalctl -u nota -n 30"
-for k in setup portable; do
+for k in setup; do
   c="$(curl -s -o /dev/null -w '%{http_code}' -H "Host: ${DOMAIN}" "http://127.0.0.1:${PORT}/d/${k}.exe" || echo 000)"
   echo "    /d/${k}.exe：HTTP $c"
 done
@@ -142,7 +141,6 @@ cat <<TIP
 
   站点   http://${DOMAIN}
   下载   http://${DOMAIN}/d/setup.exe
-         http://${DOMAIN}/d/portable.exe
 
 这台机器没有 HTTPS（Python 自带的服务不支持），浏览器会提示「不安全」。
 能用，但要正经对外发，还是建议换系统装 nginx + 证书：
@@ -153,6 +151,5 @@ cat <<TIP
 看下载量（Python 自带的访问日志走 journald，没有单独文件）：
 
   journalctl -u nota | grep -c 'GET /d/setup.exe'
-  journalctl -u nota | grep -c 'GET /d/portable.exe'
 
 TIP

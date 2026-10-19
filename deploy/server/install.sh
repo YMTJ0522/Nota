@@ -67,7 +67,7 @@ echo "    页面与截图就位"
 
 # ── 4. 安装包 ──
 say "下载安装包（约 150 MB，看带宽）"
-for kind in Setup Portable; do
+for kind in Setup; do
   dst="$ROOT/dl/Nota-${kind}.exe"
   if [ -f "$dst" ]; then
     echo "    Nota-${kind}.exe 已存在，跳过"
@@ -85,8 +85,7 @@ cat > "$ROOT/info.json" <<JSON
 {
   "version": "${VER}",
   "assets": {
-    "setup": { "name": "Nota-Setup-${VER}.exe", "size": $(sz "$ROOT/dl/Nota-Setup.exe") },
-    "portable": { "name": "Nota-Portable-${VER}.exe", "size": $(sz "$ROOT/dl/Nota-Portable.exe") }
+    "setup": { "name": "Nota-Setup-${VER}.exe", "size": $(sz "$ROOT/dl/Nota-Setup.exe") }
   }
 }
 JSON
@@ -112,12 +111,6 @@ server {
         default_type application/octet-stream;
         add_header Content-Disposition 'attachment; filename="Nota-Setup-${VER}.exe"';
     }
-    location = /d/portable {
-        alias ${ROOT}/dl/Nota-Portable.exe;
-        default_type application/octet-stream;
-        add_header Content-Disposition 'attachment; filename="Nota-Portable-${VER}.exe"';
-    }
-
     # 版本信息给页面脚本读，别让它去问 GitHub
     location = /info.json {
         default_type application/json;
@@ -184,7 +177,7 @@ say "自检"
 code="$(curl -s -o /dev/null -w '%{http_code}' -H "Host: ${DOMAIN}" http://127.0.0.1/ || echo 000)"
 echo "    本机访问首页：HTTP $code"
 [ "$code" = "200" ] || warn "首页不是 200，检查 $ROOT/index.html 在不在"
-for k in setup portable; do
+for k in setup; do
   c="$(curl -s -o /dev/null -w '%{http_code}' -H "Host: ${DOMAIN}" "http://127.0.0.1/d/$k" || echo 000)"
   echo "    /d/$k：HTTP $c"
 done
@@ -195,7 +188,6 @@ cat <<TIP
 
   站点   http://${DOMAIN}
   下载   http://${DOMAIN}/d/setup
-         http://${DOMAIN}/d/portable
 
 如果浏览器打不开，但上面「本机访问」是 200，
 那就是云平台安全组没放行 80/443 —— 那个只能在网页控制台点。
@@ -203,7 +195,6 @@ cat <<TIP
 看下载量：
 
   grep -c '"GET /d/setup' /var/log/nginx/access.log
-  grep -c '"GET /d/portable' /var/log/nginx/access.log
 
 （logrotate 会轮转，历史量看 access.log.1 等）
 

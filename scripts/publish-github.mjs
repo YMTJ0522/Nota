@@ -33,10 +33,7 @@ const NOTES = fs
   .replace(/^#.*$/m, '') // 去掉 H1，标题由 API 自己写
   .trim()
 
-const FILES = [
-  { name: `Nota-Setup-${VERSION}.exe`, file: `release/Nota-Setup-${VERSION}.exe` },
-  { name: `Nota-Portable-${VERSION}.exe`, file: `release/Nota-Portable-${VERSION}.exe` },
-]
+const FILES = [{ name: `Nota-Setup-${VERSION}.exe`, file: `release/Nota-Setup-${VERSION}.exe` }]
 
 const run = (cmd, args, opts = {}) => {
   console.log(`  $ ${cmd} ${args.join(' ')}`)

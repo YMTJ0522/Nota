@@ -4,7 +4,7 @@
  *   2. 写回 package.json
  *   3. 清空 release/ 里的旧安装包（只留最新一份产物）
  *   4. 构建前端 + 主进程
- *   5. 调 electron-builder 出 NSIS 安装版 + Portable 免安装版
+ *   5. 调 electron-builder 出 NSIS 安装版
  *
  * 用法：
  *   node scripts/release.mjs           # 自动滚版（0.2.0 → 0.3.0）
@@ -109,7 +109,7 @@ function cleanRelease() {
      安装包单个 80+ MB，rename 是瞬时的，比删除还快。
 
      注意：rename 也可能失败——旧包若正被某个进程占用（比如上一次
-     打包出的 portable 版还在运行），Windows 会拒绝改名。
+     打包出的程序还在运行），Windows 会拒绝改名。
      这时**绝不能退回 rmSync**：那个删除动作会被安全层拦下，
      把整个打包流程一起带崩（而且体积大的 exe 走 trash 更容易失败）。
      改名失败就原样留着，最多是多占一份磁盘，下次打包再处理。 */
@@ -128,7 +128,7 @@ function cleanRelease() {
   if (skipped.length) {
     console.log(`  ⚠ 有 ${skipped.length} 个旧产物被占用，无法挪走（不影响本次打包）：`)
     for (const name of skipped) console.log(`      - ${name}`)
-    console.log('    多半是旧版 portable 还在运行。关掉它，或下次打包会自动处理。')
+    console.log('    多半是旧版程序还在运行。关掉它，或下次打包会自动处理。')
   }
   return doomed
 }
@@ -202,7 +202,7 @@ async function main() {
     if (!fs.existsSync(p)) return false
     return fs.statSync(p).mtimeMs >= builtAt - 1000
   }
-  const want = [`Nota-Setup-${target}.exe`, `Nota-Portable-${target}.exe`]
+  const want = [`Nota-Setup-${target}.exe`]
   const got = want.filter(fresh)
 
   if (builderError) {

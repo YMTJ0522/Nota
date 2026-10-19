@@ -137,10 +137,8 @@ async function main() {
   }
 
   const setup = findExe('Setup')
-  const portable = findExe('Portable')
   for (const [label, f] of [
     ['安装版', setup],
-    ['免安装版', portable],
   ]) {
     if (!f) warn(`release/ 里没找到 ${label} 的 .exe —— 这一步会跳过，之后必须补传，否则官网点了没反应`)
     else {
@@ -239,10 +237,7 @@ async function main() {
 
   /* ── 6. 传安装包 ── */
   say('上传安装包到 R2')
-  const targets = [
-    ['Nota-Setup.exe', setup],
-    ['Nota-Portable.exe', portable],
-  ]
+  const targets = [['Nota-Setup.exe', setup]]
   for (const [key, f] of targets) {
     if (!f) {
       warn(`跳过 ${key}（没有源文件）`)
@@ -300,7 +295,7 @@ async function main() {
   console.log(`
 \x1b[32m完成\x1b[0m  站点  https://${host}
         后台  https://${host}/admin
-        下载  https://${host}/d/setup  ·  https://${host}/d/portable
+        下载  https://${host}/d/setup
 
 第一次进去用 \x1b[1madmin / admin123\x1b[0m，然后在后台右上角「改账号密码」里换掉。
 新密码要求至少 10 位 —— 默认那 8 位只是为了让你进得去。
