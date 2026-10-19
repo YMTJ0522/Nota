@@ -296,7 +296,7 @@ kbd{
   <span class="orb orb-a" aria-hidden="true"></span>
   <span class="orb orb-b" aria-hidden="true"></span>
   <div class="wrap">
-    <span class="badge rv"><span class="dot"></span><span data-dl-badge>v2.7.2 · </span>Windows · 免费 · 开源</span>
+    <span class="badge rv"><span class="dot"></span><span data-dl-badge>v2.7.3 · </span>Windows · 免费 · 开源</span>
     <h1 class="rv" style="transition-delay:.06s">
       一个只做笔记的<br><span class="grad">笔记应用</span>
     </h1>
@@ -517,7 +517,7 @@ kbd{
       <div class="dl-grid">
         <div class="dl-item">
           <h4>安装版</h4>
-          <div class="meta" data-dl-meta="setup">Nota-Setup-2.7.2.exe · 76 MB</div>
+          <div class="meta" data-dl-meta="setup">Nota-Setup-2.7.3.exe · 77 MB</div>
           <!-- 直链落在自己域名下的 /d/setup.exe；带 .exe 后缀是故意的，
                任何静态服务器都能直接吐文件，浏览器存下来也是正常文件名 -->
           <a class="btn btn-primary" data-dl="setup" href="/d/setup.exe">下载安装版</a>
@@ -525,7 +525,7 @@ kbd{
         </div>
       </div>
       <div class="facts">
-        <span data-dl-ver>当前版本 2.7.2</span>
+        <span data-dl-ver>当前版本 2.7.3</span>
         <span>Windows 10 / 11 · 64 位</span>
         <span>界面字体：南西新圆体（随包）</span>
         <span><kbd>Ctrl</kbd>+<kbd>P</kbd> 跳转 · <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>F</kbd> 全文 · <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>G</kbd> 关系图</span>
@@ -578,34 +578,72 @@ if (device && matchMedia('(pointer:fine)').matches) {
 const row = document.getElementById('tapeRow')
 if (row) row.innerHTML += row.innerHTML
 
-/* ══ 版本与体积：读同目录的 info.json ══
-   HTML 里写死的版本号是兜底，页面不靠它说实话。
-   部署脚本会在站点旁边生成一份 info.json，把实际文件名、体积、
-   版本号写进去；开页面时取一次，取到什么就填什么。
-   取不到（本地双击打开 / 文件还没生成）就保持 HTML 里的兜底，
-   按钮照样能点。 */
-;(function localInfo() {
+/* ══ 版本与下载地址：两级来源 ══
+   HTML 里写死的那几行只是兜底，页面不靠它们说实话。
+
+   1. 先看同目录的 info.json —— 站点架在自己服务器上时由部署脚本生成，
+      文件小、同域、不会被限流，是主路径。这时下载按钮保持 /d/setup.exe，
+      URL 干净，下载次数也归自己。
+
+   2. 没有 info.json（还没架到自己的服务器上，或者刚装好还没生成）→
+      去问发布接口，拿最新版安装包的文件地址和版本号，直接挂到按钮上。
+      这一步只发生在脚本里：**页面上一个字都不提它从哪来**，
+      访客点下去拿到的是文件本身，不会落到任何发布页面上。
+
+   两级都失败就保持 HTML 里写好的兜底，按钮照样能点。 */
+;(function downloadSource() {
   var mb = function (n) { return n > 0 ? (n / 1048576).toFixed(0) + ' MB' : '' }
-  fetch('info.json')
+  var btn = document.querySelector('[data-dl="setup"]')
+  var meta = document.querySelector('[data-dl-meta="setup"]')
+  var verEl = document.querySelector('[data-dl-ver]')
+  var badge = document.querySelector('[data-dl-badge]')
+
+  var paint = function (name, size, version) {
+    if (name && meta) {
+      var s = mb(size || 0)
+      meta.textContent = s ? name + ' · ' + s : name
+    }
+    if (version) {
+      if (verEl) verEl.textContent = '当前版本 ' + version
+      if (badge) badge.textContent = 'v' + version + ' · '
+    }
+  }
+
+  fetch('info.json', { cache: 'no-cache' })
     .then(function (r) { return r.ok ? r.json() : Promise.reject(new Error('http ' + r.status)) })
     .then(function (d) {
-      var as = (d && d.assets) || {}
-      var a = as.setup
-      if (a && a.name) {
-        var m = document.querySelector('[data-dl-meta="setup"]')
-        if (m) {
-          var size = mb(a.size || 0)
-          m.textContent = size ? a.name + ' · ' + size : a.name
-        }
-      }
-      if (d && d.version) {
-        var v = document.querySelector('[data-dl-ver]')
-        if (v) v.textContent = '当前版本 ' + d.version
-        var b = document.querySelector('[data-dl-badge]')
-        if (b) b.textContent = 'v' + d.version + ' · '
-      }
+      var a = (d && d.assets && d.assets.setup) || {}
+      paint(a.name, a.size, d && d.version)
     })
-    .catch(function () { /* 兜底文字已经在 HTML 里 */ })
+    .catch(function () {
+      /* 站内没有 info.json。先看 /d/setup.exe 在不在 ——
+         站点架在自己服务器上时它是通的，那就保持这个干净地址
+         （链接里不含任何外站域名），只把版本号和体积补齐；
+         不在（比如还挂在 Pages 上）才把链接换成发布接口给的直链。 */
+      fetch('/d/setup.exe', { method: 'HEAD' })
+        .then(function (r) { if (!r.ok) throw new Error('http ' + r.status); askRelease(false) })
+        .catch(function () { askRelease(true) })
+    })
+
+  /* 问一次最新发布版：版本号、文件名、体积都拿真的。
+     只有 direct 为真时才改按钮地址（改了就绕过自己的服务器）。 */
+  function askRelease(direct) {
+    fetch('https://api.github.com/repos/YMTJ0522/Nota/releases/latest', {
+      headers: { Accept: 'application/vnd.github+json' },
+    })
+      .then(function (r) { return r.ok ? r.json() : Promise.reject(new Error('http ' + r.status)) })
+      .then(function (rel) {
+        var list = (rel && rel.assets) || []
+        var hit = null
+        for (var i = 0; i < list.length; i++) {
+          if (/setup/i.test(list[i].name || '')) { hit = list[i]; break }
+        }
+        if (!hit) return
+        if (direct && btn && hit.browser_download_url) btn.href = hit.browser_download_url
+        paint(hit.name, hit.size, String(rel.tag_name || '').replace(/^v/, ''))
+      })
+      .catch(function () { /* 兜底文字已经在 HTML 里 */ })
+  }
 })()
 </script>
 
