@@ -76,6 +76,30 @@ function syncCloudflareVersion(v) {
   return { changed: true, old, next: v }
 }
 
+/**
+ * 官网页面上有三处写死的兜底：徽标里的版本、文件名那行、以及「当前版本」。
+ * 它们会被同域 info.json 覆盖，但 info.json 只有自己服务器上才有 ——
+ * Pages 那份、或者服务器刚装好还没生成时，露出来的就是这三处写死的值。
+ * 忘了改就是「页面说 2.7.2，装完是 2.7.3」。
+ * 所以打包收尾时按实际产物一起改掉（体积用真实字节数算，不猜）。
+ */
+function syncSiteFallback(v, setupBytes) {
+  const p = path.join(ROOT, 'site', 'index.html')
+  if (!fs.existsSync(p)) return null
+  const before = fs.readFileSync(p, 'utf-8')
+  let s = before
+  s = s.replace(/(data-dl-badge[^>]*>)v[\d.]+/, `$1v${v}`)
+  s = s.replace(/(data-dl-meta="setup"[^>]*>)Nota-Setup-[\d.]+\.exe/, `$1Nota-Setup-${v}.exe`)
+  s = s.replace(/(data-dl-ver[^>]*>)当前版本 [\d.]+/, `$1当前版本 ${v}`)
+  if (setupBytes > 0) {
+    const mb = Math.round(setupBytes / 1048576)
+    s = s.replace(/(data-dl-meta="setup"[^>]*>[^<]*· )\d+ MB/, `$1${mb} MB`)
+  }
+  if (s === before) return { changed: false }
+  fs.writeFileSync(p, s, 'utf-8')
+  return { changed: true }
+}
+
 console.log(`\n当前版本：${current}`)
 console.log(NO_BUMP ? '按 --no-bump，沿用当前版本' : `新版本：  ${target}${PATCH ? '（--patch 修订号）' : ''}`)
 
@@ -240,6 +264,12 @@ async function main() {
     const stat = fs.statSync(path.join(RELEASE, name))
     console.log(`    ${name}  (${(stat.size / 1024 / 1024).toFixed(1)} MB)`)
   }
+
+  /* 官网兜底文案跟着走（见 syncSiteFallback 的说明） */
+  const setupPath = path.join(RELEASE, `Nota-Setup-${target}.exe`)
+  const setupBytes = fs.existsSync(setupPath) ? fs.statSync(setupPath).size : 0
+  const sf = syncSiteFallback(target, setupBytes)
+  if (sf?.changed) console.log(`  ✓ 官网兜底文案已同步到 ${target}${setupBytes ? `（${Math.round(setupBytes / 1048576)} MB）` : ''}`)
 }
 
 await main()

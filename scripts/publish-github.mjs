@@ -176,11 +176,41 @@ step('传安装包', () => {
 /* ── 5. 官网 ── */
 if (!NO_PUSH) {
   step('推官网到 gh-pages', () => {
-    const r = run('git', ['subtree', 'push', '--prefix', 'site', 'origin', 'gh-pages'])
-    if (r.code !== 0) {
-      console.error('  失败：', r.out.trim().split('\n').pop())
-      console.error('  同上，多半是代理。代码已经在本地提交了，换网络再跑这一步即可。')
-      process.exit(1)
+    if (DRY) {
+      console.log('  （dry）会重建 site 的内容树并直接推到 gh-pages')
+      return
+    }
+    /* 不用 git subtree push：本机跑 split 必卡死（几分钟后 SIGTERM），
+       换成「临时索引 → 写树 → 造提交 → 直接推」，秒过。
+       索引必须给绝对路径，否则会被解析到 --work-tree 里面去。 */
+    const idx = path.join(root, '.git', 'ghp-index')
+    const env = { ...process.env, GIT_INDEX_FILE: idx }
+    const git = (args) => {
+      const r = spawnSync('git', args, { cwd: root, encoding: 'utf8', env })
+      if (r.status !== 0) throw new Error((r.stderr || r.stdout || '').trim().split('\n').pop())
+      return (r.stdout || '').trim()
+    }
+
+    fs.rmSync(idx, { force: true })
+    try {
+      git(['--work-tree=site', 'add', '-A', '.'])
+      const tree = git(['write-tree'])
+      git(['fetch', '-f', 'origin', 'gh-pages:refs/tmp/ghp'])
+      const parent = git(['rev-parse', 'refs/tmp/ghp'])
+      const commit = git(['commit-tree', tree, '-p', parent, '-m', `官网 ${TAG}`])
+      const r = spawnSync('git', ['push', 'origin', `${commit}:refs/heads/gh-pages`], {
+        cwd: root,
+        encoding: 'utf8',
+      })
+      if (r.status !== 0) {
+        console.error('  失败：', (r.stderr || '').trim().split('\n').pop())
+        console.error('  代码与 Release 都已完成，只差官网；网络好一点再单独跑这一步即可。')
+        process.exit(1)
+      }
+      console.log(`  ✓ ${commit.slice(0, 7)} → gh-pages`)
+    } finally {
+      spawnSync('git', ['update-ref', '-d', 'refs/tmp/ghp'], { cwd: root })
+      fs.rmSync(idx, { force: true })
     }
   })
 }
