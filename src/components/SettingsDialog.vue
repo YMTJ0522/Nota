@@ -45,6 +45,21 @@ const emit = defineEmits<{ (e: 'close'): void }>()
 
 const { state } = store
 
+/**
+ * 重看新手引导。
+ *
+ * 这个入口原来挂在左侧栏底栏，跟「设置」并排两枚 28px 的图标 ——
+ * 底栏就 231px 宽，多一枚按钮直接从文件夹名字里抠，长一点的名字就只剩
+ * 省略号。引导是低频动作，挪进设置里最合适。
+ *
+ * 浮层由 App.vue 监听 `nota:tour` 打开；先关面板再发事件，
+ * 那几条提示瞄的是主界面，压在设置上面就全指错了。
+ */
+function replayTour() {
+  emit('close')
+  window.setTimeout(() => window.dispatchEvent(new CustomEvent('nota:tour')), 160)
+}
+
 /** 版本号由 vite define 注入（值取自 package.json），避免两处写死对不上 */
 const APP_VERSION: string = __APP_VERSION__
 
@@ -385,6 +400,14 @@ async function changeWorkspace() {
                   >
                     <span class="st-knob" />
                   </button>
+                </div>
+
+                <div class="st-row">
+                  <div class="st-label">
+                    <span class="st-name">新手引导</span>
+                    <span class="st-desc">第一次打开会自动走一遍，看漏了可以再走一次</span>
+                  </div>
+                  <button class="st-btn" @click="replayTour">重看引导</button>
                 </div>
               </template>
 

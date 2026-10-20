@@ -3,7 +3,6 @@ import { ref, watch, nextTick, computed, onMounted, onBeforeUnmount } from 'vue'
 import {
   Check,
   ChevronDown,
-  CircleHelp,
   Clock,
   FilePlus2,
   FileText,
@@ -693,9 +692,6 @@ onBeforeUnmount(() => document.removeEventListener('pointerdown', onDocPointer))
         </div>
 
         <span v-if="state.root" class="foot-sub">{{ navCounts.all }} 篇</span>
-        <button class="foot-btn" data-tip="重看引导" @click="openTour">
-          <CircleHelp :size="16" :stroke-width="1.9" />
-        </button>
         <button class="foot-btn" data-tip="设置" @click="settingsOpen = true">
           <Settings :size="16" :stroke-width="1.9" />
         </button>
@@ -742,9 +738,6 @@ onBeforeUnmount(() => document.removeEventListener('pointerdown', onDocPointer))
           @click="t.id === 'ai' ? openAi() : openLibrary(t.id === 'attach' ? 'attach' : 'trash')"
         >
           <component :is="t.icon" :size="16" :stroke-width="1.9" />
-        </button>
-        <button class="rail-btn" data-tip="重看引导" @click="openTour">
-          <CircleHelp :size="16" :stroke-width="1.9" />
         </button>
         <button class="rail-btn" data-tip="设置" @click="settingsOpen = true">
           <Settings :size="16" :stroke-width="1.9" />
