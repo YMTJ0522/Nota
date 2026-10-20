@@ -30,3 +30,7 @@ esbuild-test.mjs
 
 # publish-github.mjs 发版时临时拼的 Release 正文（用完即删）
 .tmp-release-body.json
+
+# python 编译缓存（remote-deploy.py / serve.py 会生成）
+__pycache__/
+*.pyc

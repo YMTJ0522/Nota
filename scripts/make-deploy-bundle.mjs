@@ -37,6 +37,9 @@ fs.mkdirSync(STAGE, { recursive: true })
 // 站点
 cpDir(path.join(root, 'site'), path.join(STAGE, 'site'))
 
+// 静态服务：多线程 + Range，装的时候顺带放到站点目录里
+fs.copyFileSync(path.join(root, 'deploy', 'server', 'serve.py'), path.join(STAGE, 'serve.py'))
+
 // 安装包：只收 Setup，官网本来也只展示这一个
 const setup = path.join(root, 'release', `Nota-Setup-${VERSION}.exe`)
 if (!fs.existsSync(setup)) {

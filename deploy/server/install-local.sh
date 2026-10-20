@@ -62,6 +62,8 @@ cp -f "$TMP"/site/shots/*.png "$ROOT/shots/" 2>/dev/null || true
 mkdir -p "$ROOT/d"
 [ -f "$TMP/d/setup.exe" ] && cp -f "$TMP/d/setup.exe" "$ROOT/d/setup.exe"
 cp -f "$TMP/info.json" "$ROOT/info.json" 2>/dev/null || true
+# serve.py：多线程 + Range 的静态服务（自带的 http.server 是单线程、不支持断点续传）
+cp -f "$TMP/serve.py" "$ROOT/serve.py" 2>/dev/null || true
 
 VER="$(cat "$TMP/VERSION" 2>/dev/null || echo '')"
 echo "    版本 ${VER:-未知}"
@@ -83,6 +85,14 @@ fi
 
 # ── 6. systemd ──
 say "配置开机自启"
+# 优先用 serve.py（多线程 + Range）；没这个文件才退回自带的 http.server
+if [ -f "$ROOT/serve.py" ]; then
+  EXEC="${PY} ${ROOT}/serve.py ${PORT}"
+  echo "    用 serve.py（多线程 + 断点续传）"
+else
+  EXEC="${PY} -m ${MOD} ${PORT}"
+  echo "    用 ${MOD}（单线程 —— 有人下载时整站会排队）"
+fi
 cat > /etc/systemd/system/nota.service <<UNIT
 [Unit]
 Description=Nota site (python static server)
@@ -91,7 +101,7 @@ After=network.target
 [Service]
 Type=simple
 WorkingDirectory=${ROOT}
-ExecStart=${PY} -m ${MOD} ${PORT}
+ExecStart=${EXEC}
 Restart=always
 RestartSec=3
 
