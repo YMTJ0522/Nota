@@ -153,23 +153,65 @@ kbd{
   width:4px;height:4px;border-radius:50%;background:#54554d;
 }
 .device-screen img{display:block;width:100%;height:auto;border-radius:2px;background:#fff}
-/* 下半：底座，比屏幕宽出一点，正中间那道凹槽是用来抠开盖子的 */
+/* 下半：键盘面。
+   光画一块比屏幕宽的横条没用 —— 那是「平板架在支架上」。笔记本真正认得出来的
+   是**露出键盘的那一截下半身**，而且必须是透视的：靠近观者的一边宽、贴铰链的
+   一边窄。所以这里用真 3D 转：rotateX 把矩形压扁，perspective 让远端收窄，
+   键盘和触控板都还在原来的坐标系里摆，跟着一起变形。 */
 .device-base{
-  position:relative;height:16px;margin:0 -2.2%;
-  border-radius:2px 2px 13px 13px;
-  background:linear-gradient(180deg,#585950,#33342d 52%,#212219);
-  box-shadow:0 1px 0 rgb(255 255 255/.07) inset,0 24px 36px -20px rgb(20 20 16/.55);
+  position:relative;height:228px;margin:-1px -3.4% 0;
+  transform-origin:50% 0;
+  transform:perspective(2900px) rotateX(70deg);
+  background:linear-gradient(180deg,#5b5c51,#45463c 28%,#35362d 72%,#2a2b22);
+  border-radius:0 0 6px 6px;
+  box-shadow:inset 0 -3px 0 rgb(255 255 255/.13),0 22px 40px -18px rgb(20 20 16/.5);
 }
+/* 贴铰链那条阴影：屏幕把下半身的里端压暗了 */
 .device-base::before{
+  content:"";position:absolute;inset:0 0 auto;height:26px;
+  background:linear-gradient(180deg,rgb(12 12 8/.75),transparent);
+}
+/* 抠开盖子的凹槽，在里端正中间 */
+.device-base::after{
   content:"";position:absolute;top:0;left:50%;transform:translateX(-50%);
-  width:148px;height:6px;border-radius:0 0 8px 8px;background:#15160f;
-  box-shadow:0 1px 0 rgb(255 255 255/.05);
+  width:13%;height:9px;border-radius:0 0 5px 5px;background:#11120c;
+}
+/* 键区：横向一条条排下来，靠重复渐变画键缝，别真去铺几十个 div */
+.deck-keys{
+  position:absolute;left:6.5%;right:6.5%;top:10%;height:55%;
+  border-radius:4px;
+  background:
+    repeating-linear-gradient(180deg,
+      #1c1d16 0 12px, #0a0b06 12px 15px),
+    #15160f;
+  box-shadow:inset 0 0 0 1px rgb(255 255 255/.07),0 1px 0 rgb(255 255 255/.08);
+}
+/* 一行键里的竖缝：淡一层，密度靠 --k 控制 */
+.deck-keys::before{
+  content:"";position:absolute;inset:0;border-radius:4px;
+  background:repeating-linear-gradient(90deg,
+    transparent 0 30px, rgb(0 0 0/.55) 30px 32px);
+  mix-blend-mode:multiply;
+}
+/* 功能键那一条（最上面一行窄的） */
+.deck-keys::after{
+  content:"";position:absolute;left:0;right:0;top:0;height:10px;
+  background:linear-gradient(180deg,#0b0c07,#14150f);
+  border-radius:4px 4px 0 0;
+}
+/* 触控板：跟面板同色，只靠一圈细缝分出来 —— 真机就是这样，
+   涂成亮灰会像贴在机器前面的一块胶垫。 */
+.deck-pad{
+  position:absolute;left:50%;transform:translateX(-50%);
+  top:70%;width:30%;height:21%;border-radius:5px;
+  background:#55564b;
+  box-shadow:inset 0 0 0 1px rgb(0 0 0/.5),0 1px 0 rgb(255 255 255/.06);
 }
 /* 桌上的落影 */
 .device-glow{
-  height:46px;margin:-6px auto 0;max-width:80%;border-radius:50%;
-  background:radial-gradient(ellipse at 50% 10%,rgb(20 20 16/.2),transparent 70%);
-  filter:blur(10px);
+  height:46px;margin:-14px auto 0;max-width:84%;border-radius:50%;
+  background:radial-gradient(ellipse at 50% 10%,rgb(20 20 16/.22),transparent 70%);
+  filter:blur(12px);
 }
 
 /* ══ 跑马灯：一行关键词缓慢滚过，代替一块「支持列表」 ══ */
@@ -334,7 +376,10 @@ kbd{
         <div class="device-screen">
           <img src="shots/hero.png" width="3000" height="1880" alt="Nota 的分栏视图：左边是 Markdown 源码，右边是实时渲染的结果" loading="eager">
         </div>
-        <div class="device-base"></div>
+        <div class="device-base">
+          <div class="deck-keys" aria-hidden="true"></div>
+          <div class="deck-pad" aria-hidden="true"></div>
+        </div>
       </div>
       <div class="device-glow" aria-hidden="true"></div>
     </div>

@@ -9,8 +9,8 @@
 # 这一步能不能过全看运气。这版所有文件都在包里，服务器只做本地动作。
 #
 # 为什么不用 nginx：CentOS 7 在 2024-06 停止维护，官方源已下线，
-# yum 连 metadata 都拉不到。只能靠系统自带的东西，所以是 Python 的 http.server。
-# 代价照说：单线程，两个人同时下 80MB 会排队；没有 HTTPS。
+# yum 连 metadata 都拉不到。只能靠系统自带的东西，所以是 Python 的 serve.py。
+# 80 只做 301 跳转，真站点在 443；证书由 setup-tls.sh（acme.sh）签，放 /etc/nota/。
 #
 set -euo pipefail
 
@@ -39,6 +39,14 @@ fi
 echo "    $PY（$("$PY" -V 2>&1)），模块 $MOD"
 
 # ── 2. 端口占用 ──
+# 先停掉自己的服务：重装时正是它在听 80，不停就会把自己判成「别人占了端口」，
+# 脚本第一步就退出（这个坑踩过一次）。
+if systemctl is-active nota >/dev/null 2>&1; then
+  echo "    先停掉正在运行的 nota 服务"
+  systemctl stop nota || true
+  sleep 1
+fi
+
 if command -v ss >/dev/null 2>&1 && ss -ltn 2>/dev/null | grep -q ":${PORT} "; then
   warn "端口 ${PORT} 已经被别的进程占了："
   ss -ltnp 2>/dev/null | grep ":${PORT} " || true
@@ -123,24 +131,53 @@ if command -v firewall-cmd >/dev/null 2>&1 && firewall-cmd --state >/dev/null 2>
 fi
 
 # ── 8. 自检 ──
+# 注意：装过 TLS 之后，80 端口除了 /.well-known/ 一律 301 到 443，
+# 所以 80 上拿到 301 是**正常**的，真正要验的是 443 上的 200。
+# （这段一开始只认 200，装了证书之后每次都报「首页不是 200」，白查半天。）
 say "自检"
 echo "    服务：$(systemctl is-active nota 2>/dev/null || echo 未知)"
-c1="$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:${PORT}/" || echo 000)"
-echo "    首页      HTTP $c1"
-c2="$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:${PORT}/d/setup.exe" || echo 000)"
-echo "    /d/setup.exe  HTTP $c2"
-c3="$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:${PORT}/info.json" || echo 000)"
-echo "    /info.json    HTTP $c3"
-[ "$c1" = "200" ] || warn "首页不是 200，看 journalctl -u nota -n 30"
+
+probe() {  # probe <url> [curl 额外参数]
+  local u="$1"; shift
+  curl -sk -o /dev/null -w '%{http_code}' "$@" "$u" 2>/dev/null || echo 000
+}
+
+c80="$(probe "http://127.0.0.1:${PORT}/")"
+echo "    80 跳转       HTTP $c80"
+
+if [ -f /etc/nota/fullchain.pem ] && [ -f /etc/nota/key.pem ]; then
+  c1="$(probe "https://127.0.0.1/")"
+  c2="$(probe "https://127.0.0.1/d/setup.exe" -r 0-0)"
+  c3="$(probe "https://127.0.0.1/info.json")"
+  echo "    https 首页     HTTP $c1"
+  echo "    https 下载     HTTP $c2（续传 RANGE 生效即为 206）"
+  echo "    https info     HTTP $c3"
+  [ "$c1" = "200" ] || warn "https 首页不是 200，看 journalctl -u nota -n 30"
+  [ "$c2" = "206" ] || warn "下载不是 206，Range 没生效（serve.py 没跑起来？）"
+  case "$c80" in
+    301|302|308) ;;
+    *) warn "80 没有跳转到 https（当前 $c80），脚本这版应该跳" ;;
+  esac
+else
+  # 还没签证书：这时候 80 上是直接出内容，200 才算正常
+  c1="$(probe "http://127.0.0.1:${PORT}/")"
+  c2="$(probe "http://127.0.0.1:${PORT}/d/setup.exe" -r 0-0)"
+  c3="$(probe "http://127.0.0.1:${PORT}/info.json")"
+  echo "    首页          HTTP $c1"
+  echo "    /d/setup.exe  HTTP $c2"
+  echo "    /info.json    HTTP $c3"
+  [ "$c1" = "200" ] || warn "首页不是 200，看 journalctl -u nota -n 30"
+fi
 
 cat <<TIP
 
-\033[32m完成\033[0m
+$(printf '\033[32m完成\033[0m')
 
-  站点   http://${DOMAIN}/
-  下载   http://${DOMAIN}/d/setup.exe
+  站点   https://${DOMAIN}/
+  下载   https://${DOMAIN}/d/setup.exe
 
-没有 HTTPS（Python 自带服务不支持），浏览器会提示「不安全」。
-要看访问日志：journalctl -u nota | grep 'GET /d/setup.exe'
+证书到期前 acme.sh 的 cron 会自己续（每天 03:17）。手动验：
+  curl -sI https://${DOMAIN}/ | head -1
+看谁在下载：journalctl -u nota | grep 'GET /d/setup.exe'
 
 TIP

@@ -128,6 +128,8 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--probe', action='store_true', help='只看环境，不动文件')
     ap.add_argument('--quick', action='store_true', help='只更新页面与截图，不传安装包')
+    ap.add_argument('--rerun', action='store_true',
+                    help='只推安装脚本，用服务器上已有的 /root/nota-site.tgz 重跑一遍')
     ap.add_argument('--bundle', default=BUNDLE, help='本地部署包路径')
     args = ap.parse_args()
 
@@ -154,7 +156,15 @@ def main():
 
     sftp = cli.open_sftp()
 
-    if args.quick:
+    if args.rerun:
+        # 服务器上已经有包了，只想换安装脚本再跑一遍（改自检文案、改 unit 之类）
+        print('\n== 重跑模式：只推安装脚本 ==')
+        put(sftp, INSTALL, '/root/install-local.sh', '安装脚本')
+        sftp.close()
+        code, _ = run(cli, 'bash /root/install-local.sh /root/nota-site.tgz')
+        print(f'\n安装脚本退出码：{code}')
+
+    elif args.quick:
         print('\n== 快速模式：只更新站点 ==')
         sync_site(cli, sftp)
         put(sftp, SERVE, f'{ROOT}/serve.py')
@@ -192,8 +202,11 @@ systemctl daemon-reload; systemctl enable nota >/dev/null 2>&1; true''')
         code, _ = run(cli, 'bash /root/install-local.sh /root/nota-site.tgz')
         print(f'\n安装脚本退出码：{code}')
 
-    run(cli, 'curl -s -o /dev/null -w "本机首页 %{http_code}\\n" http://127.0.0.1/')
-    run(cli, 'curl -s -o /dev/null -w "本机下载(Range 1000B) %{http_code} %{size_download}\\n" -r 0-1000 http://127.0.0.1/d/setup.exe')
+    # 80 装了 TLS 之后只做 301，真正要验的是 443（-k 因为证书是给域名签的，
+    # 从 127.0.0.1 访会报 mismatch，这里只关心服务本身通不通）
+    run(cli, 'curl -sk -o /dev/null -w "本机首页(https) %{http_code}\\n" https://127.0.0.1/')
+    run(cli, 'curl -sk -o /dev/null -w "本机下载(Range 1000B) %{http_code} %{size_download}\\n" -r 0-1000 https://127.0.0.1/d/setup.exe')
+    run(cli, 'curl -s -o /dev/null -w "80 跳转 %{http_code}\\n" http://127.0.0.1/')
     _, out = run(cli, f'grep -c device-base {ROOT}/index.html || true', quiet=True)
     print(f'\n服务器上的页面含 device-base：{out.strip()} 处')
     cli.close()
