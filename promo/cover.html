@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>Nota 封面</title>
+<!--
+  朋友圈 / 小红书 首图，1080×1440（4:3）。
+
+  上一版这里画了个绿色圆角方块当 logo —— 那是错的，用户一眼就看出来了。
+  这次所有图形都来自应用自己：
+    · 图标   docs/icon-big.png（打包进安装包的那张，722²）
+    · 截图   site/shots/hero.png（2x，3000×1880）
+  没有一处是手画的。
+-->
+<style>
+:root{
+  --paper:#faf9f5; --card:#fff; --ink:#1f1e1a; --ink-2:#55534e; --ink-3:#8d897e;
+  --line:#e7e3d9; --accent:#2f6f52;
+  --font:"PingFang SC","Microsoft YaHei","Noto Sans CJK SC",system-ui,sans-serif;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{width:1080px;height:1440px;overflow:hidden}
+body{
+  background:var(--paper);font-family:var(--font);color:var(--ink);
+  -webkit-font-smoothing:antialiased;position:relative;
+}
+/* 极淡纸纹，跟官网同一套观感 */
+body::before{
+  content:"";position:absolute;inset:0;pointer-events:none;opacity:.55;
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2'/%3E%3CfeColorMatrix values='0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 .03 0'/%3E%3C/filter%3E%3Crect width='140' height='140' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+.wrap{position:relative;padding:72px 80px 0}
+
+.head{display:flex;align-items:center;gap:16px}
+.head img{width:64px;height:64px;border-radius:18px;display:block;
+  box-shadow:0 6px 18px -8px rgb(47 111 82/.45)}
+.head b{font-size:38px;letter-spacing:-.02em}
+.pill{
+  margin-left:auto;font-size:22px;color:var(--ink-2);padding:10px 24px;border-radius:999px;
+  border:1px solid var(--line);background:var(--card);
+}
+
+h1{font-size:104px;line-height:1.16;letter-spacing:-.045em;margin-top:56px;font-weight:700}
+h1 em{font-style:normal;color:var(--accent);display:block}
+.sub{margin-top:28px;font-size:31px;line-height:1.72;color:var(--ink-2)}
+
+/* 截图：贴住下边缘。高度让它自己算（图是 3000×1880，宽 920 → 高 577），
+   别写死容器高度 —— 写死就会在图下面留一块白，看着像窗口缺了一截。 */
+.shot{
+  position:absolute;left:80px;right:80px;top:726px;
+  border-radius:16px;overflow:hidden;background:#fff;
+  border:1px solid var(--line);
+  box-shadow:0 40px 90px -40px rgb(50 45 32/.45);
+}
+.shot img{display:block;width:100%;height:auto}
+
+/* 底部一条：三个卖点 + 域名 */
+.facts{
+  position:absolute;left:80px;right:80px;bottom:44px;display:flex;align-items:center;
+  gap:14px;font-size:23px;color:var(--ink-2);
+}
+.facts span{
+  padding:9px 20px;border-radius:999px;background:var(--card);border:1px solid var(--line);
+}
+.facts i{margin-left:auto;font-style:normal;color:var(--accent);font-size:24px;font-weight:600}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="head">
+    <img src="./icon.png" alt="Nota">
+    <b>Nota</b>
+    <span class="pill">Windows · 免费 · 开源</span>
+  </div>
+
+  <h1>文件躺在<br>你自己的<em>硬盘里。</em></h1>
+  <p class="sub">就是一个普通的 .md 文件夹。<br>不联网、不上传、不要账号。</p>
+
+  <div class="shot">
+    <img src="./hero.png" alt="">
+  </div>
+</div>
+
+<div class="facts">
+  <span>断网也能写</span><span>双链 · 关系图</span><span>PDF / Word 导出</span>
+  <i>ymtj.hyper99.top</i>
+</div>
+</body>
+</html>

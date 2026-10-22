@@ -136,6 +136,31 @@ const NOTES = {
     '',
     '配套示例在 [[Linux 命令行入门]]。',
   ].join('\n'),
+  /* 下面几篇是为了让关系图有层次：一篇枢纽、几个中层、两个孤岛。
+     只有 4 篇的时候图上就一颗星星孤零零挂在中间，跟文案里那句
+     「列表能告诉你有 60 篇，但看不出哪篇是枢纽」对不上。 */
+  '/ws/Docker 常用命令.md': [
+    '# Docker 常用命令',
+    '',
+    '`docker ps -a` 看容器，`docker logs -f` 跟日志，`docker exec -it` 进容器。',
+    '',
+    '排错思路还是照着 [[Linux 命令行入门]] 来。',
+  ].join('\n'),
+  '/ws/网络排查.md': [
+    '# 网络排查',
+    '',
+    '先看链路（`ping`、`traceroute`），再看端口（`ss -lntp`），最后才怀疑 DNS。',
+    '',
+    '端口那一段见 [[进程与端口]]。',
+  ].join('\n'),
+  '/ws/备份与恢复.md': [
+    '# 备份与恢复',
+    '',
+    '每天夜里跑一次增量，每周做一次全量，恢复要真的试过才算有备份。',
+    '',
+    '脚本写法在 [[Shell 脚本]]，用到的命令见 [[Linux 命令行入门]]。',
+  ].join('\n'),
+  '/ws/待整理.md': '# 待整理\n\n几段还没归位的东西，谁都没提它。\n',
   '/ws/旧稿.md': '# 旧稿\n\n这一篇谁的都没提，孤零零地放着。\n',
 }
 
@@ -158,6 +183,10 @@ function treeOf() {
         file('Linux 命令行入门.md', ['Linux']),
         file('进程与端口.md', ['Linux']),
         file('Shell 脚本.md', ['Linux']),
+        file('Docker 常用命令.md', ['Docker']),
+        file('网络排查.md', ['网络']),
+        file('备份与恢复.md', ['运维']),
+        file('待整理.md'),
         file('旧稿.md'),
       ],
     },
@@ -175,6 +204,13 @@ const INJECT = makeInject({ notes, tree: treeOf() })
 
 await send('Page.navigate', { url: `http://127.0.0.1:${PORT}/` })
 await sleep(1200)
+/* 新手引导（2.7.2 加的）第一次打开会自动弹，正好压在左侧栏上 ——
+   拍出来的图右下角永远挂着半张卡片。它只在 localStorage 没有
+   `nota-tour-seen` 时才弹，所以先标记成看过、再整页重载一次。
+   别改成截完再关：这脚本 6 张图之间不回首页，第 1 张就已经被遮住了。 */
+await evaluate(`localStorage.setItem('nota-tour-seen', '1')`)
+await send('Page.reload', {})
+await sleep(1400)
 await evaluate(INJECT)
 await evaluate(`document.querySelector('.cta')?.click()`)
 await sleep(1200)
@@ -189,6 +225,20 @@ await evaluate(`
   })()
 `)
 await sleep(1800)
+
+/* 滚到某个小节的标题 → 让标题正好离预览区顶 28px。
+   直接写 scrollTop = 700 的话，落点全看文章内容多长：这次改完笔记集，
+   顶上就切出半行表格，看着像渲染坏了。 */
+const scrollToHeading = async (text) => {
+  await evaluate(`(() => {
+    const p = document.querySelector('.preview'); if (!p) return false
+    const h = [...p.querySelectorAll('h2')].find((e) => e.textContent.includes(${JSON.stringify(text)}))
+    if (!h) return false
+    p.scrollTop += Math.round(h.getBoundingClientRect().top - p.getBoundingClientRect().top - 28)
+    return true
+  })()`)
+  await sleep(700)
+}
 
 const clickMode = async (label) => {
   await evaluate(
@@ -224,8 +274,7 @@ console.log('  →', await shot(`${OUT}/hero.png`))
 /* ② 阅读模式的排版：滚到表格与图表那一屏 —— 看的是排版，不是语法清单 */
 await clickMode('阅读')
 await sleep(2600)
-await evaluate(`(() => { const p = document.querySelector('.preview'); if (p) p.scrollTop = 700; return !!p })()`)
-await sleep(900)
+await scrollToHeading('目录与文件')
 console.log('  →', await shot(`${OUT}/article.png`))
 
 /* ③ 大纲：中间那一列的页签 */
@@ -251,7 +300,7 @@ await evaluate(`
 await sleep(3400)
 console.log('  →', await shot(`${OUT}/graph.png`))
 
-/* ⑤ 搜索面板：正文里搜「备份」，标题里没有这个词 */
+/* ⑤ 搜索面板：搜「脚本」—— 标题和正文都命中，两段结果都露出来 */
 await evaluate(`
   (() => {
     const b = [...document.querySelectorAll('.nav-item')].find((x) => x.textContent.includes('关系图'))
@@ -260,6 +309,23 @@ await evaluate(`
   })()
 `)
 await sleep(700)
+/* 中间栏上一张切在大纲，这里回到笔记列表 —— 搜索浮层压在一屏正常界面上
+   才读得懂，压着大纲会让人以为搜索只能搜标题。 */
+await evaluate(`(() => {
+  const b = [...document.querySelectorAll('.col-tab')].find((x) => x.textContent.includes('笔记'))
+  b?.click()
+  return !!b
+})()`)
+await sleep(500)
+/* 退关系图那一下会把左侧栏收成 rail（只剩图标列），图上就少了一整列笔记列表 ——
+   看着像坏了。这里点一下 rail 上的展开按钮把列表要回来（本来就展开时
+   文档里没有 .rail-btn，什么也不做）。 */
+await evaluate(`(() => {
+  const b = document.querySelector('.rail-btn')
+  if (b) { b.click(); return 're-expanded' }
+  return 'already-expanded'
+})()`)
+await sleep(600)
 await evaluate(`
   window.dispatchEvent(new KeyboardEvent('keydown', { key: 'F', ctrlKey: true, shiftKey: true, bubbles: true }))
 `)
@@ -267,7 +333,7 @@ await sleep(400)
 await evaluate(`
   (() => {
     const i = document.querySelector('.sp-input')
-    i.value = '备份'
+    i.value = '脚本'
     i.dispatchEvent(new Event('input', { bubbles: true }))
     return true
   })()
@@ -290,8 +356,7 @@ await evaluate(`
 await sleep(500)
 await clickMode('阅读')
 await sleep(2400)
-await evaluate(`(() => { const p = document.querySelector('.preview'); if (p) p.scrollTop = 900; return !!p })()`)
-await sleep(900)
+await scrollToHeading('写第一个脚本')
 console.log('  →', await shot(`${OUT}/dark.png`))
 
 await close()

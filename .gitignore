@@ -38,3 +38,6 @@ __pycache__/
 # 宣传片渲染的中间产物（逐帧截出来的图，随时能重出）
 promo/stills/
 promo/demo-stills/
+
+# 封面渲染出来的成品（重新跑 scripts/render-cover.mjs 就有）
+promo/cover-43.png

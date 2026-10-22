@@ -128,7 +128,9 @@ kbd{
   -webkit-background-clip:text;background-clip:text;color:transparent;
 }
 .hero .lede{
-  max-width:640px;margin:22px auto 0;font-size:clamp(16px,2vw,19px);color:var(--ink-2);
+  /* 640px 时副标题第二行末尾的「字。」会被挤到第三行单挂一个字，
+     提到 700 正好收在一行里 */
+  max-width:700px;margin:22px auto 0;font-size:clamp(16px,2vw,19px);color:var(--ink-2);
 }
 .hero-btns{display:flex;gap:14px;justify-content:center;flex-wrap:wrap;margin-top:36px}
 .hero-note{margin-top:18px;font-size:13px;color:var(--ink-3)}
@@ -369,7 +371,7 @@ kbd{
         下载安装包
       </a>
     </div>
-    <p class="hero-note rv" style="transition-delay:.3s">Windows 10 / 11 · 安装版 76 MB</p>
+    <p class="hero-note rv" style="transition-delay:.3s">Windows 10 / 11 · 安装版 77 MB</p>
 
     <div class="device-wrap rv" style="transition-delay:.18s">
       <div class="device" id="device">
