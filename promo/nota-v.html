@@ -1,0 +1,271 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<!-- 空 favicon：不给的话浏览器会去要 /favicon.ico，静态服务没有 index.html 兜底就会 500 崩 -->
+<link rel="icon" href="data:,">
+<title>Nota 宣传片舞台</title>
+<style>
+  /* 这块是「逐帧可控」的舞台，不是给人滚的网页：
+     所有动画都不写 transition / animation —— 由 window.seek(ms) 直接算位置，
+     录帧时一帧一个时间点，成片才可复现（写 transition 的话每帧都要等浏览器过渡，
+     采到的会是上一次的残影）。
+     注意：这个目录千万别叫 .tmp-*：cdp-harness 的 purgeStale() 会把 15 分钟前的
+     .tmp-* 目录当垃圾删掉，渲到一半源头就没了。 */
+  :root{
+    --paper:#faf9f5; --ink:#1f1e1a; --ink-2:#55534e; --ink-3:#8d897e;
+    --line:#e7e3d9; --accent:#2f6f52;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{width:1920px;height:1080px;overflow:hidden;background:#0d0e0a;
+    font-family:"PingFang SC","Microsoft YaHei","Noto Sans CJK SC",system-ui,sans-serif;
+    -webkit-font-smoothing:antialiased}
+  #stage{position:relative;width:1920px;height:1080px;overflow:hidden}
+
+  .scene{position:absolute;inset:0;opacity:0;will-change:opacity}
+
+  .paper{background:
+    radial-gradient(1100px 700px at 80% -10%, #eef4ee 0%, transparent 62%),
+    radial-gradient(900px 600px at 6% 108%, #f2eee2 0%, transparent 60%),
+    var(--paper)}
+  .grain::after{content:"";position:absolute;inset:0;pointer-events:none;opacity:.45;
+    background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2'/%3E%3CfeColorMatrix values='0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 .03 0'/%3E%3C/filter%3E%3Crect width='140' height='140' filter='url(%23n)'/%3E%3C/svg%3E")}
+
+  .kicker{font-size:30px;letter-spacing:.22em;color:var(--accent);font-weight:700}
+  h2{font-size:104px;line-height:1.16;letter-spacing:-.035em;font-weight:800;color:var(--ink)}
+  h2 .g{color:var(--accent)}
+  .lead{font-size:34px;line-height:1.8;color:var(--ink-2)}
+
+  .card{position:absolute;border-radius:18px;background:#fff;overflow:hidden;
+    box-shadow:0 3px 8px rgb(50 45 32/.08), 0 60px 120px -50px rgb(50 45 32/.55);
+    border:1px solid var(--line)}
+  .card img{display:block;width:100%;height:auto}
+  .bar{height:46px;display:flex;align-items:center;gap:9px;padding:0 20px;
+    background:#f4f2ea;border-bottom:1px solid var(--line)}
+  .bar i{width:12px;height:12px;border-radius:50%;background:#d8d3c4;display:block}
+  .bar b{margin-left:14px;font-size:20px;font-weight:500;color:var(--ink-3);letter-spacing:.02em}
+
+  #s1 .logo{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);text-align:center}
+  #s1 .mark{width:132px;height:132px;border-radius:38px;margin:0 auto 46px;
+    background:linear-gradient(160deg,#3a8563,#2a6247);
+    box-shadow:0 30px 60px -22px rgb(20 60 44/.55),inset 0 -6px 0 rgb(0 0 0/.18)}
+  #s1 .name{font-size:92px;font-weight:800;letter-spacing:-.03em;color:var(--ink)}
+  #s1 .desc{margin-top:22px;font-size:34px;color:var(--ink-3);letter-spacing:.16em}
+
+  #s2 .center{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);
+    width:1400px;text-align:center}
+  #s2 h2{font-size:96px}
+
+  .txt{position:absolute;left:150px;width:700px}
+  .shotr{position:absolute;left:830px;top:225px;width:940px;height:auto}
+
+  #s8 .end{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:1500px;text-align:center}
+  #s8 .url{margin-top:44px;font-size:44px;color:var(--accent);font-weight:700;letter-spacing:-.01em}
+  #s8 .btn{display:inline-block;margin-top:46px;padding:26px 62px;border-radius:999px;
+    background:var(--accent);color:#fff;font-size:34px;font-weight:700;
+    box-shadow:0 26px 50px -22px rgb(30 80 58/.7)}
+  #s8 .tag{margin-top:38px;font-size:26px;color:var(--ink-3);letter-spacing:.08em}
+
+  #prog{position:absolute;left:0;bottom:0;height:4px;background:rgb(47 111 82/.55);width:0}
+
+  /* ── 竖屏覆盖（1080×1920，抖音 / 视频号）──
+     只改尺寸与定位，动画代码一行没动，同一条时间线出两种画幅。
+     .txt 的 top 是写在标签上的内联样式，这里必须 !important 才压得住。 */
+  html,body{width:1080px;height:1920px}
+  #stage{width:1080px;height:1920px}
+  h2{font-size:82px}
+  .lead{font-size:31px;line-height:1.85}
+  .kicker{font-size:25px;letter-spacing:.2em}
+  .txt{left:88px;right:88px;width:auto;top:296px!important}
+  .shotr{left:88px;right:88px;width:auto;top:846px}
+  #s2 .center{width:904px}
+  #s2 h2{font-size:70px}
+  #s1 .mark{width:110px;height:110px;border-radius:32px;margin-bottom:38px}
+  #s1 .name{font-size:80px}
+  #s1 .desc{font-size:29px}
+  #s8 .end{width:904px}
+  #s8 h2{font-size:82px}
+  #s8 .url{font-size:38px}
+  #s8 .btn{font-size:30px;padding:24px 52px}
+  #s8 .tag{font-size:23px}
+</style>
+</head>
+<body>
+<div id="stage">
+  <section class="scene paper grain" id="s1">
+    <div class="logo">
+      <div class="mark" id="s1mark"></div>
+      <div class="name" id="s1name">Nota</div>
+      <div class="desc" id="s1desc">一个只做笔记的笔记应用</div>
+    </div>
+  </section>
+
+  <section class="scene" id="s2" style="background:#12130e">
+    <div class="center">
+      <h2 id="s2a" style="color:#f4f2e9">你的笔记，</h2>
+      <h2 id="s2b" style="margin-top:18px;color:#8d897e">现在存在谁的硬盘上？</h2>
+    </div>
+  </section>
+
+  <section class="scene paper grain" id="s3">
+    <div class="txt" style="top:300px">
+      <div class="kicker" id="s3k">01 — 文件在哪</div>
+      <h2 id="s3h" style="margin-top:26px;font-size:88px">就是一个<br><span class="g">.md 文件夹</span></h2>
+      <p class="lead" id="s3p">没有数据库，没有私有格式。<br>换任何编辑器打开，都还是你写的那些字。</p>
+    </div>
+    <div class="card shotr" id="s3card">
+      <div class="bar"><i></i><i></i><i></i><b>D:\笔记归档 2026</b></div>
+      <img src="shots/hero.png" alt="">
+    </div>
+  </section>
+
+  <section class="scene paper grain" id="s4">
+    <div class="txt" style="top:300px">
+      <div class="kicker" id="s4k">02 — 找得到</div>
+      <h2 id="s4h" style="margin-top:26px;font-size:88px">大纲、引用、<br><span class="g">全文搜索</span></h2>
+      <p class="lead" id="s4p">中栏切一页就换一种看法：<br>标题树、被谁引用、所有出现过的地方。</p>
+    </div>
+    <div class="card shotr" id="s4card">
+      <div class="bar"><i></i><i></i><i></i><b>大纲 · 引用</b></div>
+      <img src="shots/outline.png" alt="">
+    </div>
+  </section>
+
+  <section class="scene paper grain" id="s5">
+    <div class="txt" style="top:320px">
+      <div class="kicker" id="s5k">03 — 连起来</div>
+      <h2 id="s5h" style="margin-top:26px;font-size:88px">[[双链]]<br>自己长成<span class="g">关系图</span></h2>
+      <p class="lead" id="s5p">写的时候顺手加一对中括号，<br>回头就能看见这些笔记是怎么互相咬住的。</p>
+    </div>
+    <div class="card shotr" id="s5card">
+      <div class="bar"><i></i><i></i><i></i><b>关系图</b></div>
+      <img src="shots/graph.png" alt="">
+    </div>
+  </section>
+
+  <section class="scene paper grain" id="s6">
+    <div class="txt" style="top:290px">
+      <div class="kicker" id="s6k">04 — 带得走</div>
+      <h2 id="s6h" style="margin-top:26px;font-size:88px">写完了<br>能<span class="g">原样带走</span></h2>
+      <p class="lead" id="s6p">Markdown、HTML、PDF、Word。<br>导出不是截图，排版和公式都在。</p>
+    </div>
+    <div class="card shotr" id="s6card">
+      <div class="bar"><i></i><i></i><i></i><b>导出为 PDF</b></div>
+      <img src="shots/article.png" alt="">
+    </div>
+  </section>
+
+  <section class="scene paper grain" id="s7">
+    <div class="txt" style="top:320px">
+      <div class="kicker" id="s7k">05 — 半夜也写</div>
+      <h2 id="s7h" style="margin-top:26px;font-size:88px">深色主题<br><span class="g">不是反色</span></h2>
+      <p class="lead" id="s7p">代码高亮、图表、提示块都单独配过，<br>夜里看两小时眼睛不酸。</p>
+    </div>
+    <div class="card shotr" id="s7card">
+      <div class="bar"><i></i><i></i><i></i><b>深色主题</b></div>
+      <img src="shots/dark.png" alt="">
+    </div>
+  </section>
+
+  <section class="scene paper grain" id="s8">
+    <div class="end">
+      <div class="kicker" id="s8k">WINDOWS · 免费 · 开源</div>
+      <h2 id="s8h" style="margin-top:30px;font-size:110px">一个只做笔记的<br><span class="g">笔记应用</span></h2>
+      <div class="url" id="s8url">ymtj.hyper99.top</div>
+      <div><span class="btn" id="s8btn">直接下载安装包</span></div>
+      <div class="tag" id="s8tag">不联网 · 不上传 · 不要账号</div>
+    </div>
+  </section>
+
+  <div id="prog"></div>
+</div>
+
+<script>
+const clamp = (v, a, b) => Math.min(b, Math.max(a, v))
+const ease = (t) => 1 - Math.pow(1 - t, 3)
+const easeInOut = (t) => t < .5 ? 4*t*t*t : 1 - Math.pow(-2*t+2, 3)/2
+
+function stagger(els, t, start, gap = .16, dur = .5, dist = 24) {
+  els.forEach((el, i) => {
+    const p = clamp((t - start - i * gap) / dur, 0, 1)
+    el.style.opacity = String(p)
+    el.style.transform = `translateY(${(1 - ease(p)) * dist}px)`
+  })
+}
+
+window.seek = (ms) => {
+  const t = ms / 1000
+
+  /* 1 片头 0–3.2 */
+  {
+    const el = document.getElementById('s1')
+    el.style.opacity = String(clamp((3.2 - t) / .45, 0, 1))
+    const k = clamp(t / .9, 0, 1)
+    const mark = document.getElementById('s1mark')
+    mark.style.transform = `scale(${.72 + ease(k) * .28}) rotate(${(1 - ease(k)) * -8}deg)`
+    mark.style.opacity = String(k)
+    const k2 = clamp((t - .35) / .7, 0, 1)
+    const nm = document.getElementById('s1name')
+    nm.style.opacity = String(k2)
+    nm.style.transform = `translateY(${(1 - ease(k2)) * 26}px)`
+    const k3 = clamp((t - .75) / .7, 0, 1)
+    const ds = document.getElementById('s1desc')
+    ds.style.opacity = String(k3)
+    ds.style.transform = `translateY(${(1 - ease(k3)) * 18}px)`
+  }
+
+  /* 2 痛点 3.2–6.8 */
+  {
+    const el = document.getElementById('s2')
+    el.style.opacity = String(Math.min(clamp((t - 3.2) / .5, 0, 1), clamp((6.8 - t) / .45, 0, 1)))
+    stagger([document.getElementById('s2a'), document.getElementById('s2b')], t, 3.5, .55, .7)
+  }
+
+  /* 3–7 左字右图 */
+  const packs = [
+    ['s3', 6.8, 4.6],
+    ['s4', 11.4, 4.0],
+    ['s5', 15.4, 3.4],
+    ['s6', 18.8, 3.6],
+    ['s7', 22.4, 3.4],
+  ]
+  for (const [id, start, dur] of packs) {
+    const el = document.getElementById(id)
+    if (t < start - .2 || t > start + dur + .2) { el.style.opacity = '0'; continue }
+    const p = clamp((t - start) / dur, 0, 1)
+    el.style.opacity = String(Math.min(clamp((t - start) / .4, 0, 1), clamp((start + dur - t) / .2, 0, 1)))
+    stagger([document.getElementById(id + 'k'), document.getElementById(id + 'h'), document.getElementById(id + 'p')],
+      t, start + .05, .14, .55)
+    const c = document.getElementById(id + 'card')
+    const ki = clamp((t - start - .1) / .75, 0, 1)
+    c.style.opacity = String(ki)
+    c.style.transform = `translateX(${(1 - ease(ki)) * 90}px) scale(${1 + .035 * easeInOut(p)})`
+  }
+
+  /* 8 结尾 25.8–30 */
+  {
+    const el = document.getElementById('s8')
+    el.style.opacity = String(clamp((t - 25.8) / .5, 0, 1))
+    stagger([
+      document.getElementById('s8k'),
+      document.getElementById('s8h'),
+      document.getElementById('s8url'),
+      document.getElementById('s8btn'),
+      document.getElementById('s8tag'),
+    ], t, 25.95, .18, .6)
+    const kb = clamp((t - 26.6) / .6, 0, 1)
+    document.getElementById('s8btn').style.transform =
+      `translateY(${(1 - ease(kb)) * 18}px) scale(${.94 + ease(kb) * .06})`
+  }
+
+  document.getElementById('prog').style.width = (clamp(t / 30, 0, 1) * 1080) + 'px'
+}
+
+window.__ready = Promise.all(
+  [...document.images].map((im) => im.complete ? 0 : new Promise((r) => { im.onload = im.onerror = r }))
+).then(() => true)
+
+window.seek(0)
+</script>
+</body>
+</html>
