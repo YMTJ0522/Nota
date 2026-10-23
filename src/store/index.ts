@@ -499,6 +499,48 @@ async function openWorkspace() {
   await loadIcons()
 }
 
+/**
+ * 首次启动：自己准备一个能立刻读的笔记库。
+ *
+ * 只在「没有上次工作区」时走这条，老用户升级上来不会被塞东西。
+ * 建目录和写欢迎文档在主进程做（见 main.ts 的 vault:ensure），
+ * 这里只负责接进现有的加载流程：设 root → 读树 → 记最近 → 打开那篇。
+ *
+ * 任何一步失败都退回欢迎页，不弹错：第一次打开就看见一个错误框，
+ * 比看到空白糟糕得多。
+ */
+async function bootFirstRun(): Promise<boolean> {
+  let res: { root: string | null; file: string | null; created: boolean } | null = null
+  try {
+    res = await window.api.ensureVault()
+  } catch {
+    return false
+  }
+  if (!res || !res.root) return false
+
+  state.root = res.root
+  state.icons = {}
+  state.loading = true
+  try {
+    state.tree = await window.api.readTree(res.root)
+  } catch {
+    // 建出来了却读不了（权限、目录被占用），退回欢迎页，别卡在 loading
+    state.loading = false
+    state.root = null
+    return false
+  }
+  state.loading = false
+  rememberRoot(res.root)
+  rememberLast(res.root)
+  await loadIcons()
+
+  if (res.file) {
+    const hit = flattenFiles(state.tree).find((f) => f.path === res.file)
+    if (hit) await openNote(res.file)
+  }
+  return true
+}
+
 /* ── 最近打开过的文件夹 ──
    侧栏底部那个下拉读的就是这一份。
 
@@ -3523,6 +3565,7 @@ export const store = {
   allTags,
   toggleGraph,
   restoreLastWorkspace,
+  bootFirstRun,
   openWorkspace,
   switchWorkspace,
   forgetRoot,

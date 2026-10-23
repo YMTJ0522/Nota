@@ -5,6 +5,7 @@ import { existsSync } from 'node:fs'
 import { pathToFileURL } from 'node:url'
 import { testConnection, syncWorkspace, onSyncProgress } from './sync'
 import { maybeRunInstaller } from './installer'
+import { ensureVault } from './vault'
 
 // Vite 注入：开发环境指向 dev server，生产环境加载打包后的 dist
 process.env.APP_ROOT = path.join(__dirname, '..')
@@ -564,6 +565,25 @@ ipcMain.handle('workspace:pick', async () => {
   })
   if (result.canceled || result.filePaths.length === 0) return null
   return result.filePaths[0]
+})
+
+/**
+ * 首次启动时准备一个开箱即用的笔记库。
+ *
+ * 以前第一次打开落在欢迎页上，要求用户先挑一个文件夹 —— 这是整个流程里
+ * 最容易流失的一步：他刚装完，还不知道这软件值不值得用，就先被要求做
+ * 一个文件管理方面的决定。
+ *
+ * 现在第一次打开自己建一个目录，里面放一篇讲清楚怎么用的笔记，直接读到正文。
+ * 目录放在「文档」下，不用 AppData —— 笔记藏进 AppData，用户既找不到也没法备份，
+ * 重装系统还会跟着一起没。
+ *
+ * 宁可返回空也不抛：建目录失败（比如「文档」被重定向到一个不存在的网盘盘符）
+ * 最多回到原来的欢迎页，不能让主窗口在这里挂掉。
+ */
+ipcMain.handle('vault:ensure', async () => {
+  // 逻辑在 vault.ts 里，这里只负责把「文档」目录告诉它
+  return ensureVault(app.getPath('documents'))
 })
 
 // 递归读取目录树（只读 .md，跳过隐藏目录）

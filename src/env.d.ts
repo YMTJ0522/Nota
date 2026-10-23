@@ -8,6 +8,12 @@ declare module '*.vue' {
 
 interface NoteApi {
   pickWorkspace(): Promise<string | null>
+  ensureVault(): Promise<{
+    root: string | null
+    file: string | null
+    created: boolean
+    error?: string
+  }>
   readTree(root: string): Promise<TreeNode[]>
   readNote(file: string): Promise<string>
   writeNote(file: string, content: string): Promise<boolean>

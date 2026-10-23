@@ -167,6 +167,11 @@ export function makeInject(opts = {}) {
     ' window.__imported = [];' +
     ' window.api = {' +
     `  pickWorkspace: async () => ${JSON.stringify(ws)},` +
+    /* 首次启动建库。默认返回空 —— 老脚本都在页面加载后才注入，那时
+       bootFirstRun 早就因为找不到这个接口安静退出了，行为跟以前一致；
+       要测「第一屏就落在欢迎文档上」的，给 vault 传一个回执并前置注入。
+       外面这对括号不能省：箭头函数直接写 {...} 会被当成函数体解析，整段注入脚本语法错误。 */
+    `  ensureVault: async () => (${JSON.stringify(opts.vault ?? { root: null, file: null, created: false })}),` +
     /* readTree 必须**现算** tags，不能原样返回上面那份静态树：
        真主进程是从 .md 文件里解析 frontmatter 的，所以「写完一篇 → 刷新目录树」
        这一步必然会让新标签出现在侧栏。桩子要是返回一个固定对象，

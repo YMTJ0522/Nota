@@ -66,6 +66,8 @@ const winW = ref(window.innerWidth)
 let ro: ResizeObserver | null = null
 /** 首次自动引导的定时器，卸载时要清掉（否则开发时热更新会攒一串） */
 let tourTimer = 0
+/** 正在首次建库。这期间把 root 设上来不算「用户打开了工作区」，先不放引导。 */
+let seeding = false
 
 /** 各栏宽度由 SplitHandle 拖着改，这里只负责把它们写到 CSS 变量上。
     中间那一列没被人拖过时走「自适应」：窗口宽它就宽，但始终给编辑区留够地方。 */
@@ -155,7 +157,24 @@ onMounted(async () => {
   store.initPrefs()
   // 回到上次那个工作区（与上次在看的那篇）。失败就退回欢迎页，不弹错误 ——
   // 「盘不在了」这种事用户自己一看就明白，弹窗反而是打扰。
-  await store.restoreLastWorkspace()
+  // 一次都没打开过的工作区，则直接建一个带欢迎文档的库，不让新用户在
+  // 「先选个文件夹」这一步就走掉。
+  const restored = await store.restoreLastWorkspace()
+  if (!restored) {
+    // 这一轮不叠高亮引导：欢迎文档本身就是介绍，两个一起盖上来，
+    // 第一屏既看不清正文也看不清按钮。引导随时能从菜单调出来。
+    seeding = true
+    const ok = await store.bootFirstRun()
+    if (ok) {
+      try {
+        localStorage.setItem(TOUR_KEY, '1')
+      } catch {
+        /* 写不进去就下次再弹一次，不影响使用 */
+      }
+    } else {
+      seeding = false // 没建起来就还停在欢迎页，之后手动开目录时照常引导
+    }
+  }
   window.addEventListener('keydown', onKey)
   window.addEventListener('nota:palette', onPalette)
   window.addEventListener('nota:library', onLibrary)
@@ -181,6 +200,7 @@ watch(
   () => state.root,
   (root) => {
     if (!root) return
+    if (seeding) return
     try {
       if (localStorage.getItem(TOUR_KEY)) return
     } catch {

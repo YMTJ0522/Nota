@@ -19,6 +19,13 @@ contextBridge.exposeInMainWorld('pathForFile', (file: File): string => {
  */
 contextBridge.exposeInMainWorld('api', {
   pickWorkspace: (): Promise<string | null> => ipcRenderer.invoke('workspace:pick'),
+  /* 首次启动准备笔记库（建目录 + 写欢迎文档）。已有内容就原样打开，不写任何文件 */
+  ensureVault: (): Promise<{
+    root: string | null
+    file: string | null
+    created: boolean
+    error?: string
+  }> => ipcRenderer.invoke('vault:ensure'),
   readTree: (root: string): Promise<any[]> => ipcRenderer.invoke('workspace:tree', root),
   readNote: (file: string): Promise<string> => ipcRenderer.invoke('note:read', file),
   writeNote: (file: string, content: string): Promise<boolean> =>
