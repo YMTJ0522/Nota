@@ -19,42 +19,38 @@
     {
       "from": "build/icon.png",
       "to": "icon.png"
+    },
+    {
+      "from": "install",
+      "to": "install"
     }
   ],
   "win": {
     "target": [
       {
-        "target": "nsis",
-        "arch": ["x64"]
-      },
-      {
         "target": "portable",
-        "arch": ["x64"]
+        "arch": [
+          "x64"
+        ]
       }
     ],
     "icon": "build/icon.ico",
-    "artifactName": "${productName}-${version}-${arch}.${ext}"
-  },
-  "nsis": {
-    "oneClick": false,
-    "perMachine": false,
-    "allowToChangeInstallationDirectory": true,
-    "createDesktopShortcut": true,
-    "createStartMenuShortcut": true,
-    "shortcutName": "Nota",
-    "deleteAppDataOnUninstall": false,
     "artifactName": "${productName}-Setup-${version}.${ext}"
   },
   "portable": {
-    "artifactName": "${productName}-Portable-${version}.${ext}"
+    "artifactName": "${productName}-Setup-${version}.${ext}"
   },
   "mac": {
-    "target": ["dmg"],
+    "target": [
+      "dmg"
+    ],
     "icon": "build/icon.png",
     "category": "public.app-category.productivity"
   },
   "linux": {
-    "target": ["AppImage"],
+    "target": [
+      "AppImage"
+    ],
     "icon": "build/icon.png",
     "category": "Office"
   }

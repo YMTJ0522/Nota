@@ -4,6 +4,7 @@ import fs from 'node:fs/promises'
 import { existsSync } from 'node:fs'
 import { pathToFileURL } from 'node:url'
 import { testConnection, syncWorkspace, onSyncProgress } from './sync'
+import { maybeRunInstaller } from './installer'
 
 // Vite 注入：开发环境指向 dev server，生产环境加载打包后的 dist
 process.env.APP_ROOT = path.join(__dirname, '..')
@@ -1434,8 +1435,10 @@ function mediaUrl(abs: string) {
   return 'nota-media://local/' + encodeURIComponent(norm)
 }
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
   registerMediaProtocol()
+  // 从免安装包启动时会先问一句装不装；装/卸界面接管了就不要再开主窗口
+  if (await maybeRunInstaller()) return
   createWindow()
 })
 

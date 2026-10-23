@@ -72,6 +72,9 @@ mkdir -p "$ROOT/d"
 cp -f "$TMP/info.json" "$ROOT/info.json" 2>/dev/null || true
 # serve.py：多线程 + Range 的静态服务（自带的 http.server 是单线程、不支持断点续传）
 cp -f "$TMP/serve.py" "$ROOT/serve.py" 2>/dev/null || true
+# 后台：serve.py 会 try-import 它，缺了只是没有 /admin，站点照跑
+cp -f "$TMP/nota_admin.py" "$ROOT/nota_admin.py" 2>/dev/null || true
+[ -f "$ROOT/nota_admin.py" ] && chmod 644 "$ROOT/nota_admin.py"
 
 VER="$(cat "$TMP/VERSION" 2>/dev/null || echo '')"
 echo "    版本 ${VER:-未知}"

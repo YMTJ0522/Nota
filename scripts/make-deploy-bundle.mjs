@@ -39,6 +39,8 @@ cpDir(path.join(root, 'site'), path.join(STAGE, 'site'))
 
 // 静态服务：多线程 + Range，装的时候顺带放到站点目录里
 fs.copyFileSync(path.join(root, 'deploy', 'server', 'serve.py'), path.join(STAGE, 'serve.py'))
+// 后台（登录 / 下载统计 / 改密）挂在 serve.py 上，跟着一起走
+fs.copyFileSync(path.join(root, 'deploy', 'server', 'nota_admin.py'), path.join(STAGE, 'nota_admin.py'))
 
 // 安装包：只收 Setup，官网本来也只展示这一个
 const setup = path.join(root, 'release', `Nota-Setup-${VERSION}.exe`)

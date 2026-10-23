@@ -1,0 +1,394 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>安装 Nota</title>
+<style>
+  /* 安装界面。
+     颜色不是随便挑的黑 —— 直接搬 src/styles/tokens.css 里 [data-theme='dark']
+     那套：底 #16161a、卡片 #1c1d21、描边 #33343a、字 #eeedea、
+     强调 #6fae8f（青瓷），深色下强调色配深字 #10160f。
+     安装窗跟程序内部是同一套 token，切过去不会有色差。
+     结构是左品牌 / 右内容 / 底部胶囊按钮，标题栏自绘。 */
+  *{box-sizing:border-box}
+  /* hidden 属性必须能压住 .pill{display:inline-flex} 这类写法，
+     否则 el.hidden = true 完全没反应（卸载完成页曾经因此并排出现两个「关闭」） */
+  [hidden]{display:none !important}
+  :root{
+    --bg:#16161a; --surface:#1c1d21; --raised:#24252a; --sunken:#131317;
+    --line:#33343a; --line-strong:#45464d;
+    --fg:#eeedea; --fg-dim:#a3a19b; --fg-faint:#6e6c67;
+    --accent:#6fae8f; --on-accent:#10160f;
+    --danger:#e07a68;
+    --font:"PingFang SC","Microsoft YaHei","Noto Sans CJK SC",system-ui,sans-serif;
+    --mono:"JetBrains Mono",ui-monospace,Consolas,monospace;
+  }
+  html,body{margin:0;height:100%;background:var(--bg);font-family:var(--font);
+    -webkit-font-smoothing:antialiased;user-select:none;overflow:hidden;color:var(--fg)}
+
+  /* 窗口是不透明的整块 —— 之前用 transparent:true + 内缩 10px 画圆角和投影，
+     Windows 一关掉「透明效果」那圈就变成纯黑边，所以现在不留边：
+     圆角交给系统（Win11 的无边框窗口自带），内容直接铺满。 */
+  .shell{
+    position:absolute;inset:0;
+    background:
+      radial-gradient(105% 80% at 6% -10%,rgba(111,174,143,.09),transparent 62%),
+      var(--bg);
+    display:flex;flex-direction:column;
+  }
+
+  /* ── 自绘标题栏 ── */
+  .bar{height:46px;flex:none;display:flex;align-items:center;gap:9px;
+    padding:0 8px 0 20px;-webkit-app-region:drag;
+    border-bottom:1px solid rgba(255,255,255,.05)}
+  .bar img{width:15px;height:15px;border-radius:4px}
+  .bar .name{font-size:12px;color:var(--fg-faint);letter-spacing:.02em}
+  .bar .spacer{flex:1}
+  .wbtn{-webkit-app-region:no-drag;width:30px;height:28px;border:none;background:none;
+    border-radius:8px;color:var(--fg-faint);display:flex;align-items:center;
+    justify-content:center;cursor:pointer;font-size:14px;line-height:1}
+  .wbtn:hover{background:var(--raised);color:var(--fg)}
+  .wbtn.close:hover{background:#8f3b2c;color:#fff}
+
+  .body{flex:1;display:flex;min-height:0}
+
+  /* ── 左：品牌，全程不动 ── */
+  .brand{width:286px;flex:none;display:flex;flex-direction:column;
+    align-items:center;justify-content:center;gap:20px;padding-bottom:14px}
+  .brand .appicon{width:104px;height:104px;border-radius:24px;display:block;
+    box-shadow:0 0 0 1px rgba(255,255,255,.06),0 18px 40px -16px rgba(0,0,0,.9)}
+  .brand .word{font-size:42px;font-weight:700;letter-spacing:-.025em;color:var(--fg);
+    line-height:1;font-family:"Segoe UI",var(--font)}
+  .brand .ver{font-size:11.5px;color:var(--fg-faint);letter-spacing:.03em;
+    font-family:var(--mono)}
+
+  /* ── 右：内容 ── */
+  .pane{flex:1;min-width:0;display:flex;flex-direction:column;
+    padding:38px 36px 24px 4px}
+  .screen{display:flex;flex-direction:column;height:100%}
+  .screen[hidden]{display:none}
+
+  h1{margin:0;font-size:25px;line-height:1.32;font-weight:600;
+    letter-spacing:-.015em;color:var(--fg)}
+  .sub{margin:10px 0 0;font-size:12.5px;line-height:1.85;color:var(--fg-dim);max-width:33em}
+
+  /* 两个选项做成整行可点的卡片 */
+  .opts{margin-top:24px;display:flex;flex-direction:column;gap:6px}
+  .opt{display:flex;gap:12px;align-items:center;padding:13px 15px;border-radius:12px;
+    background:transparent;border:1px solid transparent;cursor:pointer;
+    transition:background .15s ease,border-color .15s ease}
+  .opt:hover{background:var(--surface)}
+  .opt.on{background:var(--raised);border-color:var(--line)}
+  .ot{flex:1;min-width:0}
+  .dot{width:16px;height:16px;border-radius:50%;flex:none;
+    border:1.5px solid var(--line-strong);position:relative;transition:border-color .15s}
+  .opt.on .dot{border-color:var(--accent)}
+  .opt.on .dot::after{content:"";position:absolute;inset:3px;border-radius:50%;
+    background:var(--accent)}
+  .opt .t{font-size:13.5px;color:var(--fg);font-weight:500;line-height:1.4;display:block}
+  .opt .d{font-size:11.5px;color:#8a8884;margin-top:4px;line-height:1.65;display:block;
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+
+  /* 换安装位置：只在选中的「安装版」那一行露出来，免得两行都有按钮 */
+  .browse{flex:none;height:28px;padding:0 12px;border-radius:99px;
+    background:transparent;border:1px solid var(--line-strong);color:var(--fg-dim);
+    font:inherit;font-size:11.5px;cursor:pointer;opacity:0;pointer-events:none;
+    transition:opacity .15s ease,background .15s ease,color .15s ease}
+  .opt.on .browse{opacity:1;pointer-events:auto}
+  .browse:hover{background:var(--surface);color:var(--fg)}
+
+  .grow{flex:1}
+
+  .row{display:flex;align-items:center;gap:10px;justify-content:flex-end}
+  .hint{font-size:11px;color:var(--fg-faint);margin-right:auto}
+
+  /* 主按钮用强调色 + 深字 —— 这是深色主题里主按钮的既定写法 */
+  .pill{height:42px;padding:0 24px;border:none;border-radius:99px;
+    background:var(--accent);color:var(--on-accent);font:inherit;font-size:13px;
+    font-weight:600;cursor:pointer;display:inline-flex;align-items:center;gap:8px;
+    transition:filter .15s ease,transform .08s ease}
+  .pill:hover{filter:brightness(1.06)}
+  .pill:active{transform:translateY(1px)}
+  .pill[disabled]{opacity:.5;cursor:default;transform:none}
+  .pill.ghost{background:transparent;color:var(--fg-dim);border:1px solid var(--line);
+    font-weight:500;padding:0 18px}
+  .pill.ghost:hover{background:var(--surface);color:var(--fg);filter:none}
+  .pill.danger{background:var(--danger);color:#1a0f0c}
+  .pill .arw{font-size:14px;line-height:1;margin-left:2px;opacity:.7}
+
+  /* 进度：细、圆头，不发光不加条纹 */
+  .track{height:5px;border-radius:99px;background:var(--sunken);overflow:hidden;margin-top:26px}
+  .track i{display:block;height:100%;width:0;border-radius:99px;background:var(--accent);
+    transition:width .22s ease}
+  /* 百分比和「正在干什么」并排压在进度条下面一行 —— 原来这两句各占一行，
+     加上四步清单，整块看着就散了 */
+  .bmeta{display:flex;align-items:baseline;justify-content:space-between;
+    gap:12px;margin-top:9px}
+  .bmeta .n{font-size:11px;color:var(--fg-faint);font-family:var(--mono)}
+  .bmeta .l{font-size:11.5px;color:var(--fg-dim);overflow:hidden;text-overflow:ellipsis;
+    white-space:nowrap}
+
+  /* 四步清单：安装只有几秒，进度条本身说不出「在干嘛」。
+     与其让下半屏空着，不如把四件事列出来，当前那步亮起来。 */
+  .steps{list-style:none;margin:26px 0 0;padding:0;display:flex;flex-direction:column;gap:11px}
+  .steps li{display:flex;align-items:center;gap:11px;font-size:12px;color:var(--fg-faint);
+    transition:color .2s ease}
+  .steps .mk{width:15px;height:15px;border-radius:50%;flex:none;
+    border:1.5px solid var(--line-strong);position:relative;transition:all .2s ease}
+  .steps li[data-s='now']{color:var(--fg)}
+  .steps li[data-s='now'] .mk{border-color:var(--accent)}
+  .steps li[data-s='now'] .mk::after{content:"";position:absolute;inset:3px;border-radius:50%;
+    background:var(--accent)}
+  .steps li[data-s='done']{color:var(--fg-dim)}
+  .steps li[data-s='done'] .mk{border-color:var(--accent);background:var(--accent)}
+  .steps li[data-s='done'] .mk::after{content:"✓";position:absolute;inset:0;color:var(--on-accent);
+    font-size:9px;font-weight:700;display:flex;align-items:center;justify-content:center}
+
+  /* 完成屏：标题占左边，对勾挪到右边去。
+     原来对勾压在标题上方，跟上面的清单挤在一起看着乱。 */
+  .dhead{display:flex;align-items:flex-start;gap:20px}
+  .dhead .dcopy{flex:1;min-width:0}
+  .tick{width:44px;height:44px;flex:none;border-radius:50%;display:flex;
+    align-items:center;justify-content:center;font-size:19px;font-weight:700;
+    margin-top:2px;background:rgba(111,174,143,.14);color:var(--accent)}
+
+  /* 完成屏中间原来是大片空白，一眼看过去像没画完。
+     补一张三行的结果卡：装到哪、占多大、怎么启动 —— 都是装完当下会想知道的事。 */
+  .dcard{margin-top:26px;background:var(--surface);border:1px solid var(--line);
+    border-radius:14px;padding:4px 16px}
+  .drow{display:flex;align-items:center;gap:14px;padding:11px 0;min-width:0}
+  .drow + .drow{border-top:1px solid rgba(255,255,255,.045)}
+  .dk{flex:none;width:32px;font-size:11.5px;color:var(--fg-faint)}
+  .dv{flex:1;min-width:0;font-size:12px;color:var(--fg-dim);white-space:nowrap;
+    overflow:hidden;text-overflow:ellipsis}
+  .dv.path{font-family:var(--mono);font-size:11.5px;color:var(--fg)}
+
+  .err{display:none;margin-top:16px;border-radius:11px;padding:10px 13px;
+    background:#2a1a17;border:1px solid #4a2a24;color:var(--danger);
+    font-size:11.5px;line-height:1.7;word-break:break-all}
+  .err.on{display:block}
+</style>
+</head>
+<body>
+<div class="shell">
+  <div class="bar">
+    <img src="../icon.png" alt="">
+    <span class="name">Nota 安装程序</span>
+    <span class="spacer"></span>
+    <button class="wbtn" id="min" title="最小化">—</button>
+    <button class="wbtn close" id="close" title="关闭">✕</button>
+  </div>
+
+  <div class="body">
+    <div class="brand">
+      <img class="appicon" src="../icon.png" alt="Nota">
+      <div class="word">Nota</div>
+      <div class="ver" id="ver">版本 2.7.5</div>
+    </div>
+
+    <div class="pane">
+      <!-- ① 开场 -->
+      <section class="screen" id="s-welcome">
+        <h1 id="w-title">安装到这台电脑</h1>
+        <p class="sub" id="w-sub">笔记始终存在你自己的文件夹里，装在哪儿都不影响。</p>
+
+        <div class="opts" id="w-opts">
+          <label class="opt on" data-act="install">
+            <span class="dot"></span>
+            <span class="ot">
+              <span class="t">安装版</span>
+              <span class="d" id="w-dir"></span>
+            </span>
+            <button class="browse" id="w-browse" type="button">更改…</button>
+          </label>
+          <label class="opt" data-act="portable">
+            <span class="dot"></span>
+            <span class="ot">
+              <span class="t">免安装，直接运行</span>
+              <span class="d">不写注册表、不建快捷方式，关掉就什么也没留下</span>
+            </span>
+          </label>
+        </div>
+
+        <div class="err" id="w-err"></div>
+        <div class="grow"></div>
+        <div class="row">
+          <button class="pill" id="w-go">继续<span class="arw">→</span></button>
+        </div>
+      </section>
+
+      <!-- ② 进行中 -->
+      <section class="screen" id="s-busy" hidden>
+        <h1 id="b-title">正在安装</h1>
+        <div class="track"><i id="b-bar"></i></div>
+        <div class="bmeta">
+          <span class="n" id="b-pct">0%</span>
+          <span class="l" id="b-label">正在准备…</span>
+        </div>
+        <ul class="steps" id="b-steps">
+          <li data-step="0"><span class="mk"></span>准备</li>
+          <li data-step="1"><span class="mk"></span>写入程序文件</li>
+          <li data-step="2"><span class="mk"></span>创建开始菜单与桌面图标</li>
+          <li data-step="3"><span class="mk"></span>登记卸载信息</li>
+        </ul>
+        <div class="grow"></div>
+        <div class="row"><span class="hint">装完会自己打开，不用再点一次</span></div>
+      </section>
+
+      <!-- ③ 完成 -->
+      <section class="screen" id="s-done" hidden>
+        <div class="dhead">
+          <div class="dcopy">
+            <h1 id="d-title">装好了</h1>
+            <p class="sub" id="d-sub">开始菜单和桌面都有入口；想卸掉的话，设置里或「应用和功能」里都能找到。</p>
+          </div>
+          <div class="tick">✓</div>
+        </div>
+        <div class="dcard" id="d-card">
+          <div class="drow"><span class="dk">位置</span><span class="dv path" id="d-dir"></span></div>
+          <div class="drow"><span class="dk">占用</span><span class="dv" id="d-size"></span></div>
+          <div class="drow"><span class="dk">启动</span><span class="dv">桌面双击图标，或开始菜单里搜 Nota</span></div>
+        </div>
+        <div class="grow"></div>
+        <div class="row">
+          <button class="pill ghost" id="d-close">关闭</button>
+          <button class="pill" id="d-open">打开 Nota<span class="arw">→</span></button>
+        </div>
+      </section>
+    </div>
+  </div>
+</div>
+
+<script>
+  const api = window.notaInstall
+  const $ = (s) => document.querySelector(s)
+  let exe = ''
+  let mode = 'install'
+  let choice = 'install'
+
+  // 三屏只有一个是活的。注意是 !== ：写反了会把「当前这屏」藏起来、
+  // 另外两屏同时摊开 —— 表现是进度条停在那、底下又冒出「装好了」。
+  const show = (id) => {
+    for (const s of ['#s-welcome', '#s-busy', '#s-done']) $(s).hidden = s !== id
+  }
+
+  // 主进程报上来的「阶段」只有一句中文，这里映射到清单的第几步。
+  // 文案改了忘了改这儿 → 清单不动，但进度条照走，不至于卡住界面。
+  const STEP_OF = {
+    正在准备: 0,
+    正在写入文件: 1,
+    正在创建快捷方式: 2,
+    正在登记卸载信息: 3,
+  }
+
+  const paintSteps = (label) => {
+    const key = label.replace(/…|\.\.\./g, '').trim()
+    const now = STEP_OF[key]
+    if (now === undefined) return
+    for (const li of document.querySelectorAll('#b-steps li')) {
+      const i = Number(li.dataset.step)
+      li.dataset.s = i < now ? 'done' : i === now ? 'now' : ''
+    }
+  }
+
+  api.onPhase((p) => {
+    $('#b-label').textContent = p.label + '…'
+    // 拷贝走完就报 100%，但后面还有建快捷方式、写注册表两件事。
+    // 停在 100% 却还在转，比 99% 更让人犯嘀咕，所以这两步压到 99。
+    const key = p.label.replace(/…|\.\.\./g, '').trim()
+    const shown = (STEP_OF[key] ?? 0) >= 2 ? Math.min(99, p.percent) : p.percent
+    $('#b-bar').style.width = Math.max(0, Math.min(100, shown)) + '%'
+    $('#b-pct').textContent = shown + '%'
+    paintSteps(p.label)
+  })
+
+  const setDir = (p) => {
+    $('#w-dir').textContent = p
+    $('#w-dir').title = p
+  }
+
+  api.info().then((i) => {
+    mode = i.mode
+    $('#ver').textContent = '版本 ' + i.version
+    setDir(i.dir)
+    if (mode === 'uninstall') {
+      $('#w-title').textContent = '卸载 Nota'
+      $('#w-sub').textContent = '只删程序和快捷方式。笔记、设置、云同步的配置都留在原处。'
+      $('#w-opts').hidden = true
+      $('#w-go').classList.add('danger')
+      $('#w-go').textContent = '卸载'
+      $('#b-title').textContent = '正在卸载'
+      // 卸载是另一套动作，清单对不上，直接收起来
+      $('#b-steps').hidden = true
+    }
+  })
+
+  $('#w-opts').addEventListener('click', async (e) => {
+    // 「更改…」是按钮，不是选项 —— 先拦下来，别让它顺带把选中项换掉
+    if (e.target.closest('.browse')) {
+      e.preventDefault()
+      e.stopPropagation()
+      const dir = await api.chooseDir()
+      if (dir) setDir(dir)
+      return
+    }
+    const row = e.target.closest('.opt')
+    if (!row) return
+    for (const r of document.querySelectorAll('.opt')) r.classList.toggle('on', r === row)
+    choice = row.dataset.act
+    $('#w-go').innerHTML = choice === 'portable'
+      ? '直接运行<span class="arw">→</span>'
+      : '继续<span class="arw">→</span>'
+  })
+
+  // 清空进度条与清单，重试时才是从零开始，不会停在上一轮的 94%
+  const resetBusy = () => {
+    $('#b-bar').style.width = '0%'
+    $('#b-pct').textContent = '0%'
+    for (const li of document.querySelectorAll('#b-steps li')) li.dataset.s = ''
+  }
+
+  $('#w-go').onclick = async () => {
+    if (mode === 'install' && choice === 'portable') return api.usePortable()
+    $('#w-err').classList.remove('on')
+    resetBusy()
+    show('#s-busy')
+    const r = await api.start()
+    if (!r.ok) {
+      // 失败一律退回第一屏并把原文摊出来 —— 之前这里把错误写进了一个
+      // 被藏起来的 .err 盒子，用户只看到进度条停着，以为程序死了
+      show('#s-welcome')
+      $('#w-err').textContent = r.error || '出错了，换个位置再试一次。'
+      $('#w-err').classList.add('on')
+      return
+    }
+    // 最后一步的进度条停在 100 才切屏，否则会看到 94% 直接跳走
+    $('#b-bar').style.width = '100%'
+    $('#b-pct').textContent = '100%'
+    for (const li of document.querySelectorAll('#b-steps li')) li.dataset.s = 'done'
+    await new Promise((r) => setTimeout(r, 180))
+    exe = r.exe || ''
+    if (mode === 'uninstall') {
+      $('#d-title').textContent = '卸掉了'
+      $('#d-sub').textContent = '笔记还在原来的文件夹里，重装回来接着用即可。'
+      $('#d-card').hidden = true
+      $('#d-open').textContent = '关闭'
+      $('#d-open').onclick = () => api.quit()
+      $('#d-close').hidden = true
+    } else {
+      $('#d-dir').textContent = r.dir || ''
+      $('#d-dir').title = r.dir || ''
+      $('#d-size').textContent = r.bytes
+        ? (r.bytes / 1048576).toFixed(1) + ' MB · 含程序与运行库'
+        : ''
+    }
+    show('#s-done')
+  }
+
+  $('#d-open').onclick = () => api.launch(exe)
+  $('#d-close').onclick = () => api.quit()
+  $('#min').onclick = () => api.minimize()
+  $('#close').onclick = () => api.quit()
+</script>
+</body>
+</html>

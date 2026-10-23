@@ -303,6 +303,11 @@ kbd{
 .dl-item h4{margin:0 0 4px;font-size:16px;color:#fff}
 .dl-item .meta{font-size:13px;color:#8f8d80;font-family:var(--font-mono)}
 .dl-item .btn{width:100%;margin-top:16px}
+/* 双击后那十几秒没有窗口，是 Windows 在把这个没签名的安装包完整扫一遍。
+   不解释一句，用户会以为装坏了，反复双击 —— 越双击越乱。 */
+.dl-note{margin:26px auto 0;max-width:520px;font-size:12.5px;line-height:1.9;
+  color:#8f8d80;text-align:left}
+.dl-note b{color:#c9c7bb;font-weight:600}
 .dl .facts{
   display:flex;flex-wrap:wrap;justify-content:center;gap:8px 26px;
   margin-top:30px;font-size:13px;color:#8f8d80;
@@ -350,7 +355,7 @@ kbd{
   <span class="orb orb-a" aria-hidden="true"></span>
   <span class="orb orb-b" aria-hidden="true"></span>
   <div class="wrap">
-    <span class="badge rv"><span class="dot"></span><span data-dl-badge>v2.7.3 · </span>Windows · 免费 · 开源</span>
+    <span class="badge rv"><span class="dot"></span><span data-dl-badge>v2.7.5 · </span>Windows · 免费 · 开源</span>
     <h1 class="rv" style="transition-delay:.06s">
       一个只做笔记的<br><span class="grad">笔记应用</span>
     </h1>
@@ -569,16 +574,22 @@ kbd{
       <p class="sub">Windows 10 / 11，64 位。装上就能用，不需要账号，也不会往后台挂任何东西。</p>
       <div class="dl-grid">
         <div class="dl-item">
-          <h4>安装版</h4>
-          <div class="meta" data-dl-meta="setup">Nota-Setup-2.7.4.exe · 77 MB</div>
+          <h4>下载 Nota</h4>
+          <div class="meta" data-dl-meta="setup">Nota-Setup-2.7.5.exe · 70 MB</div>
           <!-- 直链落在自己域名下的 /d/setup.exe；带 .exe 后缀是故意的，
                任何静态服务器都能直接吐文件，浏览器存下来也是正常文件名 -->
-          <a class="btn btn-primary" data-dl="setup" href="/d/setup.exe">下载安装版</a>
-          <span class="btn-sub" style="color:#8f8d80">会写开始菜单与卸载入口</span>
+          <a class="btn btn-primary" data-dl="setup" href="/d/setup.exe">下载安装包</a>
+          <span class="btn-sub" style="color:#8f8d80">打开后自己选：装到这台电脑，或者直接运行</span>
         </div>
       </div>
+      <p class="dl-note">
+        <b>双击后十几秒没出窗口，不是卡住。</b>
+        Windows 会先把整个安装包扫一遍才放行；这个包没有代码签名证书，扫得比一般软件更久。
+        若弹出「已保护你的电脑」，点「更多信息 → 仍要运行」就行。
+        装的时候位置可以改，不想要快捷方式就选「直接运行」，一个文件两种用法。
+      </p>
       <div class="facts">
-        <span data-dl-ver>当前版本 2.7.4</span>
+        <span data-dl-ver>当前版本 2.7.5</span>
         <span>Windows 10 / 11 · 64 位</span>
         <span>界面字体：南西新圆体（随包）</span>
         <span><kbd>Ctrl</kbd>+<kbd>P</kbd> 跳转 · <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>F</kbd> 全文 · <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>G</kbd> 关系图</span>

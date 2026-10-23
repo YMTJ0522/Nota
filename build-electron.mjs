@@ -27,6 +27,12 @@ const common = {
 const targets = [
   { entryPoints: [path.join(root, 'electron/main.ts')], outfile: path.join(root, 'dist-electron/main.cjs') },
   { entryPoints: [path.join(root, 'electron/preload.ts')], outfile: path.join(root, 'dist-electron/preload.cjs') },
+  // 安装窗单独一个 preload：那个窗口是从 resources 里加载的静态页，
+  // 不该拿到主界面的全套 IPC
+  {
+    entryPoints: [path.join(root, 'electron/installer-preload.ts')],
+    outfile: path.join(root, 'dist-electron/installer-preload.cjs'),
+  },
 ]
 
 if (watch) {

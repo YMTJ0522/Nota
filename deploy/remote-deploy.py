@@ -27,6 +27,7 @@ ROOT = '/var/www/nota'
 HERE = os.path.dirname(os.path.abspath(__file__))
 INSTALL = os.path.join(HERE, 'server', 'install-local.sh')
 SERVE = os.path.join(HERE, 'server', 'serve.py')
+ADMINPY = os.path.join(HERE, 'server', 'nota_admin.py')
 SITE = os.path.join(HERE, '..', 'site')
 
 
@@ -169,9 +170,12 @@ def main():
         sync_site(cli, sftp)
         put(sftp, SERVE, f'{ROOT}/serve.py')
         print('  serve.py')
+        if os.path.isfile(ADMINPY):
+            put(sftp, ADMINPY, f'{ROOT}/nota_admin.py')
+            print('  nota_admin.py')
         sftp.close()
-        run(cli, f'chmod 755 {ROOT}/serve.py')
-        run(cli, f'python3 -m py_compile {ROOT}/serve.py && echo "serve.py 语法 OK"')
+        run(cli, f'chmod 644 {ROOT}/nota_admin.py 2>/dev/null; chmod 755 {ROOT}/serve.py')
+        run(cli, f'cd {ROOT} && python3 -m py_compile serve.py nota_admin.py && echo "serve.py / nota_admin.py 语法 OK"')
         # unit 里如果还挂着 `-m http.server`，光换文件是不生效的 —— 得改启动命令
         _, unit = run(cli, 'grep -q "serve.py" /etc/systemd/system/nota.service && echo had || echo none', quiet=True)
         if 'had' not in unit:
@@ -207,6 +211,8 @@ systemctl daemon-reload; systemctl enable nota >/dev/null 2>&1; true''')
     run(cli, 'curl -sk -o /dev/null -w "本机首页(https) %{http_code}\\n" https://127.0.0.1/')
     run(cli, 'curl -sk -o /dev/null -w "本机下载(Range 1000B) %{http_code} %{size_download}\\n" -r 0-1000 https://127.0.0.1/d/setup.exe')
     run(cli, 'curl -s -o /dev/null -w "80 跳转 %{http_code}\\n" http://127.0.0.1/')
+    run(cli, 'curl -sk -o /dev/null -w "后台 /admin %{http_code}\\n" https://127.0.0.1/admin')
+    run(cli, 'curl -sk https://127.0.0.1/admin | grep -o "Nota 后台" | head -1')
     _, out = run(cli, f'grep -c device-base {ROOT}/index.html || true', quiet=True)
     print(f'\n服务器上的页面含 device-base：{out.strip()} 处')
     cli.close()

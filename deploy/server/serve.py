@@ -23,6 +23,19 @@ ROOT = os.path.dirname(os.path.abspath(__file__))
 CERTDIR = '/etc/nota'
 RANGE_RE = re.compile(r'bytes=(\d*)-(\d*)')
 
+# 后台（登录 / 改密 / 下载统计）。文件不在就是没有后台，站点照常跑。
+sys.path.insert(0, ROOT)
+try:
+    from nota_admin import Admin
+except Exception as _e:          # noqa: BLE001  缺文件不该把整站拖垮
+    Admin = None
+    print('后台模块没加载上：%s' % _e, flush=True)
+
+ADMIN = None
+# 路径可以拿环境变量顶掉：本机自测要用临时目录，别去碰 /var/lib
+DB_PATH = os.environ.get('NOTA_DB') or '/var/lib/nota/nota.db'
+SECRET_PATH = os.environ.get('NOTA_SECRET') or os.path.join(CERTDIR, 'session.key')
+
 
 class Handler(http.server.SimpleHTTPRequestHandler):
     # 注意：不要给父类传 directory=ROOT —— 那是 3.7 才有的参数，这台是 3.6，
@@ -33,6 +46,49 @@ class Handler(http.server.SimpleHTTPRequestHandler):
     def log_message(self, fmt, *args):
         # 默认写到 stderr 也是进 journald，保持同一份日志格式即可
         sys.stderr.write('%s - - %s\n' % (self.address_string(), fmt % args))
+
+    # 后台的几条路先过 Admin，剩下的才是静态文件。
+    # 放在 do_GET 最前面而不是 send_head 里 —— 后台要自己写状态码和 cookie，
+    # 走到 send_head 就已经被标准实现接管了。
+    def do_GET(self):
+        if ADMIN is not None and ADMIN.route(self):
+            return
+        self._note_download()
+        return http.server.SimpleHTTPRequestHandler.do_GET(self)
+
+    def do_HEAD(self):
+        if ADMIN is not None and ADMIN.route(self):
+            return
+        return http.server.SimpleHTTPRequestHandler.do_HEAD(self)
+
+    def do_POST(self):
+        if ADMIN is not None and ADMIN.route(self):
+            return
+        self.send_error(405, 'POST 只给 /api/ 用')
+
+    def _note_download(self):
+        """记一次下载。
+
+        只算「从头开始」的请求：浏览器断点续传时带 Range: bytes=1000000-，
+        那是同一次下载的第二段，再记一遍会把总数吹起来。
+        爬虫和 HEAD 不算 —— HEAD 是官网按钮在探文件在不在。
+        """
+        path = self.path.split('?', 1)[0]
+        if not path.startswith('/d/'):
+            return
+        name = path.rsplit('/', 1)[-1].lower()
+        if 'portable' in name:
+            asset = 'portable'
+        elif 'setup' in name:
+            asset = 'setup'
+        else:
+            return
+        rng = self.headers.get('Range')
+        if rng:
+            m = RANGE_RE.match(rng.strip())
+            if m and m.group(1) and int(m.group(1)) > 0:
+                return
+        ADMIN.record_download(asset)
 
     def end_headers(self):
         # 下载别让浏览器猜；站点自己的文件里没有需要缓存很久的
@@ -120,9 +176,26 @@ class RedirectToHttps(Handler):
 
 
 def main():
+    global ADMIN
     port = int(sys.argv[1]) if len(sys.argv) > 1 else 80
     tls_port = int(sys.argv[2]) if len(sys.argv) > 2 else 443
     os.chdir(ROOT)
+
+    if Admin is not None:
+        try:
+            ADMIN = Admin(DB_PATH, SECRET_PATH, ROOT)
+            print('后台已就绪：/admin    数据库 %s' % DB_PATH, flush=True)
+        except Exception as e:      # noqa: BLE001
+            # 数据库建不出来（比如 /var/lib 不可写）就降到站点目录旁边，
+            # 后台照开 —— 总比整个 /admin 404 强
+            fallback = os.path.join(os.path.dirname(ROOT), 'nota-data')
+            print('数据库 %s 不可用（%s），改用 %s' % (DB_PATH, e, fallback), flush=True)
+            try:
+                ADMIN = Admin(os.path.join(fallback, 'nota.db'),
+                              os.path.join('/tmp', 'nota-session.key'), ROOT)
+                print('后台已就绪（降级路径）：/admin', flush=True)
+            except Exception as e2:  # noqa: BLE001
+                print('后台起不来，/admin 将是 404：%s' % e2, flush=True)
 
     cert = os.path.join(CERTDIR, 'fullchain.pem')
     key = os.path.join(CERTDIR, 'key.pem')
