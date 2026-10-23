@@ -103,7 +103,10 @@ kbd{
 .btn-sub{display:block;margin-top:9px;font-size:12.5px;color:var(--ink-3)}
 
 /* ══ 首屏 ══ */
-.hero{padding:96px 0 30px;text-align:center;position:relative}
+/* overflow-x:clip 是给两团光斑用的：560px 的圆以 50% 定位再横移，
+   手机上必然甩出视口右侧、把 scrollWidth 撑到两倍宽（页面能横向拖）。
+   只裁横向 —— 用 overflow:hidden 会把顶上 -180px 那半团光一并裁掉，光就没了。 */
+.hero{padding:96px 0 30px;text-align:center;position:relative;overflow-x:clip}
 /* 两团柔光在标题后面慢慢漂 —— 页面是「活」的，但不吵 */
 .orb{position:absolute;border-radius:50%;filter:blur(90px);pointer-events:none;z-index:-1}
 .orb-a{width:560px;height:560px;left:50%;top:-180px;transform:translateX(-72%);
@@ -136,84 +139,74 @@ kbd{
 .hero-note{margin-top:18px;font-size:13px;color:var(--ink-3)}
 
 /* 笔记本外框 + 鼠标视差倾斜。
-   之前这里是「圆角矩形 + 一条横杠」，看着像平板立在那里。笔记本的辨识点
-   全在两个地方：屏幕四周有窄边框（上宽下窄）+ 一块比屏幕更宽、带开盖凹槽
-   的底座。这两样做出来，才读得成「合着的下半身在桌子那头」。 */
+   这一块来回改过三次，结论是：**回到最先那版，而且别画键盘**。
+   中间试过补一整块 rotateX(70deg) 的键盘面，压出来是一片放射状的脏条纹，
+   键帽糊成灰雾，触控板像贴了块胶布，还把首屏的注意力从界面本身拽走了。
+   笔记本认得出，靠的从来不是键帽，是这三样：屏幕四周一圈窄铝边、
+   比屏幕略宽出一点的下半身、以及正中间那道开盖凹槽。
+   所以下面只把这版原先的三个小毛病修掉：机身整片死黑没厚度（补一条上沿亮线）、
+   凹槽给得太宽像划痕（收窄）、落影贴得太紧（拉开一点）。 */
 .device-wrap{margin:64px auto 0;max-width:1020px;perspective:1600px}
 .device{
   transition:transform .5s var(--ease);transform-style:preserve-3d;will-change:transform;
 }
-/* 上半：屏幕，深色窄边 + 顶部摄像头 */
+/* 上半：屏幕。边框上宽下窄，下巴留厚一点 —— 真机的下巴总比左右宽，
+   拉平了就成了「一块贴了边的截图」。底角按机身收口。 */
 .device-screen{
-  position:relative;padding:14px 14px 17px;
-  background:linear-gradient(180deg,#3b3c36,#23241f);
-  border-radius:16px 16px 4px 4px;
-  box-shadow:0 0 0 1px rgb(255 255 255/.08) inset,0 1px 0 rgb(255 255 255/.12) inset;
+  position:relative;padding:14px 14px 19px;
+  background:linear-gradient(180deg,#3f403a 0%,#2a2b24 46%,#21221b 100%);
+  border-radius:16px 16px 5px 5px;
+  box-shadow:
+    0 0 0 1px rgb(255 255 255/.09) inset,   /* 铝边外沿的一圈反光 */
+    0 1px 0 rgb(255 255 255/.14) inset,     /* 顶光 */
+    0 -1px 0 rgb(0 0 0/.5) inset;           /* 下巴内侧压暗，屏幕才像陷在里边 */
 }
 .device-screen::before{
   content:"";position:absolute;top:6px;left:50%;transform:translateX(-50%);
-  width:4px;height:4px;border-radius:50%;background:#54554d;
+  width:4px;height:4px;border-radius:50%;
+  background:#5b5c53;
+  box-shadow:0 0 0 1px rgb(0 0 0/.5),0 0 4px rgb(126 166 255/.22);
 }
 .device-screen img{display:block;width:100%;height:auto;border-radius:2px;background:#fff}
-/* 下半：键盘面。
-   光画一块比屏幕宽的横条没用 —— 那是「平板架在支架上」。笔记本真正认得出来的
-   是**露出键盘的那一截下半身**，而且必须是透视的：靠近观者的一边宽、贴铰链的
-   一边窄。所以这里用真 3D 转：rotateX 把矩形压扁，perspective 让远端收窄，
-   键盘和触控板都还在原来的坐标系里摆，跟着一起变形。 */
+/* 下半：机身前沿 —— 只露一条厚度。
+   真机摆桌上、镜头略高于屏幕中线时，能看见的下半身就这么一线。做成一整块
+   楔形（上沿亮、往下压到近乎黑），它才有「厚度」，而不是一条贴上去的杠。
+   宽度比屏幕多出 2.4%：多出来的那点正是机身外沿，少了就读成同一块板。 */
 .device-base{
-  position:relative;height:228px;margin:-1px -3.4% 0;
-  transform-origin:50% 0;
-  transform:perspective(2900px) rotateX(70deg);
-  background:linear-gradient(180deg,#5b5c51,#45463c 28%,#35362d 72%,#2a2b22);
-  border-radius:0 0 6px 6px;
-  box-shadow:inset 0 -3px 0 rgb(255 255 255/.13),0 22px 40px -18px rgb(20 20 16/.5);
-}
-/* 贴铰链那条阴影：屏幕把下半身的里端压暗了 */
-.device-base::before{
-  content:"";position:absolute;inset:0 0 auto;height:26px;
-  background:linear-gradient(180deg,rgb(12 12 8/.75),transparent);
-}
-/* 抠开盖子的凹槽，在里端正中间 */
-.device-base::after{
-  content:"";position:absolute;top:0;left:50%;transform:translateX(-50%);
-  width:13%;height:9px;border-radius:0 0 5px 5px;background:#11120c;
-}
-/* 键区：横向一条条排下来，靠重复渐变画键缝，别真去铺几十个 div */
-.deck-keys{
-  position:absolute;left:6.5%;right:6.5%;top:10%;height:55%;
-  border-radius:4px;
+  position:relative;height:17px;margin:-1px -2.4% 0;
+  border-radius:2px 2px 12px 12px;
+  /* 铰链那一线比屏幕边框亮一点点就够了。早先试过整片银灰 —— 一眼就成了
+     「屏幕坐在一块铝托盘上」，反而更假。 */
   background:
-    repeating-linear-gradient(180deg,
-      #1c1d16 0 12px, #0a0b06 12px 15px),
-    #15160f;
-  box-shadow:inset 0 0 0 1px rgb(255 255 255/.07),0 1px 0 rgb(255 255 255/.08);
+    linear-gradient(90deg,rgb(255 255 255/.10),transparent 4%,transparent 96%,rgb(255 255 255/.10)),
+    linear-gradient(180deg,#5f6055 0%,#3a3b31 34%,#232419 78%,#1a1b14 100%);
+  box-shadow:
+    0 1px 0 rgb(255 255 255/.17) inset,    /* 上沿那道迎光的边 */
+    inset 0 -1px 0 rgb(0 0 0/.55),         /* 下沿收暗，不然这条会飘 */
+    0 1px 0 rgb(0 0 0/.22);                /* 机身下沿贴桌的那道硬影 */
 }
-/* 一行键里的竖缝：淡一层，密度靠 --k 控制 */
-.deck-keys::before{
-  content:"";position:absolute;inset:0;border-radius:4px;
-  background:repeating-linear-gradient(90deg,
-    transparent 0 30px, rgb(0 0 0/.55) 30px 32px);
-  mix-blend-mode:multiply;
+/* 铰链：屏幕压在下半身里端的那道暗缝。负 margin 只叠了 1px，
+   所以这条 2px 的线露出来正好 1px，像一道真正的接缝。 */
+.device-base::after{
+  content:"";position:absolute;left:0;right:0;top:0;height:2px;
+  background:rgb(0 0 0/.36);
 }
-/* 功能键那一条（最上面一行窄的） */
-.deck-keys::after{
-  content:"";position:absolute;left:0;right:0;top:0;height:10px;
-  background:linear-gradient(180deg,#0b0c07,#14150f);
-  border-radius:4px 4px 0 0;
+/* 开盖凹槽，正中间。真机的凹槽是很窄的一道缝 —— 原先给到 148px 宽，
+   在这么暗的机身上读出来像被人划了一道。 */
+.device-base::before{
+  content:"";position:absolute;top:0;left:50%;transform:translateX(-50%);
+  width:104px;height:5px;border-radius:0 0 6px 6px;
+  background:rgb(14 15 8/.7);
+  box-shadow:inset 0 1px 2px rgb(0 0 0/.55),0 1px 0 rgb(255 255 255/.09);
 }
-/* 触控板：跟面板同色，只靠一圈细缝分出来 —— 真机就是这样，
-   涂成亮灰会像贴在机器前面的一块胶垫。 */
-.deck-pad{
-  position:absolute;left:50%;transform:translateX(-50%);
-  top:70%;width:30%;height:21%;border-radius:5px;
-  background:#55564b;
-  box-shadow:inset 0 0 0 1px rgb(0 0 0/.5),0 1px 0 rgb(255 255 255/.06);
-}
-/* 桌上的落影 */
+/* 桌上的落影。两层：贴着机身那圈收得很紧（真机的接触影很硬），
+   外面再铺一层散得慢的。只有一层大雾会显得机器是飘着的。 */
 .device-glow{
-  height:46px;margin:-14px auto 0;max-width:84%;border-radius:50%;
-  background:radial-gradient(ellipse at 50% 10%,rgb(20 20 16/.22),transparent 70%);
-  filter:blur(12px);
+  height:50px;margin:-10px auto 0;max-width:90%;border-radius:50%;
+  background:
+    radial-gradient(ellipse 50% 36% at 50% 8%,rgb(18 18 12/.30),transparent 72%),
+    radial-gradient(ellipse 82% 52% at 50% 14%,rgb(18 18 12/.10),transparent 76%);
+  filter:blur(8px);
 }
 
 /* ══ 跑马灯：一行关键词缓慢滚过，代替一块「支持列表」 ══ */
@@ -378,10 +371,7 @@ kbd{
         <div class="device-screen">
           <img src="shots/hero.png" width="3000" height="1880" alt="Nota 的分栏视图：左边是 Markdown 源码，右边是实时渲染的结果" loading="eager">
         </div>
-        <div class="device-base">
-          <div class="deck-keys" aria-hidden="true"></div>
-          <div class="deck-pad" aria-hidden="true"></div>
-        </div>
+        <div class="device-base" aria-hidden="true"></div>
       </div>
       <div class="device-glow" aria-hidden="true"></div>
     </div>
