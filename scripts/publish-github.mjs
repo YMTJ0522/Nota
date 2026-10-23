@@ -33,10 +33,13 @@ const NOTES = fs
   .replace(/^#.*$/m, '') // 去掉 H1，标题由 API 自己写
   .trim()
 
+/* 2.7.5 起只有一个产物：同一个 exe 既能装到本机，也能直接运行。
+   以前那两个（Setup / Portable）留给旧版本，新版本不再产。
+   只传确实存在的文件 —— 列了却没有会在上传那步报 404。 */
 const FILES = [
   { name: `Nota-Setup-${VERSION}.exe`, file: `release/Nota-Setup-${VERSION}.exe` },
   { name: `Nota-Portable-${VERSION}.exe`, file: `release/Nota-Portable-${VERSION}.exe` },
-]
+].filter((f) => fs.existsSync(path.join(root, f.file)))
 
 const run = (cmd, args, opts = {}) => {
   console.log(`  $ ${cmd} ${args.join(' ')}`)
@@ -142,6 +145,16 @@ step(`建 Release ${TAG}`, () => {
   try { fs.unlinkSync(payloadPath) } catch { /* 无所谓 */ }
   let rel = null
   try { rel = JSON.parse(r.out) } catch { /* 下面统一报错 */ }
+  /* 422 already_exists：上一次其实建成功了，只是响应被代理吞掉（本机会这样），
+     重跑时不该当成失败。改为按 tag 取回那条 Release 接着传包。 */
+  if (!DRY && (!rel || !rel.id) && /already_exists/.test(r.out || '')) {
+    const g = curlWithToken(
+      [`https://api.github.com/repos/${REPO}/releases/tags/${TAG}`],
+      TOKEN,
+    )
+    try { rel = JSON.parse(g.out) } catch { /* 下面统一报错 */ }
+    if (rel?.id) console.log(`  Release ${TAG} 已存在，改为续传安装包`)
+  }
   if (!DRY && (!rel || !rel.id)) {
     console.error('  建 Release 失败：', (r.out || '').trim().slice(0, 300))
     process.exit(1)
@@ -152,7 +165,42 @@ step(`建 Release ${TAG}`, () => {
 
 /* ── 4. 传安装包 ── */
 step('传安装包', () => {
+  /* 传之前先看这条 Release 上已经有哪几个文件：重跑时同名再传一遍会 422，
+     而脚本要能反复重跑。同名且大小一致的直接跳过。 */
+  let existing = []
+  if (!DRY && releaseId) {
+    const g = curlWithToken(
+      [`https://api.github.com/repos/${REPO}/releases/${releaseId}/assets`],
+      TOKEN,
+    )
+    try {
+      const arr = JSON.parse(g.out)
+      if (Array.isArray(arr)) existing = arr
+    } catch { /* 取不到就当空的，后面照传 */ }
+  }
+
   for (const f of FILES) {
+    const size = fs.statSync(path.join(root, f.file)).size
+    const hit = existing.find((a) => a.name === f.name)
+    if (hit) {
+      /* state 必须是 uploaded 才算数。上传被中断（代理断在半路）时，
+         GitHub 会把这条记录留下，state 停在 starter、size 却是最终大小 ——
+         光比大小会误判成「已经传好了」。这种要先删掉再传。 */
+      const done = hit.state === 'uploaded' && Number(hit.size) === size
+      if (done) {
+        console.log(`  已传过 ${f.name}（${(hit.size / 1048576).toFixed(1)} MB），跳过`)
+        continue
+      }
+      console.log(`  ${f.name} 上次没传完（state=${hit.state}），删掉重传`)
+      const d = curlWithToken(
+        ['-X', 'DELETE', `https://api.github.com/repos/${REPO}/releases/assets/${hit.id}`],
+        TOKEN,
+      )
+      if (d.code !== 0) {
+        console.error(`  删旧资源失败：`, (d.out || '').trim().slice(0, 200))
+        process.exit(1)
+      }
+    }
     const url = `https://uploads.github.com/repos/${REPO}/releases/${
       releaseId ?? 'LATEST'
     }/assets?name=${f.name}`
