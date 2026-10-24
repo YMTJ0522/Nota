@@ -303,6 +303,12 @@ kbd{
 .dl-item h4{margin:0 0 4px;font-size:16px;color:#fff}
 .dl-item .meta{font-size:13px;color:#8f8d80;font-family:var(--font-mono)}
 .dl-item .btn{width:100%;margin-top:16px}
+/* 便携版不抢主按钮的位置 —— 大多数人要的是安装包。但它得在边上看得见，
+   否则「有没有免安装的」这个问题每隔几天就会被问一次。 */
+.dl-alt{margin:16px 0 0;font-size:12.5px;color:#8f8d80}
+.dl-alt a{color:#c9c7bb;text-decoration:underline;text-underline-offset:3px}
+.dl-alt a:hover{color:#fff}
+.dl-alt .fn{font-family:var(--font-mono);font-size:11.5px;color:#6f6d63}
 /* 双击后那十几秒没有窗口，是 Windows 在把这个没签名的安装包完整扫一遍。
    不解释一句，用户会以为装坏了，反复双击 —— 越双击越乱。 */
 .dl-note{margin:26px auto 0;max-width:520px;font-size:12.5px;line-height:1.9;
@@ -355,7 +361,7 @@ kbd{
   <span class="orb orb-a" aria-hidden="true"></span>
   <span class="orb orb-b" aria-hidden="true"></span>
   <div class="wrap">
-    <span class="badge rv"><span class="dot"></span><span data-dl-badge>v2.7.6 · </span>Windows · 免费 · 开源</span>
+    <span class="badge rv"><span class="dot"></span><span data-dl-badge>v2.7.7 · </span>Windows · 免费 · 开源</span>
     <h1 class="rv" style="transition-delay:.06s">
       一个只做笔记的<br><span class="grad">笔记应用</span>
     </h1>
@@ -575,11 +581,13 @@ kbd{
       <div class="dl-grid">
         <div class="dl-item">
           <h4>下载 Nota</h4>
-          <div class="meta" data-dl-meta="setup">Nota-Setup-2.7.6.exe · 68 MB</div>
+          <div class="meta" data-dl-meta="setup">Nota-Setup-2.7.7.exe · 68 MB</div>
           <!-- 直链落在自己域名下的 /d/setup.exe；带 .exe 后缀是故意的，
                任何静态服务器都能直接吐文件，浏览器存下来也是正常文件名 -->
           <a class="btn btn-primary" data-dl="setup" href="/d/setup.exe">下载安装包</a>
           <span class="btn-sub" style="color:#8f8d80">打开后自己选：装到这台电脑，或者直接运行</span>
+          <p class="dl-alt">不想装？<a data-dl="portable" href="/d/portable.exe">下载免安装版</a>
+            <span class="fn" data-dl-meta="portable">Nota-Portable-2.7.7.exe</span>，双击直接进界面</p>
         </div>
       </div>
       <p class="dl-note">
@@ -590,7 +598,7 @@ kbd{
         装的时候还能顺便指定笔记存哪个文件夹 —— 选完继续装，第一次打开就落在那里。
       </p>
       <div class="facts">
-        <span data-dl-ver>当前版本 2.7.6</span>
+        <span data-dl-ver>当前版本 2.7.7</span>
         <span>Windows 10 / 11 · 64 位</span>
         <span>界面字体：南西新圆体（随包）</span>
         <span><kbd>Ctrl</kbd>+<kbd>P</kbd> 跳转 · <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>F</kbd> 全文 · <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>G</kbd> 关系图</span>
@@ -659,15 +667,21 @@ if (row) row.innerHTML += row.innerHTML
 ;(function downloadSource() {
   var mb = function (n) { return n > 0 ? (n / 1048576).toFixed(0) + ' MB' : '' }
   var btn = document.querySelector('[data-dl="setup"]')
+  var pbtn = document.querySelector('[data-dl="portable"]')
   var meta = document.querySelector('[data-dl-meta="setup"]')
+  var pmeta = document.querySelector('[data-dl-meta="portable"]')
   var verEl = document.querySelector('[data-dl-ver]')
   var badge = document.querySelector('[data-dl-badge]')
 
-  var paint = function (name, size, version) {
-    if (name && meta) {
-      var s = mb(size || 0)
-      meta.textContent = s ? name + ' · ' + s : name
-    }
+  /* 两份文件是同一个二进制复制出来的，体积一样，写法也共用 */
+  var label = function (name, size) {
+    var s = mb(size || 0)
+    return s ? name + ' · ' + s : name
+  }
+
+  var paint = function (setup, portable, version) {
+    if (setup && setup.name && meta) meta.textContent = label(setup.name, setup.size)
+    if (portable && portable.name && pmeta) pmeta.textContent = label(portable.name, portable.size)
     if (version) {
       if (verEl) verEl.textContent = '当前版本 ' + version
       if (badge) badge.textContent = 'v' + version + ' · '
@@ -677,8 +691,8 @@ if (row) row.innerHTML += row.innerHTML
   fetch('info.json', { cache: 'no-cache' })
     .then(function (r) { return r.ok ? r.json() : Promise.reject(new Error('http ' + r.status)) })
     .then(function (d) {
-      var a = (d && d.assets && d.assets.setup) || {}
-      paint(a.name, a.size, d && d.version)
+      var a = (d && d.assets) || {}
+      paint(a.setup || {}, a.portable || {}, d && d.version)
     })
     .catch(function () {
       /* 站内没有 info.json。先看 /d/setup.exe 在不在 ——
@@ -699,13 +713,22 @@ if (row) row.innerHTML += row.innerHTML
       .then(function (r) { return r.ok ? r.json() : Promise.reject(new Error('http ' + r.status)) })
       .then(function (rel) {
         var list = (rel && rel.assets) || []
-        var hit = null
-        for (var i = 0; i < list.length; i++) {
-          if (/setup/i.test(list[i].name || '')) { hit = list[i]; break }
+        var pick = function (re) {
+          for (var i = 0; i < list.length; i++) {
+            if (re.test(list[i].name || '')) return list[i]
+          }
+          return null
         }
-        if (!hit) return
-        if (direct && btn && hit.browser_download_url) btn.href = hit.browser_download_url
-        paint(hit.name, hit.size, String(rel.tag_name || '').replace(/^v/, ''))
+        var hit = pick(/setup/i)
+        var phit = pick(/portable/i)
+        if (!hit && !phit) return
+        /* 只有 direct 为真时才改地址 —— 不然本来走自己服务器的下载
+           会被悄悄换成外站直链，下载次数也就统计不到了。 */
+        if (direct) {
+          if (btn && hit && hit.browser_download_url) btn.href = hit.browser_download_url
+          if (pbtn && phit && phit.browser_download_url) pbtn.href = phit.browser_download_url
+        }
+        paint(hit, phit, String(rel.tag_name || '').replace(/^v/, ''))
       })
       .catch(function () { /* 兜底文字已经在 HTML 里 */ })
   }

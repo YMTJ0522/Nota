@@ -42,10 +42,18 @@ fs.copyFileSync(path.join(root, 'deploy', 'server', 'serve.py'), path.join(STAGE
 // 后台（登录 / 下载统计 / 改密）挂在 serve.py 上，跟着一起走
 fs.copyFileSync(path.join(root, 'deploy', 'server', 'nota_admin.py'), path.join(STAGE, 'nota_admin.py'))
 
-// 安装包：只收 Setup，官网本来也只展示这一个
+// 安装包：**只往包里放 Setup 这一份**。
+// 便携版跟它是同一个二进制，服务器上由 install-local.sh 建一个硬链接
+// （d/portable.exe → setup.exe）：访客照样能下到两个名字的文件，
+// 磁盘只占一份，这个包也不用多背 70 MB。网络不好的时候省下的就是几分钟。
 const setup = path.join(root, 'release', `Nota-Setup-${VERSION}.exe`)
+const portable = path.join(root, 'release', `Nota-Portable-${VERSION}.exe`)
 if (!fs.existsSync(setup)) {
   console.error(`缺少 ${path.relative(root, setup)} —— 先 npm run pack`)
+  process.exit(1)
+}
+if (!fs.existsSync(portable)) {
+  console.error(`缺少 ${path.relative(root, portable)} —— 先 npm run pack`)
   process.exit(1)
 }
 fs.mkdirSync(path.join(STAGE, 'd'), { recursive: true })
@@ -57,7 +65,11 @@ fs.writeFileSync(
   JSON.stringify(
     {
       version: VERSION,
-      assets: { setup: { name: `Nota-Setup-${VERSION}.exe`, size } },
+      assets: {
+        setup: { name: `Nota-Setup-${VERSION}.exe`, size },
+        // 体积写的是真实字节数（两份完全一样），页面拿它显示「· 68 MB」
+        portable: { name: `Nota-Portable-${VERSION}.exe`, size },
+      },
     },
     null,
     2,
@@ -81,4 +93,5 @@ const mb = (n) => (n / 1048576).toFixed(1) + ' MB'
 console.log(`\n包好了：${path.relative(root, OUT)}  ${mb(fs.statSync(OUT).size)}`)
 console.log(`  内含 site/（${fs.readdirSync(path.join(root, 'site', 'shots')).length} 张截图）`)
 console.log(`       d/setup.exe  ${mb(size)}`)
+console.log(`       d/portable.exe  部署时硬链接到上面那份，不额外占空间`)
 console.log(`       info.json    版本 ${VERSION}`)

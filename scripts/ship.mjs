@@ -28,7 +28,9 @@ const FROM = fromArg ? Number.parseInt(fromArg.split('=')[1], 10) || 1 : 1
 const pkg = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'))
 const VERSION = pkg.version
 const EXE_NAME = `Nota-Setup-${VERSION}.exe`
+const PORTABLE_NAME = `Nota-Portable-${VERSION}.exe`
 const EXE = path.join(root, 'release', EXE_NAME)
+const PORTABLE = path.join(root, 'release', PORTABLE_NAME)
 const SEVENZA = path.join(root, 'node_modules', '7zip-bin', 'win', 'x64', '7za.exe')
 const rel = (p) => path.relative(root, p).replace(/\\/g, '/')
 const mb = (n) => (n / 1048576).toFixed(1) + ' MB'
@@ -60,10 +62,17 @@ function stepPack() {
   if (!fs.existsSync(EXE)) {
     fail(`打包没有产出 ${EXE_NAME}（release.mjs 退出码 ${code}）`)
   }
+  /* 便携版是 release.mjs 复制出来的，缺了说明那一步被跳过（比如产物刚生成就被占用）。
+     它跟安装包同一个二进制，缺一份不影响功能，但下载页上会少一个入口。 */
+  if (!fs.existsSync(PORTABLE)) {
+    console.log(`  ⚠ 缺 ${PORTABLE_NAME}，拿安装包复制一份补上`)
+    fs.copyFileSync(EXE, PORTABLE)
+  }
   if (code !== 0) {
     console.log(`  ⚠ release.mjs 退出码 ${code}，但产物已生成 —— 多为收尾删中间文件被拦，下一步验完整性`)
   }
   console.log(`  ✓ ${EXE_NAME}  ${mb(fs.statSync(EXE).size)}`)
+  console.log(`  ✓ ${PORTABLE_NAME}  ${mb(fs.statSync(PORTABLE).size)}`)
 }
 
 /* ── 2. 验产物 ──
@@ -71,14 +80,21 @@ function stepPack() {
    只有 7za t 通过才算数 —— 它真去读了一遍压缩流。 */
 function stepVerify() {
   if (!fs.existsSync(SEVENZA)) fail(`找不到 7za：${rel(SEVENZA)}`)
-  const { code, out } = capture(SEVENZA, ['t', EXE])
-  if (code !== 0) {
-    console.error(out.split('\n').slice(-12).join('\n'))
-    fail('安装包自检没过，别发这个包')
+  /* 两份都验。便携版是复制出来的，原则上跟安装包一模一样的字节 ——
+     但「原则上」这三个字在发版流程里等于没说，真读一遍压缩流才作数。 */
+  for (const file of [EXE, PORTABLE]) {
+    const name = path.basename(file)
+    const { code, out } = capture(SEVENZA, ['t', file])
+    if (code !== 0) {
+      console.error(out.split('\n').slice(-12).join('\n'))
+      fail(`${name} 自检没过，别发这个包`)
+    }
+    const size = fs.statSync(file).size
+    if (size < 40 * 1048576) {
+      fail(`${name} 只有 ${mb(size)}，比正常的 70 MB 小太多，多半不完整`)
+    }
+    console.log(`  ✓ ${name} 压缩流完整  ${mb(size)}`)
   }
-  const size = fs.statSync(EXE).size
-  if (size < 40 * 1048576) fail(`安装包只有 ${mb(size)}，比正常的 70 MB 小太多，多半不完整`)
-  console.log(`  ✓ 压缩流完整  ${mb(size)}`)
 }
 
 /* ── 3. 官网部署包 ──
@@ -99,8 +115,27 @@ function stepCommit() {
     console.log('  没有改动要提交，跳过')
     return
   }
-  const code = run('git', ['commit', '-m', `${VERSION}：首次启动打开欢迎文档，安装时可选笔记目录`])
+  const code = run('git', ['commit', '-m', commitSubject()])
   if (code !== 0) fail('提交失败（上面有 git 的原话）')
+}
+
+/** 提交标题取 release-notes.md 里第一句正文 —— 写死一行「安装时可选笔记目录」
+    的结果是每发一版都留着上一版的描述，git log 上看着像没改过任何东西。 */
+function commitSubject() {
+  try {
+    const md = fs.readFileSync(path.join(root, 'release-notes.md'), 'utf8')
+    const line = md
+      .split('\n')
+      .map((s) => s.trim())
+      .find((s) => s && !s.startsWith('#') && !s.startsWith('|') && !s.startsWith('>') && !s.startsWith('-'))
+    if (line) {
+      const clean = line.replace(/[*`]/g, '').replace(/[：:]$/, '')
+      return `${VERSION}：${clean.length > 60 ? clean.slice(0, 60) + '…' : clean}`
+    }
+  } catch {
+    /* 没有 release-notes 就退回版本号 */
+  }
+  return `${VERSION}：发版`
 }
 
 /* ── 5. 推代码 + Release + 传包 + 推 gh-pages ── */
@@ -271,6 +306,7 @@ for (const [n, title, fn] of STEPS) {
 console.log('\n════ 结果 ════')
 console.log(`  版本       ${VERSION}`)
 console.log(`  安装包     ${fs.existsSync(EXE) ? `${EXE_NAME}  ${mb(fs.statSync(EXE).size)}` : '不在'}`)
+console.log(`  便携版     ${fs.existsSync(PORTABLE) ? `${PORTABLE_NAME}  ${mb(fs.statSync(PORTABLE).size)}` : '不在'}`)
 if (problems.length) {
   console.log('')
   for (const p of problems) console.log(`  ! ${p}`)

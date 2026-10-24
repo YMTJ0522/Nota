@@ -90,9 +90,12 @@ function syncSiteFallback(v, setupBytes) {
   let s = before
   s = s.replace(/(data-dl-badge[^>]*>)v[\d.]+/, `$1v${v}`)
   s = s.replace(/(data-dl-meta="setup"[^>]*>)Nota-Setup-[\d.]+\.exe/, `$1Nota-Setup-${v}.exe`)
+  s = s.replace(/(data-dl-meta="portable"[^>]*>)Nota-Portable-[\d.]+\.exe/, `$1Nota-Portable-${v}.exe`)
   s = s.replace(/(data-dl-ver[^>]*>)当前版本 [\d.]+/, `$1当前版本 ${v}`)
   if (setupBytes > 0) {
     const mb = Math.round(setupBytes / 1048576)
+    /* 两份 exe 是同一个二进制复制出来的，字节数一样；
+       便携版那行没写体积，所以这里只补 setup 那行，多补也不会错。 */
     s = s.replace(/(data-dl-meta="setup"[^>]*>[^<]*· )\d+ MB/, `$1${mb} MB`)
   }
   if (s === before) return { changed: false }
@@ -279,6 +282,18 @@ async function main() {
       }
     }
     console.log(`  ✓ 已清掉 ${leftover.length} 个中间产物`)
+  }
+
+  /* ── 便携版 ──
+     electron-builder 只有一个 portable target，那份 exe 既当安装包又当免安装包。
+     但下载页上「有没有免安装版」是个真问题，所以复制一份带 Portable 的名字：
+     主进程按文件名认出它，双击直接进界面，不问装不装。
+     字节完全相同，不重新打一遍包 —— 复制 70 MB 大约一秒。 */
+  const setupExe = path.join(RELEASE, `Nota-Setup-${target}.exe`)
+  const portableExe = path.join(RELEASE, `Nota-Portable-${target}.exe`)
+  if (fs.existsSync(setupExe)) {
+    fs.copyFileSync(setupExe, portableExe)
+    console.log(`  ✓ 便携版 ${path.basename(portableExe)}（与安装包同一二进制，改名得到）`)
   }
 
   /* 汇总 */

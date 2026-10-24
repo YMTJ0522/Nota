@@ -5,11 +5,15 @@
  * 进度条都是系统画的，改不了样式。而 Nota 本身就是自绘窗口（frame:false），
  * 安装时突然弹出一个 2005 年的灰底向导，跟软件不是一个东西。
  *
- * 现在的做法：**免安装版（portable）就是安装包**。
+ * 现在的做法：**安装包本身就是免安装版**。
  * 双击它 → 解压到临时目录 → 启动本程序 → 主进程发现自己是「从 portable 起来的」，
  * 于是先开这扇小窗：装到这台电脑？装的话把文件从临时目录拷到
  * %LOCALAPPDATA%\Programs\Nota，建快捷方式、登记卸载项，然后从新位置重启。
  * 不装就点「就用免安装的」，直接进正常界面 —— 一个文件两种用法。
+ *
+ * 另外还有一份 **Nota-Portable-x.y.z.exe**，是打包后把这份二进制复制改名得到的：
+ * 文件名里带 Portable 就直接跳过这扇窗，双击即用，连点一下都不用。
+ * 想放 U 盘的人拿那个，不想看安装界面的人也不用每次选。
  *
  * 几个必须记住的点：
  *
@@ -376,6 +380,12 @@ export async function maybeRunInstaller(): Promise<boolean> {
   const installed = isInside(process.execPath, defaultDir())
 
   if (!wantUninstall && (!portable || installed)) return false
+
+  /* 便携版（Nota-Portable-x.y.z.exe）双击就是要直接用，别再问一遍装不装。
+     两份 exe 是同一个二进制（打包后复制改名），能区分它们的只有文件名 ——
+     electron-builder 的解压壳只告诉我们「这个文件在哪儿」，
+     不会说自己是哪个变体。改过名的便携版也不亏，退回安装界面而已。 */
+  if (!wantUninstall && portable && /portable/i.test(path.basename(portable))) return false
 
   mode = wantUninstall ? 'uninstall' : 'install'
   targetDir = defaultDir()

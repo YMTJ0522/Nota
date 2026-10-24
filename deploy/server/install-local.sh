@@ -69,6 +69,12 @@ mkdir -p "$ROOT/shots"
 cp -f "$TMP"/site/shots/*.png "$ROOT/shots/" 2>/dev/null || true
 mkdir -p "$ROOT/d"
 [ -f "$TMP/d/setup.exe" ] && cp -f "$TMP/d/setup.exe" "$ROOT/d/setup.exe"
+# 便携版跟安装包是**同一个二进制**，服务器上做个硬链接就够：
+# 下载包能拿到两个名字的文件，磁盘只占一份，部署包也不用多传 70 MB。
+if [ -f "$ROOT/d/setup.exe" ]; then
+  ln -f "$ROOT/d/setup.exe" "$ROOT/d/portable.exe"
+  echo "    d/portable.exe 指向 setup.exe（硬链接，同一份文件）"
+fi
 cp -f "$TMP/info.json" "$ROOT/info.json" 2>/dev/null || true
 # serve.py：多线程 + Range 的静态服务（自带的 http.server 是单线程、不支持断点续传）
 cp -f "$TMP/serve.py" "$ROOT/serve.py" 2>/dev/null || true
@@ -152,11 +158,14 @@ if [ -f /etc/nota/fullchain.pem ] && [ -f /etc/nota/key.pem ]; then
   c1="$(probe "https://127.0.0.1/")"
   c2="$(probe "https://127.0.0.1/d/setup.exe" -r 0-0)"
   c3="$(probe "https://127.0.0.1/info.json")"
+  c4="$(probe "https://127.0.0.1/d/portable.exe" -r 0-0)"
   echo "    https 首页     HTTP $c1"
   echo "    https 下载     HTTP $c2（续传 RANGE 生效即为 206）"
+  echo "    https 便携版   HTTP $c4"
   echo "    https info     HTTP $c3"
   [ "$c1" = "200" ] || warn "https 首页不是 200，看 journalctl -u nota -n 30"
   [ "$c2" = "206" ] || warn "下载不是 206，Range 没生效（serve.py 没跑起来？）"
+  [ "$c4" = "206" ] || warn "便携版下载不是 206，硬链接没建上？"
   case "$c80" in
     301|302|308) ;;
     *) warn "80 没有跳转到 https（当前 $c80），脚本这版应该跳" ;;
