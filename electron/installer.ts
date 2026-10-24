@@ -30,6 +30,7 @@ import os from 'node:os'
 import fs from 'node:fs'
 import fsp from 'node:fs/promises'
 import { spawn } from 'node:child_process'
+import { writeVaultPointer } from './vault'
 
 const APP = 'Nota'
 /** 卸载信息写在 HKCU 下 —— 只装给当前用户，不需要管理员权限 */
@@ -37,6 +38,8 @@ const UNINSTALL_KEY = 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Unin
 
 let ui: BrowserWindow | null = null
 let targetDir = ''
+/** 笔记目录。空表示没动过，用「文档\Nota」——安装时用户选过就是他自己那个目录 */
+let notesDir = ''
 let mode: 'install' | 'uninstall' = 'install'
 
 function localAppData(): string {
@@ -47,6 +50,16 @@ function localAppData(): string {
 
 function defaultDir(): string {
   return path.join(localAppData(), 'Programs', APP)
+}
+
+/**
+ * 笔记目录的默认值：「文档\Nota」。
+ *
+ * 不选 AppData —— 笔记藏进 AppData，用户既找不到也没法备份，重装系统跟着一起没。
+ * 这个值和 vault.ts 里 ensureVault 拼出来的完全一致，改一处必须改另一处。
+ */
+function defaultNotesDir(): string {
+  return path.join(app.getPath('documents'), APP)
 }
 
 /** 解压出来的程序目录（portable 运行时就是临时目录里的那份） */
@@ -183,7 +196,9 @@ async function unregister() {
 function createUi() {
   ui = new BrowserWindow({
     width: 780,
-    height: 480,
+    // 多了「笔记存放位置」一整块，480 会把它挤到按钮底下去。
+    // 580 是留了余量的：错误提示多占两行也不会把底部按钮挤出窗口。
+    height: 580,
     show: false,
     frame: false,
     // 不做 transparent：透明窗口在关掉「透明效果」的机器上会露出一圈黑边，
@@ -219,6 +234,13 @@ async function doInstall() {
 
   if (isInside(dst, src) || isInside(src, dst)) {
     throw new Error('安装位置不能和临时目录重叠')
+  }
+
+  /* 笔记不许放进程序目录：卸载时删的是整个程序目录，连笔记一起没了。
+     这不是假想 —— 选目录的对话框会停在上一次的位置，手快点进安装目录很自然。
+     反过来（程序装进笔记目录）同样不行：笔记库会被当成程序文件删。 */
+  if (notesDir && (isInside(notesDir, dst) || isInside(dst, notesDir))) {
+    throw new Error('笔记目录不能和程序安装目录放在一起 —— 卸载时会连笔记一起删掉，换个位置。')
   }
 
   send('installer:phase', { label: '正在准备', percent: 0 })
@@ -265,8 +287,25 @@ async function doInstall() {
     send('installer:phase', { label: '正在登记卸载信息', percent: 100 })
     await register(exe, dst, app.getVersion(), Math.round(total / 1024))
 
-    // 完成页要摆「装到哪、占多大」，所以把这几项一起带回去
-    return { exe, dir: dst, bytes: total }
+    /* 记下笔记放哪。**只写这一个指针文件，绝不动笔记本身** ——
+       目录和欢迎文档等第一次启动时由 vault.ts 建：
+       「要不要写欢迎文档」取决于那一刻目录是不是空的，那是主程序的判断
+       （vault.ts 里那三条规则，单独测过 34 项）。
+       这里写完，第一次启动就不会再落到默认的「文档\Nota」上。 */
+    send('installer:phase', { label: '正在准备笔记目录', percent: 100 })
+    const preferred = notesDir || defaultNotesDir()
+    let recorded = defaultNotesDir()
+    try {
+      await writeVaultPointer(localAppData(), preferred)
+      recorded = preferred
+    } catch (e) {
+      // 记不住位置不算安装失败：主程序退回默认目录，功能不受影响。
+      // 但完成页要如实说「会用哪个」，不能显示一个其实没生效的路径。
+      logError('vault-pointer', e)
+    }
+
+    // 完成页要摆「装到哪、占多大、笔记在哪儿」，所以把这几项一起带回去
+    return { exe, dir: dst, bytes: total, notes: recorded }
   } finally {
     process.noAsar = prevNoAsar
   }
@@ -345,6 +384,8 @@ export async function maybeRunInstaller(): Promise<boolean> {
     version: app.getVersion(),
     dir: targetDir,
     installDirDefault: defaultDir(),
+    // 笔记目录默认值随 info 一起送到界面上，用户不改就是它
+    notes: notesDir || defaultNotesDir(),
   }))
 
   ipcMain.handle('installer:chooseDir', async () => {
@@ -360,6 +401,22 @@ export async function maybeRunInstaller(): Promise<boolean> {
     // 界面会把错误原文摊出来，比这里瞎猜更有用
     targetDir = path.join(r.filePaths[0], APP)
     return targetDir
+  })
+
+  /* 选笔记放哪。跟上面那个不一样：这里选的就是目录**本身**，
+     不再往后拼一层 \Nota —— 用户指着「D:\我的笔记」说就放这儿，
+     再给他套一层子目录是自作主张。 */
+  ipcMain.handle('installer:chooseNotes', async () => {
+    if (!ui) return null
+    const r = await dialog.showOpenDialog(ui, {
+      title: '选择笔记存放位置',
+      defaultPath: notesDir || defaultNotesDir(),
+      properties: ['openDirectory', 'createDirectory'],
+      buttonLabel: '用这个文件夹',
+    })
+    if (r.canceled || !r.filePaths[0]) return null
+    notesDir = r.filePaths[0]
+    return notesDir
   })
 
   ipcMain.handle('installer:start', async () => {

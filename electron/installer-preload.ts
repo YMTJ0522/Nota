@@ -12,6 +12,7 @@ interface Phase {
 contextBridge.exposeInMainWorld('notaInstall', {
   info: () => ipcRenderer.invoke('installer:info'),
   chooseDir: () => ipcRenderer.invoke('installer:chooseDir'),
+  chooseNotes: () => ipcRenderer.invoke('installer:chooseNotes'),
   start: () => ipcRenderer.invoke('installer:start'),
   launch: (exe?: string) => ipcRenderer.invoke('installer:launch', exe),
   usePortable: () => ipcRenderer.invoke('installer:usePortable'),

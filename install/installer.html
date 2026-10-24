@@ -64,8 +64,11 @@
 
   /* ── 右：内容 ── */
   .pane{flex:1;min-width:0;display:flex;flex-direction:column;
-    padding:38px 36px 24px 4px}
-  .screen{display:flex;flex-direction:column;height:100%}
+    padding:38px 36px 24px 4px;overflow:hidden}
+  /* overflow-y:auto 只是兜底：万一系统字体比预期大、或者错误提示多占两行，
+     内容可以自己滚，而不是把底下的按钮切掉一半。正常情况下不会出现滚动条。 */
+  .screen{display:flex;flex-direction:column;height:100%;
+    overflow-y:auto;scrollbar-width:thin}
   .screen[hidden]{display:none}
 
   h1{margin:0;font-size:25px;line-height:1.32;font-weight:600;
@@ -96,6 +99,23 @@
     transition:opacity .15s ease,background .15s ease,color .15s ease}
   .opt.on .browse{opacity:1;pointer-events:auto}
   .browse:hover{background:var(--surface);color:var(--fg)}
+
+  /* 笔记存放位置：单独一块，不跟上面两个选项混成一行。
+     「程序装哪儿」和「笔记放哪儿」是两件事 —— 前者随时能挪，
+     后者决定你的数据落在哪个盘，值得单独问一次。 */
+  .field{margin-top:14px;padding:12px 14px;border-radius:12px;
+    background:var(--surface);border:1px solid var(--line);
+    transition:opacity .15s ease}
+  .field .ft{font-size:11px;color:var(--fg-faint);letter-spacing:.02em}
+  .frow{display:flex;align-items:center;gap:10px;margin-top:7px}
+  .fv{flex:1;min-width:0;font-family:var(--mono);font-size:11.5px;color:var(--fg);
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  /* 这一行的「更改…」要一直看得见（选项区那两个只在选中时才露出来） */
+  .field .browse{opacity:1;pointer-events:auto}
+  .fd{margin:6px 0 0;font-size:11px;line-height:1.6;color:#8a8884}
+  /* 选「免安装」时这块不生效 —— 免安装不写任何记录，别给一个按了没反应的按钮 */
+  .field.off{opacity:.45}
+  .field.off .browse{pointer-events:none}
 
   .grow{flex:1}
 
@@ -183,7 +203,7 @@
     <div class="brand">
       <img class="appicon" src="../icon.png" alt="Nota">
       <div class="word">Nota</div>
-      <div class="ver" id="ver">版本 2.7.5</div>
+      <div class="ver" id="ver">版本 2.7.6</div>
     </div>
 
     <div class="pane">
@@ -210,6 +230,17 @@
           </label>
         </div>
 
+        <!-- 笔记放哪。默认「文档\Nota」，可以自己挑；选完继续走安装，
+             第一次打开就直接落在那个目录（里面会有一篇《欢迎使用 Nota》）。 -->
+        <div class="field" id="w-note-field">
+          <span class="ft">笔记存放位置</span>
+          <div class="frow">
+            <span class="fv" id="w-note"></span>
+            <button class="browse" id="w-note-browse" type="button">更改…</button>
+          </div>
+          <p class="fd" id="w-note-hint">这里会放一篇《欢迎使用 Nota》；文件夹里已经有笔记，就原样打开，一个文件都不写。</p>
+        </div>
+
         <div class="err" id="w-err"></div>
         <div class="grow"></div>
         <div class="row">
@@ -230,6 +261,7 @@
           <li data-step="1"><span class="mk"></span>写入程序文件</li>
           <li data-step="2"><span class="mk"></span>创建开始菜单与桌面图标</li>
           <li data-step="3"><span class="mk"></span>登记卸载信息</li>
+          <li data-step="4"><span class="mk"></span>准备笔记目录</li>
         </ul>
         <div class="grow"></div>
         <div class="row"><span class="hint">装完会自己打开，不用再点一次</span></div>
@@ -246,6 +278,7 @@
         </div>
         <div class="dcard" id="d-card">
           <div class="drow"><span class="dk">位置</span><span class="dv path" id="d-dir"></span></div>
+          <div class="drow"><span class="dk">笔记</span><span class="dv path" id="d-notes"></span></div>
           <div class="drow"><span class="dk">占用</span><span class="dv" id="d-size"></span></div>
           <div class="drow"><span class="dk">启动</span><span class="dv">桌面双击图标，或开始菜单里搜 Nota</span></div>
         </div>
@@ -279,6 +312,7 @@
     正在写入文件: 1,
     正在创建快捷方式: 2,
     正在登记卸载信息: 3,
+    正在准备笔记目录: 4,
   }
 
   const paintSteps = (label) => {
@@ -307,14 +341,27 @@
     $('#w-dir').title = p
   }
 
+  const setNotes = (p) => {
+    $('#w-note').textContent = p
+    $('#w-note').title = p
+  }
+
+  const NOTE_HINT = {
+    on: '这里会放一篇《欢迎使用 Nota》；文件夹里已经有笔记，就原样打开，一个文件都不写。',
+    off: '免安装模式不记录位置：第一次启动用默认的「文档\\Nota」，之后在工作区里随时能换。',
+  }
+
   api.info().then((i) => {
     mode = i.mode
     $('#ver').textContent = '版本 ' + i.version
     setDir(i.dir)
+    if (i.notes) setNotes(i.notes)
     if (mode === 'uninstall') {
       $('#w-title').textContent = '卸载 Nota'
       $('#w-sub').textContent = '只删程序和快捷方式。笔记、设置、云同步的配置都留在原处。'
       $('#w-opts').hidden = true
+      // 卸载没有「选笔记目录」这回事，整块收起来
+      $('#w-note-field').hidden = true
       $('#w-go').classList.add('danger')
       $('#w-go').textContent = '卸载'
       $('#b-title').textContent = '正在卸载'
@@ -339,7 +386,18 @@
     $('#w-go').innerHTML = choice === 'portable'
       ? '直接运行<span class="arw">→</span>'
       : '继续<span class="arw">→</span>'
+    // 「免安装」不写任何记录，笔记位置这块对它不生效 —— 灰掉并说清楚，
+    // 别留一个按了没反应的按钮让人反复点
+    const portable = choice === 'portable'
+    $('#w-note-field').classList.toggle('off', portable)
+    $('#w-note-hint').textContent = portable ? NOTE_HINT.off : NOTE_HINT.on
   })
+
+  // 笔记目录是独立的（不在 .opts 里，所以不会被上面那段顺手改掉选中项）
+  $('#w-note-browse').onclick = async () => {
+    const dir = await api.chooseNotes()
+    if (dir) setNotes(dir)
+  }
 
   // 清空进度条与清单，重试时才是从零开始，不会停在上一轮的 94%
   const resetBusy = () => {
@@ -378,9 +436,13 @@
     } else {
       $('#d-dir').textContent = r.dir || ''
       $('#d-dir').title = r.dir || ''
+      $('#d-notes').textContent = r.notes || ''
+      $('#d-notes').title = r.notes || ''
       $('#d-size').textContent = r.bytes
         ? (r.bytes / 1048576).toFixed(1) + ' MB · 含程序与运行库'
         : ''
+      $('#d-sub').textContent =
+        '第一次打开会直接落在那篇《欢迎使用 Nota》上。想卸掉的话，设置里或「应用和功能」里都能找到。'
     }
     show('#s-done')
   }

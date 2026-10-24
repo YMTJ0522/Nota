@@ -1,7 +1,7 @@
 {
   "name": "nota",
   "private": true,
-  "version": "2.7.5",
+  "version": "2.7.6",
   "type": "module",
   "description": "A lightweight local-first Markdown note app.",
   "author": "YMTJ0522",
@@ -16,7 +16,8 @@
     "icon": "node scripts/make-icon.mjs",
     "verify": "node scripts/probe.mjs",
     "pack": "node scripts/release.mjs",
-    "pack:rebuild": "node scripts/release.mjs --no-bump"
+    "pack:rebuild": "node scripts/release.mjs --no-bump",
+    "ship": "node scripts/ship.mjs"
   },
   "dependencies": {
     "@codemirror/autocomplete": "^6.20.3",

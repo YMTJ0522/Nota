@@ -100,6 +100,28 @@ function syncSiteFallback(v, setupBytes) {
   return { changed: true }
 }
 
+/**
+ * 按 electron-builder.json 算出本次应该产出哪些安装包文件名。
+ * 只关心 win + exe：这个项目只发 Windows。
+ */
+function expectedArtifacts(version) {
+  const cfgPath = path.join(ROOT, 'electron-builder.json')
+  if (!fs.existsSync(cfgPath)) return []
+  const cfg = JSON.parse(fs.readFileSync(cfgPath, 'utf-8'))
+  const product = cfg.productName || 'ProductName'
+  const targets = (cfg.win?.target ?? []).map((t) => (typeof t === 'string' ? t : t.target))
+  const names = []
+  for (const t of targets) {
+    const tpl = cfg[t]?.artifactName || cfg.win?.artifactName || '${productName}-${version}.${ext}'
+    const name = tpl
+      .replace(/\$\{productName\}/g, product)
+      .replace(/\$\{version\}/g, version)
+      .replace(/\$\{ext\}/g, 'exe')
+    if (!names.includes(name)) names.push(name)
+  }
+  return names
+}
+
 console.log(`\n当前版本：${current}`)
 console.log(NO_BUMP ? '按 --no-bump，沿用当前版本' : `新版本：  ${target}${PATCH ? '（--patch 修订号）' : ''}`)
 
@@ -211,7 +233,7 @@ async function main() {
    * after-pack 的瘦身刚删过四十来个语言包，正好把配额用光。
    *
    * 于是就出现「产物齐全、退出码非 0」，看上去像打包失败。
-   * 判据不能只看退出码：**两份安装包是不是都在这轮之后写出来了**。
+   * 判据不能只看退出码：**该产出的安装包是不是都在这轮之后写出来了**。
    * 是 → 那一步只是没删干净，我们替它清；不是 → 真的失败，照旧抛错。
    */
   let builderError = null
@@ -226,13 +248,17 @@ async function main() {
     if (!fs.existsSync(p)) return false
     return fs.statSync(p).mtimeMs >= builtAt - 1000
   }
-  const want = [`Nota-Setup-${target}.exe`, `Nota-Portable-${target}.exe`]
+  /* 该产出哪几个文件，按 electron-builder.json 现算，不写死。
+     写死的代价：2.7.5 起只剩 portable 一个 target，产物名仍叫 Nota-Setup-x.y.z.exe，
+     但这里还在等 Portable —— 于是 builder 一非零退出（安全层拦删除，很常见），
+     就会拿「1/2 没生成」当真的失败抛出去，明明包是好的。 */
+  const want = expectedArtifacts(target)
   const got = want.filter(fresh)
 
   if (builderError) {
     if (got.length === want.length) {
       console.log(`  ⚠ electron-builder 收尾时没能删掉自己的中间文件（安全层拦下），` +
-        `但两份安装包都已生成：\n      ${want.join('\n      ')}\n    中间文件由下面这一步清理。`)
+        `但安装包已生成：\n      ${want.join('\n      ')}\n    中间文件由下面这一步清理。`)
     } else {
       throw builderError
     }

@@ -33,7 +33,8 @@ await build({
   outfile: OUT,
   logLevel: 'silent',
 })
-const { ensureVault } = await import(pathToFileURL(OUT).href)
+const { ensureVault, ensureVaultAt, readVaultPointer, writeVaultPointer, vaultPointerPath } =
+  await import(pathToFileURL(OUT).href)
 
 const tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'nota-vault-'))
 const WELCOME = '欢迎使用 Nota.md'
@@ -127,6 +128,43 @@ try {
   const r6 = await ensureVault(badParent)
   ok('返回 root 为 null', r6.root === null)
   ok('带上了错误说明', typeof r6.error === 'string' && r6.error.length > 0)
+
+  console.log('\n[8] 安装时选的目录：直接用它，不再往下套一层 Nota')
+
+  const picked = path.join(tmpRoot, 'D盘', '我的 笔记')
+  const r7 = await ensureVaultAt(picked)
+  ok('工作区就是它本身', r7.root === picked, r7.root)
+  ok('写入了欢迎文档', !!r7.file && r7.file.startsWith(picked))
+  const entries7 = await fs.readdir(picked)
+  ok('没有多建一层 Nota 目录', !entries7.includes('Nota'), entries7.join(', '))
+
+  // 用户指着一个已经有笔记的目录说「就用这个」——不许往里加东西
+  const occupied = path.join(tmpRoot, '已有笔记')
+  await fs.mkdir(occupied, { recursive: true })
+  await fs.writeFile(path.join(occupied, '旧笔记.md'), '# 旧的\n', 'utf8')
+  const r8 = await ensureVaultAt(occupied)
+  ok('已有笔记时不动它', r8.created === false && r8.file === null)
+  const entries8 = await fs.readdir(occupied)
+  ok('还是只有那一篇', entries8.length === 1, entries8.join(', '))
+
+  console.log('\n[9] 指针文件：安装程序写、主程序读')
+
+  // 指针放在它自己的 LocalAppData 下，不碰真实的那份
+  const lad = path.join(tmpRoot, 'LocalAppData')
+  ok('没写过时读回 null', (await readVaultPointer(lad)) === null)
+
+  await writeVaultPointer(lad, picked)
+  ok('写进去能原样读回来', (await readVaultPointer(lad)) === path.resolve(picked))
+  const rawPointer = JSON.parse(await fs.readFile(vaultPointerPath(lad), 'utf8'))
+  ok('存的是 root 字段', rawPointer.root === picked, JSON.stringify(rawPointer))
+
+  // 坏掉的指针不能让程序首次启动就起不来，必须安静退回默认目录
+  await fs.writeFile(vaultPointerPath(lad), '{ 这不是 json', 'utf8')
+  ok('坏 json 读回 null', (await readVaultPointer(lad)) === null)
+  await fs.writeFile(vaultPointerPath(lad), '{"root":""}', 'utf8')
+  ok('空 root 也当没有', (await readVaultPointer(lad)) === null)
+  await fs.writeFile(vaultPointerPath(lad), '{"root":123}', 'utf8')
+  ok('root 不是字符串也当没有', (await readVaultPointer(lad)) === null)
 } finally {
   await fs.rm(tmpRoot, { recursive: true, force: true })
   await fs.rm(OUT, { force: true })
