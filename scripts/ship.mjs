@@ -120,7 +120,10 @@ function stepCommit() {
 }
 
 /** 提交标题取 release-notes.md 里第一句正文 —— 写死一行「安装时可选笔记目录」
-    的结果是每发一版都留着上一版的描述，git log 上看着像没改过任何东西。 */
+    的结果是每发一版都留着上一版的描述，git log 上看着像没改过任何东西。
+
+    release notes 那句常常自带冒号（「这一版只补一件事：把免安装版单独拿出来」），
+    直接拼就成了「2.7.7：这一版只补一件事：…」，一串冒号。这种时候只留后半句。 */
 function commitSubject() {
   try {
     const md = fs.readFileSync(path.join(root, 'release-notes.md'), 'utf8')
@@ -129,7 +132,9 @@ function commitSubject() {
       .map((s) => s.trim())
       .find((s) => s && !s.startsWith('#') && !s.startsWith('|') && !s.startsWith('>') && !s.startsWith('-'))
     if (line) {
-      const clean = line.replace(/[*`]/g, '').replace(/[：:]$/, '')
+      let clean = line.replace(/[*`]/g, '').replace(/[：:。.]$/, '')
+      const m = /^[^：:]{2,24}[：:]\s*(.+)$/.exec(clean)
+      if (m) clean = m[1]
       return `${VERSION}：${clean.length > 60 ? clean.slice(0, 60) + '…' : clean}`
     }
   } catch {
