@@ -196,9 +196,10 @@ async function unregister() {
 function createUi() {
   ui = new BrowserWindow({
     width: 780,
-    // 多了「笔记存放位置」一整块，480 会把它挤到按钮底下去。
-    // 580 是留了余量的：错误提示多占两行也不会把底部按钮挤出窗口。
-    height: 580,
+    // 第一屏现在是「装到哪儿」+「笔记放哪儿」两块。580 会把底部按钮
+    // 切掉半截并撑出滚动条（按真实打包结构截图确认过），660 又空得慌。
+    // 620 刚好：两行错误提示也塞得下。
+    height: 620,
     show: false,
     frame: false,
     // 不做 transparent：透明窗口在关掉「透明效果」的机器上会露出一圈黑边，

@@ -62,15 +62,31 @@ function size(dir) {
   return n
 }
 
-/** 删除失败也继续：被某个进程占着时 Windows 会拒绝，那就原样留着 */
+/** 删除失败也继续：被某个进程占着时 Windows 会拒绝，那就原样留着。
+ *
+ *  但还有一种情况：这台机器上的安全层有「批量删除配额」，前面删四十来个
+ *  语言包刚好把配额用完，后面这几个十来 MB 的大文件就一直删不掉 ——
+ *  而且失败是静默的，只表现为「安装包忽然大了 2MB」，很难往这上面想。
+ *
+ *  所以删不掉就**清空内容**：7z 会把 0 字节文件压到几乎不占地方，
+ *  文件本身留着也无害（反正不会被加载）。这样产物大小才是稳定的。 */
 function rip(target) {
   const before = fs.existsSync(target) ? fs.statSync(target).size : 0
   try {
     fs.rmSync(target, { force: true })
   } catch {
-    return { saved: 0, failed: true }
+    /* 下面兜底 */
   }
-  return { saved: before, failed: fs.existsSync(target) }
+  if (!fs.existsSync(target)) return { saved: before, failed: false, how: 'deleted' }
+
+  try {
+    fs.truncateSync(target, 0)
+  } catch {
+    /* 连截断都不给，那就真没辙了 */
+  }
+  const left = fs.existsSync(target) ? fs.statSync(target).size : 0
+  if (left === 0 && before > 0) return { saved: before, failed: false, how: 'emptied' }
+  return { saved: before - left, failed: true, how: 'failed' }
 }
 
 /** @param context electron-builder 的 AfterPackContext */
@@ -101,7 +117,7 @@ module.exports = async function afterPack(context) {
     const r = rip(target)
     saved += r.saved
     if (r.failed) failed++
-    else notes.push(name)
+    else notes.push(r.how === 'emptied' ? `${name}（清空）` : name)
   }
 
   const t1 = size(dir)
