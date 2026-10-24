@@ -63,6 +63,60 @@ function replayTour() {
 /** 版本号由 vite define 注入（值取自 package.json），避免两处写死对不上 */
 const APP_VERSION: string = __APP_VERSION__
 
+/* ── 检查更新 ──
+   判据是官网 info.json 里的 version，软件里不存「最新是多少」。
+   只报不装：安装包没签名，静默下载再执行会被 SmartScreen 拦，装进
+   Program Files 还要管理员权限 —— 半途失败留下半个程序，比不更新更糟。
+
+   结果分两处摆（按钮上一句话 + 头图下面一条横幅），而不是挤在一行：
+   设置面板这个宽度，「有新版本 2.7.9 · 70 MB · 去下载」会换行断得很难看。 */
+type UpdState = 'idle' | 'checking' | 'latest' | 'newer' | 'failed'
+
+const updState = ref<UpdState>('idle')
+const updInfo = ref<{ latest: string; size: number; url: string; error?: string; detail?: string } | null>(
+  null,
+)
+
+const updText = computed(() => {
+  switch (updState.value) {
+    case 'checking':
+      return '检查中'
+    case 'latest':
+      return '已是最新'
+    case 'newer':
+      return '有新版'
+    case 'failed':
+      return '检查失败'
+    default:
+      return '检查更新'
+  }
+})
+
+/** 安装包大小按 MB 取整；官网没写 size 时这段整个不显示 */
+const updMB = computed(() => {
+  const n = updInfo.value?.size ?? 0
+  return n > 0 ? Math.round(n / 1048576) : 0
+})
+
+async function checkNow() {
+  if (updState.value === 'checking') return
+  updState.value = 'checking'
+  try {
+    const r = await window.api.checkUpdate(APP_VERSION)
+    updInfo.value = r
+    updState.value = r.error ? 'failed' : r.newer ? 'newer' : 'latest'
+  } catch (e) {
+    // 主进程都调不通（极少见）也得给个结果，不能停在「检查中」上转一辈子
+    updInfo.value = {
+      latest: '',
+      size: 0,
+      url: '',
+      error: e instanceof Error ? e.message : String(e),
+    }
+    updState.value = 'failed'
+  }
+}
+
 const SECTIONS: { id: SectionId; label: string; icon: unknown }[] = [
   { id: 'general', label: '通用', icon: Settings2 },
   { id: 'appearance', label: '外观', icon: Palette },
@@ -954,9 +1008,36 @@ async function changeWorkspace() {
                     <span class="ab-hero-ver">
                       <span class="ab-dot" />
                       版本 {{ APP_VERSION }}
+                      <button
+                        type="button"
+                        class="ab-upd"
+                        :class="updState"
+                        :disabled="updState === 'checking'"
+                        @click="checkNow"
+                      >
+                        <Loader2 v-if="updState === 'checking'" :size="11" class="ab-upd-spin" />
+                        {{ updText }}
+                      </button>
                     </span>
                   </span>
                   <span class="ab-hero-note">纯本地 · 无账号 · 无服务端</span>
+                </div>
+
+                <!-- 更新结果。只在新版 / 失败时出现 —— 「已是最新」不值得再占一条，
+                     那句话已经落在按钮上了，摆两遍等于同一件事说两次。 -->
+                <div v-if="updState === 'newer'" class="ab-updbar is-newer">
+                  <Sparkles :size="14" class="ab-updbar-ico" />
+                  <span class="ab-updbar-text">
+                    官网已发布 <b>v{{ updInfo?.latest }}</b>
+                    <template v-if="updMB"> · 安装包 {{ updMB }} MB</template>
+                  </span>
+                  <a class="ab-updbar-btn" :href="updInfo?.url" target="_blank" rel="noreferrer">去下载</a>
+                </div>
+                <div v-else-if="updState === 'failed'" class="ab-updbar is-failed">
+                  <span class="ab-updbar-text" :title="updInfo?.detail || ''">
+                    {{ updInfo?.error || '没能取到版本信息' }}，稍后再试
+                  </span>
+                  <button type="button" class="ab-updbar-btn" @click="checkNow">重试</button>
                 </div>
 
                 <p class="ab-lead">
@@ -1726,6 +1807,113 @@ async function changeWorkspace() {
   color: var(--n-fg-faint);
   text-align: right;
   line-height: 1.5;
+}
+
+/* 版本号后面那枚小药丸。默认几乎不像按钮（淡到接近注释），
+   因为「检查更新」是低频动作，不该在头图上抢视线。 */
+.ab-upd {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: 2px;
+  padding: 1px 7px;
+  border: 1px solid var(--n-line);
+  border-radius: 999px;
+  background: transparent;
+  font: inherit;
+  font-size: 10.5px;
+  font-family: var(--n-font-mono);
+  color: var(--n-fg-faint);
+  cursor: pointer;
+  transition:
+    color 0.15s,
+    border-color 0.15s,
+    background 0.15s;
+}
+
+.ab-upd:hover:not(:disabled) {
+  color: var(--n-fg);
+  border-color: var(--n-line-strong);
+}
+
+.ab-upd:disabled {
+  cursor: default;
+  opacity: 0.7;
+}
+
+.ab-upd.latest {
+  color: var(--n-ok);
+  border-color: color-mix(in oklab, var(--n-ok) 38%, var(--n-line));
+}
+
+.ab-upd.newer {
+  color: var(--n-accent);
+  border-color: color-mix(in oklab, var(--n-accent) 45%, var(--n-line));
+  background: color-mix(in oklab, var(--n-accent) 12%, transparent);
+}
+
+.ab-upd-spin {
+  animation: ab-spin 0.9s linear infinite;
+}
+
+@keyframes ab-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* 更新结果条：一条窄横幅，跟头图同宽。不做成对话框 ——
+   检查更新不该打断正在写东西的人，也不该让人以为「不点就装不上」。 */
+.ab-updbar {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin: -4px 0 14px;
+  padding: 9px 13px;
+  border: 1px solid var(--n-line);
+  border-radius: var(--n-r-md);
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--n-fg-dim);
+}
+
+.ab-updbar.is-newer {
+  border-color: color-mix(in oklab, var(--n-accent) 34%, var(--n-line));
+  background: color-mix(in oklab, var(--n-accent) 9%, var(--n-bg));
+  color: var(--n-fg);
+}
+
+.ab-updbar.is-newer b {
+  font-family: var(--n-font-mono);
+  color: var(--n-accent);
+}
+
+.ab-updbar-text {
+  min-width: 0;
+}
+
+.ab-updbar-ico {
+  flex: none;
+  color: var(--n-accent);
+}
+
+.ab-updbar-btn {
+  flex: none;
+  margin-left: auto;
+  padding: 3px 11px;
+  border: 1px solid color-mix(in oklab, var(--n-accent) 45%, var(--n-line));
+  border-radius: 999px;
+  background: transparent;
+  font: inherit;
+  font-size: 11.5px;
+  color: var(--n-accent);
+  text-decoration: none;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.ab-updbar-btn:hover {
+  background: color-mix(in oklab, var(--n-accent) 14%, transparent);
 }
 
 .ab-lead {

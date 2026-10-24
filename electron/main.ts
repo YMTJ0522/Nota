@@ -6,6 +6,7 @@ import { pathToFileURL } from 'node:url'
 import { testConnection, syncWorkspace, onSyncProgress } from './sync'
 import { maybeRunInstaller } from './installer'
 import { ensureVault, ensureVaultAt, readVaultPointer, takeFreshFlag } from './vault'
+import { checkUpdate } from './update'
 
 // Vite 注入：开发环境指向 dev server，生产环境加载打包后的 dist
 process.env.APP_ROOT = path.join(__dirname, '..')
@@ -526,6 +527,13 @@ ipcMain.handle('app:info', () => ({
   platform: process.platform,
   arch: process.arch,
 }))
+
+/* 检查更新：版本号由渲染端传进来，界面显示的是哪一版就比哪一版。
+   不在这儿读 app.getVersion()，是为了避免「界面写 A、比较用 B」的错位 ——
+   那是最难查的一类问题，界面上看不出任何异常。 */
+ipcMain.handle('app:checkUpdate', (_e, current: unknown) =>
+  checkUpdate(typeof current === 'string' && current ? current : '0.0.0'),
+)
 
 /* ── IPC：WebDAV 云同步。请求在主进程发（与联网检索同一个理由：不受 CORS 限制），
    进度通过 sync:progress 事件推给渲染进程，界面上能看见「正在传哪个文件」 ── */

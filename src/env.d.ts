@@ -113,6 +113,15 @@ interface NoteApi {
     platform: string
     arch: string
   }>
+  checkUpdate(current: string): Promise<{
+    current: string
+    latest: string
+    newer: boolean
+    size: number
+    url: string
+    error?: string
+    detail?: string
+  }>
   minimize(): Promise<void>
   toggleMaximize(): Promise<boolean>
   closeWindow(): Promise<void>

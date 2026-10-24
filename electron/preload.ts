@@ -178,6 +178,17 @@ contextBridge.exposeInMainWorld('api', {
     arch: string
   }> => ipcRenderer.invoke('app:info'),
 
+  /* 检查更新：拿官网 info.json 和传进来的当前版本比一比，只报不装 */
+  checkUpdate: (current: string): Promise<{
+    current: string
+    latest: string
+    newer: boolean
+    size: number
+    url: string
+    error?: string
+    detail?: string
+  }> => ipcRenderer.invoke('app:checkUpdate', current),
+
   /* 窗口控制（自绘标题栏用） */
   minimize: (): Promise<void> => ipcRenderer.invoke('window:minimize'),
   toggleMaximize: (): Promise<boolean> => ipcRenderer.invoke('window:toggleMaximize'),
