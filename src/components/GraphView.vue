@@ -372,13 +372,21 @@ function onMove(e: MouseEvent) {
   }
 }
 
-function onUp(e: MouseEvent) {
-  const moved = Math.hypot(e.clientX - lastX, e.clientY - lastY)
-  if (dragging && dragNode >= 0 && moved < 3) {
-    void store.openNote(nodes.value[dragNode].id)
-  }
+function onUp() {
   dragging = false
   dragNode = -1
+}
+
+/**
+ * 双击才打开那一篇，单击不跳。
+ *
+ * 原来写成单击就打开，结果是想拖动节点时必然先按下再松开，手一抖就少了像素以内
+ * 的位移、判断成「没拖」，图还没摆好就被踢到另一篇去了。双击留了容错，
+ * 也跟系统里「双击打开」的习惯一致。
+ */
+function onDblClick(e: MouseEvent) {
+  const i = hitTest(e)
+  if (i >= 0) void store.openNote(nodes.value[i].id)
 }
 
 function onWheel(e: WheelEvent) {
@@ -443,6 +451,7 @@ watch(
         @pointerdown="onDown"
         @pointermove="onMove"
         @pointerup="onUp"
+        @dblclick="onDblClick"
         @pointerleave="hover = -1; tip.text = ''"
         @wheel="onWheel"
       />
@@ -450,7 +459,7 @@ watch(
       <div v-if="tip.text" class="gv-tip" :style="{ left: tip.x + 12 + 'px', top: tip.y + 12 + 'px' }">
         {{ tip.text }}
       </div>
-      <p class="gv-hint">滚轮缩放 · 拖动空白平移 · 拖节点挪位置 · 点节点打开那一篇</p>
+      <p class="gv-hint">滚轮缩放 · 拖动空白平移 · 拖节点挪位置 · 双击节点打开那一篇</p>
     </div>
   </div>
 </template>
