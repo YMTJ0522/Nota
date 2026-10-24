@@ -14,6 +14,7 @@
  */
 import { spawnSync } from 'node:child_process'
 import fs from 'node:fs'
+import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -151,7 +152,9 @@ step(`建 Release ${TAG}`, () => {
     draft: false,
     prerelease: false,
   })
-  const payloadPath = path.join(root, '.tmp-release-body.json')
+  /* 写到系统临时目录，不写项目根目录：带点的隐藏文件在部分环境下会被
+     写保护拦下（EPERM），而且发版脚本不该往仓库里扔文件。 */
+  const payloadPath = path.join(os.tmpdir(), `nota-release-${VERSION}.json`)
   fs.writeFileSync(payloadPath, body)
   const r = curlWithToken(
     [
