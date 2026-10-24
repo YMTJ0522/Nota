@@ -111,13 +111,33 @@ if (!DRY) {
 /* ── 2. 推代码 ── */
 if (!NO_PUSH) {
   step('推 main', () => {
-    const r = run('git', ['push', 'origin', 'HEAD'])
-    if (r.code !== 0) {
-      console.error('  推送失败：', r.out.trim().split('\n')[0])
-      console.error('  多半是出网代理挡了 GitHub（CONNECT tunnel failed, response 502）。')
-      console.error('  换个网络再跑一遍，或先挂代理；本脚本可以重跑，已完成的部分会自己跳过。')
-      process.exit(1)
+    /* 本机的出网代理会间歇把 push 掐掉（`Send failure: Connection was aborted` /
+       CONNECT 502）。这种不是配置错，等一会儿换套 HTTP 参数多半就过了：
+       HTTP/1.1 少走多路复用，大 postBuffer 避免分块被中间设备截断。
+       三次都失败才算真不行 —— 换网络或挂代理再来。 */
+    const attempts = [
+      ['push', 'origin', 'HEAD'],
+      ['-c', 'http.version=HTTP/1.1', '-c', 'http.postBuffer=524288000', 'push', 'origin', 'HEAD'],
+      ['-c', 'http.version=HTTP/1.1', 'push', 'origin', 'HEAD'],
+    ]
+    let last = null
+    for (let i = 0; i < attempts.length; i++) {
+      const r = run('git', attempts[i])
+      if (r.code === 0) {
+        if (i > 0) console.log(`  第 ${i + 1} 次推送成功`)
+        return
+      }
+      last = r
+      if (i < attempts.length - 1) {
+        console.log('  推送被中断，换 HTTP/1.1 + 大 buffer 再试…')
+      }
     }
+    const line = (last?.out ?? '').trim().split('\n').filter(Boolean).pop() ?? ''
+    console.error('  推送失败：', line)
+    console.error('  三次都没过，基本可以确定是出网代理在挡 GitHub（CONNECT 502）。')
+    console.error('  换个网络或挂代理后重跑：node scripts/ship.mjs --from=5')
+    console.error('  已经提交的 commit 还在本地，不会丢。')
+    process.exit(1)
   })
 }
 

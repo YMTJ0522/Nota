@@ -22,6 +22,9 @@ import sys
 ROOT = os.path.dirname(os.path.abspath(__file__))
 CERTDIR = '/etc/nota'
 RANGE_RE = re.compile(r'bytes=(\d*)-(\d*)')
+# TLS 握手最多等这么久。超过就丢掉这条连接 —— 只连不说话的客户端
+# （扫描器、半开连接）不能让 443 卡住。
+HANDSHAKE_TIMEOUT = int(os.environ.get('NOTA_HANDSHAKE_TIMEOUT') or 10)
 
 # 后台（登录 / 改密 / 下载统计）。文件不在就是没有后台，站点照常跑。
 sys.path.insert(0, ROOT)
@@ -158,6 +161,47 @@ class Server(socketserver.ThreadingMixIn, http.server.HTTPServer):
     daemon_threads = True
     allow_reuse_address = True
 
+    def _drop(self, sock):
+        try:
+            sock.close()
+        except Exception:           # noqa: BLE001
+            pass
+
+
+class TlsServer(Server):
+    """443 端口。
+
+    **握手必须放在工作线程里做。** 老写法是把监听 socket 直接 wrap
+    （`srv.socket = ctx.wrap_socket(srv.socket)`），那样 `accept()` 会顺手做
+    握手，而 accept 跑在 serve_forever 那个线程里 —— 于是只要有一个客户端
+    连上却不发 ClientHello（扫描器天天干这个），整条 443 就卡死在一个
+    handshake 上。80 还是好的，看起来像「只有 https 挂了」。
+    """
+
+    def __init__(self, addr, handler, ctx):
+        Server.__init__(self, addr, handler)
+        self.ctx = ctx
+
+    def process_request_thread(self, request, client_address):
+        try:
+            request.settimeout(HANDSHAKE_TIMEOUT)
+            conn = self.ctx.wrap_socket(request, server_side=True)
+        except Exception:           # noqa: BLE001  超时／非 TLS 流量／断连
+            self._drop(request)
+            return
+        try:
+            # 握手完成就回到阻塞：安装包 70MB，慢连接不能被超时掐断
+            conn.settimeout(None)
+            self.finish_request(conn, client_address)
+        except Exception:           # noqa: BLE001  客户端中途跑掉是常态
+            pass
+        finally:
+            try:
+                conn.unwrap()       # 发 close_notify，别让客户端当成被截断
+            except Exception:       # noqa: BLE001
+                pass
+            self._drop(conn)
+
 
 class RedirectToHttps(Handler):
     """80 端口：除了 ACME 验证路径，一律 301 到 https。
@@ -213,8 +257,7 @@ def main():
 
     ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
     ctx.load_cert_chain(cert, key)
-    srv443 = Server(('0.0.0.0', tls_port), Handler)
-    srv443.socket = ctx.wrap_socket(srv443.socket, server_side=True)
+    srv443 = TlsServer(('0.0.0.0', tls_port), Handler, ctx)
     print('serving %s on :%d  (TLS)' % (ROOT, tls_port), flush=True)
 
     th = threading.Thread(target=srv443.serve_forever)

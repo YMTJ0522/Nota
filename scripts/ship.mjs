@@ -122,12 +122,58 @@ function stepDeploy() {
     problems.push('没设 NOTA_PASS，官网没更新。设好后单独跑：$env:NOTA_PASS="…"; node scripts/ship.mjs --from=6')
     return false
   }
-  const code = run('python', [path.join('deploy', 'remote-deploy.py')])
+  /* remote-deploy.py 依赖 paramiko。这台机器上有好几个 Python，
+     PATH 里那个未必装了它 —— 直接跑会甩一段 traceback 出来，
+     看不出该修什么。所以先挨个试 `import paramiko`，挑一个能用的。 */
+  const py = pickPython()
+  if (!py) {
+    problems.push(
+      '找不到装了 paramiko 的 Python。装一下再重跑：\n' +
+        '      D:\\soft\\python\\python.exe -m pip install paramiko\n' +
+        '      $env:NOTA_PYTHON="D:\\soft\\python\\python.exe"; $env:NOTA_PASS="…"; node scripts/ship.mjs --from=6',
+    )
+    return false
+  }
+  console.log(`  用 ${py} 跑部署脚本`)
+  const code = run(py, [path.join('deploy', 'remote-deploy.py')])
   if (code !== 0) {
     problems.push('官网部署失败（上面有原话）。网络好了单独重跑：node scripts/ship.mjs --from=6')
     return false
   }
   return true
+}
+
+/** WorkBuddy 自带的解释器里预装了 paramiko，是这台机器上最可能直接能用的那个。
+    路径带版本号，按版本倒序排，将来升级也不用改代码。 */
+function bundledPythons() {
+  const base = path.join(os.homedir(), '.workbuddy', 'binaries', 'python', 'versions')
+  try {
+    return fs
+      .readdirSync(base)
+      .sort((a, b) => b.localeCompare(a, 'en', { numeric: true }))
+      .map((v) => path.join(base, v, 'python.exe'))
+      .filter((p) => fs.existsSync(p))
+  } catch {
+    return []
+  }
+}
+
+/** 候选顺序：NOTA_PYTHON > WorkBuddy 自带的 > PATH 里的 python > D:\soft\python > py 启动器
+    判据只有一条：能 `import paramiko` 才算数，别的一概不看。 */
+function pickPython() {
+  const seen = new Set()
+  const cands = [
+    process.env.NOTA_PYTHON,
+    ...bundledPythons(),
+    'python',
+    'D:\\soft\\python\\python.exe',
+    'py',
+  ].filter((p) => p && !seen.has(p) && seen.add(p))
+  for (const p of cands) {
+    const r = spawnSync(p, ['-c', 'import paramiko'], { cwd: root, encoding: 'utf8' })
+    if (!r.error && r.status === 0) return p
+  }
+  return null
 }
 
 /* ── 7. 清垃圾 ──
