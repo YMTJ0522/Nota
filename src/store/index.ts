@@ -56,6 +56,7 @@ export type MeasureName = 'narrow' | 'standard' | 'wide' | 'full'
  */
 export const SETTINGS_SECTIONS = [
   'general',
+  'sticky',
   'appearance',
   'editor',
   'ai',
@@ -213,6 +214,8 @@ interface State {
   graphOpen: boolean
   /** 中间那一列在显示什么（主区与这一列的分工见 setColumnView） */
   columnView: ColumnView
+  /** 桌面上开着的便签张数。主进程推过来，侧栏角标和便签列表都读它 */
+  stickyOpen: number
   /** 各栏宽度（拖动分隔线改的就是它们） */
   sidebarWidth: number
   columnWidth: number
@@ -345,6 +348,7 @@ const state = reactive<State>({
   mainView: 'note',
   graphOpen: false,
   columnView: 'notes',
+  stickyOpen: 0,
   sidebarWidth: 232,
   columnWidth: 296,
   outlineWidth: 176,
@@ -2711,12 +2715,20 @@ function toggleSidebar() {
 
    AI 编写也从「占满主区的独立页面」改成这一列的第四格 —— 开着对话
    还能看着正文，才是它真正的用法。 */
-export type ColumnView = 'notes' | 'outline' | 'quote' | 'attach' | 'trash' | 'ai'
+export type ColumnView = 'notes' | 'outline' | 'quote' | 'attach' | 'trash' | 'ai' | 'stickies'
 
-/** 中间那一列的固定页签：笔记这一类里的三种看法。附件库 / 回收站 / AI 各占一屏，
+/** 中间那一列的固定页签：笔记这一类里的三种看法。附件库 / 回收站 / 便签 / AI 各占一屏，
     它们由侧栏的入口切过去，不挤在这三个格子里 —— 参考图就是这么分的。 */
 export const NOTE_TABS: ColumnView[] = ['notes', 'outline', 'quote']
-const COLUMN_VIEWS: ColumnView[] = ['notes', 'outline', 'quote', 'attach', 'trash', 'ai']
+const COLUMN_VIEWS: ColumnView[] = [
+  'notes',
+  'outline',
+  'quote',
+  'attach',
+  'trash',
+  'ai',
+  'stickies',
+]
 
 const COLUMN_KEY = 'nota-column'
 /** 中间那一列是不是还在「自适应」（人拖过就变 0） */
@@ -2823,6 +2835,8 @@ const AUTO_RATIO: Record<string, { r: number; max: number }> = {
   quote: { r: 0.22, max: 340 },
   attach: { r: 0.26, max: 400 },
   trash: { r: 0.26, max: 400 },
+  // 便签：一张一条，标题 + 一行预览，比笔记列表更窄就够了
+  stickies: { r: 0.24, max: 380 },
 }
 
 /** 编辑区再挤也不能比这更窄：再窄顶行那一排就装不下了（每一栏都留着自己的底线）。

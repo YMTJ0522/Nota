@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/png" href="./icon.png" />
+    <!--
+      便签窗口是独立入口，比主界面收得更紧：不需要自定义协议、不需要
+      连外网（它不发任何网络请求），所以 connect-src 只留 'self'。
+      万一哪天便签里被塞了注入内容，它连不出去。
+    -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:"
+    />
+    <title>便签</title>
+  </head>
+  <body>
+    <div id="sticky-app"></div>
+    <script type="module" src="/src/sticky/main.ts"></script>
+  </body>
+</html>

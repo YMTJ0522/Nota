@@ -28,6 +28,7 @@ import {
   Paperclip,
   Quote,
   Sparkles,
+  StickyNote,
   Trash2,
   Upload,
 } from 'lucide-vue-next'
@@ -39,6 +40,7 @@ import AttachView from './AttachView.vue'
 import TrashView from './TrashView.vue'
 import OutlineView from './OutlineView.vue'
 import QuoteView from './QuoteView.vue'
+import StickyView from './StickyView.vue'
 import AiChatPanel from './AiChatPanel.vue'
 
 const { state } = store
@@ -80,6 +82,7 @@ const SOLO: Record<string, { label: string; icon: unknown }> = {
   attach: { label: '附件库', icon: Paperclip },
   trash: { label: '回收站', icon: Trash2 },
   ai: { label: 'AI 编写', icon: Sparkles },
+  stickies: { label: '便签', icon: StickyNote },
 }
 
 const view = computed(() => state.columnView)
@@ -175,26 +178,30 @@ async function doImport() {
       </template>
 
       <!-- 一进一出，永远在这一列的右上角：
-           不管当前看的是笔记、附件还是 AI，收起笔记的地方都在同一处。 -->
-      <button
-        class="col-act"
-        data-role="new-note"
-        title="新建笔记 (Ctrl+N)"
-        :disabled="!state.root"
-        @click="doNew"
-      >
-        <FilePlus2 :size="14" :stroke-width="1.9" />
-      </button>
-      <button
-        class="col-act"
-        data-role="import-note"
-        title="导入已有笔记"
-        :disabled="!state.root || importing"
-        @click="doImport"
-      >
-        <Loader2 v-if="importing" class="spinning" :size="14" :stroke-width="1.9" />
-        <Upload v-else :size="14" :stroke-width="1.9" />
-      </button>
+           不管当前看的是笔记、附件还是 AI，收起笔记的地方都在同一处。
+           便签那一屏例外：它自己顶上有「新便签」，这两枚在这里只能
+           让人点错（点下去建的是笔记，眼前这一屏跟新笔记没有关系）。 -->
+      <template v-if="view !== 'stickies'">
+        <button
+          class="col-act"
+          data-role="new-note"
+          title="新建笔记 (Ctrl+N)"
+          :disabled="!state.root"
+          @click="doNew"
+        >
+          <FilePlus2 :size="14" :stroke-width="1.9" />
+        </button>
+        <button
+          class="col-act"
+          data-role="import-note"
+          title="导入已有笔记"
+          :disabled="!state.root || importing"
+          @click="doImport"
+        >
+          <Loader2 v-if="importing" class="spinning" :size="14" :stroke-width="1.9" />
+          <Upload v-else :size="14" :stroke-width="1.9" />
+        </button>
+      </template>
     </header>
 
     <div class="col-body">
@@ -203,6 +210,7 @@ async function doImport() {
       <QuoteView v-else-if="view === 'quote'" />
       <AttachView v-else-if="view === 'attach'" />
       <TrashView v-else-if="view === 'trash'" />
+      <StickyView v-else-if="view === 'stickies'" />
       <AiChatPanel v-else />
     </div>
   </section>

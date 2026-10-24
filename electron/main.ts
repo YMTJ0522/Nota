@@ -1,4 +1,18 @@
-import { app, BrowserWindow, ipcMain, dialog, shell, protocol, net, session } from 'electron'
+import {
+  app,
+  BrowserWindow,
+  ipcMain,
+  dialog,
+  shell,
+  protocol,
+  net,
+  session,
+  globalShortcut,
+  Tray,
+  Menu,
+  nativeImage,
+} from 'electron'
+import type { NativeImage } from 'electron'
 import path from 'node:path'
 import fs from 'node:fs/promises'
 import { existsSync } from 'node:fs'
@@ -7,6 +21,27 @@ import { testConnection, syncWorkspace, onSyncProgress } from './sync'
 import { maybeRunInstaller } from './installer'
 import { ensureVault, ensureVaultAt, readVaultPointer, takeFreshFlag } from './vault'
 import { checkUpdate } from './update'
+import { readPrefs, writePrefs } from './prefs'
+import {
+  closeAllStickies,
+  flushAll as flushStickies,
+  initStickyWindows,
+  openNewSticky,
+  openSticky,
+  openStickyCount,
+  requestCloseSticky,
+  saveStickyText,
+  setStickyColor,
+  setStickyPinned,
+} from './sticky-window'
+import {
+  listStickies,
+  patchSticky,
+  readSticky,
+  reconcileOnBoot,
+  removeSticky,
+  saveToVault as saveStickyToVault,
+} from './stickies'
 
 // Vite 注入：开发环境指向 dev server，生产环境加载打包后的 dist
 process.env.APP_ROOT = path.join(__dirname, '..')
@@ -32,6 +67,50 @@ protocol.registerSchemesAsPrivileged([
 ])
 
 let win: BrowserWindow | null = null
+let tray: Tray | null = null
+/** 真退出时为 true。关窗口默认只是收进托盘，只有走「退出」那条路才放行 */
+let isQuitting = false
+
+/**
+ * 图标。打包后在 resources/，开发时在仓库的 build/ 里，两条都试。
+ * 抽成函数是因为现在有三处要用：主窗口、便签窗口、托盘。
+ */
+function resolveIcon(): string | undefined {
+  const candidates = [
+    path.join(process.resourcesPath ?? '', 'icon.png'),
+    path.join(__dirname, '..', 'build', 'icon.png'),
+  ]
+  for (const p of candidates) {
+    try {
+      if (p && existsSync(p)) return p
+    } catch {
+      /* 忽略：继续试下一个 */
+    }
+  }
+  return undefined
+}
+
+/** 托盘图标要小尺寸，直接拿 1024 的 png 塞进去，Windows 上会糊成一团 */
+function resolveTrayIcon(): NativeImage | null {
+  const candidates = [
+    path.join(process.resourcesPath ?? '', 'icon.ico'),
+    path.join(__dirname, '..', 'build', 'icon.ico'),
+  ]
+  for (const p of candidates) {
+    try {
+      if (p && existsSync(p)) {
+        const img = nativeImage.createFromPath(p)
+        if (!img.isEmpty()) return img
+      }
+    } catch {
+      /* 下一个 */
+    }
+  }
+  const png = resolveIcon()
+  if (!png) return null
+  const img = nativeImage.createFromPath(png)
+  return img.isEmpty() ? null : img.resize({ width: 16, height: 16 })
+}
 
 function createWindow() {
   win = new BrowserWindow({
@@ -46,24 +125,8 @@ function createWindow() {
     autoHideMenuBar: true,
     backgroundColor: '#fbfaf6',
     title: 'Nota',
-    /* 标题栏与任务栏图标。
-       打包后 icon.png 会被 electron-builder 放进 resources/，
-       开发时则直接读仓库里的 build/icon.png——两条路径都试一下，
-       拿不到就让系统用 exe 自带的图标兜底。 */
-    icon: (() => {
-      const candidates = [
-        path.join(process.resourcesPath ?? '', 'icon.png'),
-        path.join(__dirname, '..', 'build', 'icon.png'),
-      ]
-      for (const p of candidates) {
-        try {
-          if (p && existsSync(p)) return p
-        } catch {
-          /* 忽略：继续试下一个 */
-        }
-      }
-      return undefined
-    })(),
+    /* 标题栏与任务栏图标 */
+    icon: resolveIcon(),
     // 完全自绘标题栏：用 frame:false 去掉系统边框与按钮，
     // 最小化/最大化/关闭由渲染层自己画，布局完全可控
     frame: false,
@@ -76,6 +139,23 @@ function createWindow() {
   })
 
   win.once('ready-to-show', () => win?.show())
+
+  /* 点右上角那颗叉不再退出程序，只把它收进托盘 —— 这是便签功能能成立的
+     前提。便签的使用场景是「用电脑的时候突然想到一件事」，那个时刻
+     Nota 多半是关着的；如果关窗口就把进程杀了，全局快捷键同一时刻失效，
+     按下去什么都不会发生，这个功能就等于没有。
+
+     要真正退出走托盘右键里的「退出 Nota」，那条路会把 isQuitting 立起来。 */
+  win.on('close', (e) => {
+    if (isQuitting) return
+    e.preventDefault()
+    win?.hide()
+    tipTrayOnce()
+  })
+
+  win.on('closed', () => {
+    win = null
+  })
 
   // 最大化状态变化时通知渲染层，用于切换按钮图标
   const notifyMaximize = () => win?.webContents.send('window:maximized', win.isMaximized())
@@ -104,6 +184,313 @@ ipcMain.handle('window:toggleMaximize', () => {
   return win.isMaximized()
 })
 ipcMain.handle('window:close', () => win?.close())
+
+/* ═══════════ 桌面整合：托盘 · 全局快捷键 · 开机自启 ═══════════
+ *
+ * 这三件事是一个整体，缺一不可：
+ *   托盘    —— 让「关窗口不退进程」有个去处，否则主窗一关用户就找不到它了
+ *   快捷键  —— 便签真正的入口。桌面图标点两次才记下一句话，这个功能就白做
+ *   自启动  —— 上面两样都要在 Nota 没被打开的时候也成立
+ *
+ * 全放主进程，是因为它们都得在**没有窗口**的时候工作。
+ */
+
+/**
+ * 安装时选的笔记目录、界面状态、便签，全都拼在 %LOCALAPPDATA%\Nota\ 下面。
+ * 不用 app.getPath('userData')：那个在免安装版里可能被重定向到临时解压目录，
+ * 同一个用户装两次会算成两个位置。
+ */
+const LOCAL_APP_DATA =
+  process.env.LOCALAPPDATA ||
+  (process.platform === 'win32'
+    ? path.join(process.env.USERPROFILE ?? '', 'AppData', 'Local')
+    : app.getPath('appData'))
+
+/** 快捷键。用户可以整组关掉（设置里），但键位不给改：能改的话
+    设置页要做键位录制控件，还得处理各种非法组合，收益不抵成本 */
+const HOTKEY_NEW = 'CommandOrControl+Alt+N'
+const HOTKEY_CLOSE_ALL = 'CommandOrControl+Alt+Shift+N'
+
+/** 快捷键没注册上的原因。界面问的时候要能说清楚，而不是静默失效 */
+let hotkeyError = ''
+/** 最近一次打开的工作区。便签「存为笔记」要知道往哪存 */
+let activeRoot: string | null = null
+
+/** 免安装版：每次启动会解压到 %TEMP% 下的随机目录，写进注册表的自启路径
+    第二天就不存在了。所以自启只对安装版开放 */
+function isPortable(): boolean {
+  const p = process.env.PORTABLE_EXECUTABLE_FILE ?? ''
+  return (
+    /portable/i.test(path.basename(p)) || /portable/i.test(path.basename(process.execPath))
+  )
+}
+
+function canAutoStart(): boolean {
+  // 开发模式下 execPath 是 node_modules 里的 electron.exe，写进注册表纯属污染
+  return app.isPackaged && !isPortable()
+}
+
+function loginAtStartup(): boolean {
+  if (!canAutoStart()) return false
+  try {
+    return app.getLoginItemSettings({ args: ['--hidden'] }).openAtLogin
+  } catch {
+    return false
+  }
+}
+
+/**
+ * 开/关自启。--hidden 这个参数很关键：开机时只把托盘和快捷键带起来，
+ * 不建主窗口 —— 早上开机第一件事不是看笔记，白占 100MB 内存没有意义。
+ */
+async function setAutoStart(on: boolean): Promise<boolean> {
+  if (!canAutoStart()) return false
+  try {
+    app.setLoginItemSettings({ openAtLogin: on, args: ['--hidden'] })
+  } catch (e) {
+    console.error('[autostart] 写注册表失败：', e)
+    return false
+  }
+  await writePrefs(LOCAL_APP_DATA, { openAtLogin: on })
+  await refreshTrayMenu()
+  return loginAtStartup() === on
+}
+
+function showMain(): void {
+  /* 刚建出来的窗口不能立刻 show：它是 show:false 建的，loadURL 还没回来，
+     这时候亮出来是一块白屏。那种情况交给 ready-to-show（见 createWindow）。 */
+  const created = !win || win.isDestroyed()
+  if (created) createWindow()
+  const w = win
+  if (!w) return
+  if (created) return
+  if (w.isMinimized()) w.restore()
+  w.show()
+  w.focus()
+}
+
+/**
+ * 第一次收进托盘时解释一句。
+ * 「点了叉，程序还在跑」如果不说明，用户会以为是关不掉 —— 或者更糟，
+ * 以为关掉了，然后在任务管理器里发现它一直在。
+ */
+let trayTipShown = false
+function tipTrayOnce(): void {
+  if (trayTipShown || !tray || process.platform !== 'win32') return
+  trayTipShown = true
+  try {
+    tray.displayBalloon({
+      title: 'Nota 还在后台运行',
+      content: `关窗口只是收进托盘。按 ${HOTKEY_NEW.replace('CommandOrControl', 'Ctrl')} 随时记一张便签；要退出请右键托盘图标。`,
+      iconType: 'info',
+    })
+  } catch {
+    /* 气泡弹不出来不影响使用 */
+  }
+}
+
+/** 快捷键按下：开一张新便签。连按就连开，这是刻意的 */
+async function onHotkeyNew(): Promise<void> {
+  const r = await openNewSticky()
+  if ('error' in r) {
+    // 开不出来至少要让用户看见原因（多半是「已经开了 12 张」）
+    if (win && !win.isDestroyed()) win.webContents.send('sticky:error', r.error)
+    else showMain()
+  }
+  await refreshTrayMenu()
+}
+
+function buildTray(): void {
+  const img = resolveTrayIcon()
+  if (!img) {
+    /* 拿不到图标就不建托盘。这时「关窗不退」会让程序彻底失联，
+       所以下面 boot() 里会强制把主窗建出来 */
+    return
+  }
+  tray = new Tray(img)
+  tray.setToolTip('Nota · 按 Ctrl+Alt+N 记一张便签')
+  tray.on('click', () => showMain())
+  void refreshTrayMenu()
+}
+
+async function refreshTrayMenu(): Promise<void> {
+  if (!tray || tray.isDestroyed()) return
+  const prefs = await readPrefs(LOCAL_APP_DATA)
+  const n = openStickyCount()
+  tray.setContextMenu(
+    Menu.buildFromTemplate([
+      { label: '打开 Nota', click: () => showMain() },
+      {
+        label: n > 0 ? `新便签（已开 ${n} 张）` : '新便签',
+        // 只用来显示键位，真正的注册在 applyHotkeys 里做
+        accelerator: HOTKEY_NEW,
+        registerAccelerator: false,
+        click: () => void onHotkeyNew(),
+      },
+      {
+        label: '收起全部便签',
+        accelerator: HOTKEY_CLOSE_ALL,
+        registerAccelerator: false,
+        enabled: n > 0,
+        click: () => void closeAllStickies().then(() => refreshTrayMenu()),
+      },
+      { type: 'separator' },
+      {
+        label: '开机时自动启动',
+        type: 'checkbox',
+        checked: loginAtStartup(),
+        enabled: canAutoStart(),
+        click: (item) => void setAutoStart(item.checked),
+      },
+      {
+        label: prefs.hotkey
+          ? hotkeyError
+            ? `快捷键没注册：${hotkeyError}`
+            : '全局快捷键已开启'
+          : '全局快捷键已关闭',
+        enabled: false,
+      },
+      { type: 'separator' },
+      { label: '退出 Nota', click: () => app.quit() },
+    ]),
+  )
+}
+
+/**
+ * 注册 / 注销快捷键。
+ * globalShortcut.register 返回 false 表示这个组合已经被别的程序占了 ——
+ * 必须把这个结果说出来，否则用户按下去毫无反应，只会以为软件坏了。
+ */
+async function applyHotkeys(): Promise<void> {
+  globalShortcut.unregisterAll()
+  hotkeyError = ''
+  const prefs = await readPrefs(LOCAL_APP_DATA)
+  if (prefs.hotkey) {
+    const okNew = globalShortcut.register(HOTKEY_NEW, () => void onHotkeyNew())
+    const okAll = globalShortcut.register(HOTKEY_CLOSE_ALL, () =>
+      void closeAllStickies().then(() => refreshTrayMenu()),
+    )
+    if (!okNew) hotkeyError = `${HOTKEY_NEW.replace('CommandOrControl', 'Ctrl')} 被别的程序占用`
+    else if (!okAll)
+      hotkeyError = `${HOTKEY_CLOSE_ALL.replace('CommandOrControl', 'Ctrl')} 被别的程序占用`
+    if (hotkeyError) console.warn('[hotkey]', hotkeyError)
+  }
+  await refreshTrayMenu()
+}
+
+/* ── 便签的 IPC ──
+   全部由主进程直接读写磁盘，不经过主窗口：便签窗口和主窗口之间没有依赖，
+   主窗收在托盘里甚至从没建过的时候，便签照样能存。 */
+
+const stickyDirOf = () => path.join(LOCAL_APP_DATA, 'Nota', 'stickies')
+
+/**
+ * 便签「存为笔记」的落点。
+ * 优先用当前打开的工作区（渲染层会报上来），没有就用安装时选的目录，
+ * 再没有就退回 文档\Nota —— 三档都会在写的时候 mkdir，不存在也能建起来。
+ */
+async function vaultForSticky(): Promise<string | null> {
+  if (activeRoot) return activeRoot
+  const p = await readVaultPointer(LOCAL_APP_DATA)
+  if (p) return p
+  try {
+    return path.join(app.getPath('documents'), 'Nota')
+  } catch {
+    return null
+  }
+}
+
+ipcMain.handle('sticky:load', async (_e, id: string) => {
+  const metas = await listStickies(stickyDirOf())
+  const m = metas.find((x) => x.id === id)
+  if (!m) return null
+  return {
+    text: await readSticky(stickyDirOf(), id),
+    pinned: m.pinned !== false,
+    color: m.color ?? 'amber',
+    savedTo: m.savedTo,
+  }
+})
+
+ipcMain.handle('sticky:write', async (_e, id: string, text: string) => {
+  await saveStickyText(id, text)
+})
+
+ipcMain.handle('sticky:close', async (_e, id: string) => {
+  await requestCloseSticky(id)
+  await refreshTrayMenu()
+})
+
+ipcMain.handle('sticky:pin', (_e, id: string, pinned: boolean) => setStickyPinned(id, pinned))
+
+ipcMain.handle('sticky:color', (_e, id: string, color: string) => setStickyColor(id, color))
+
+ipcMain.handle('sticky:saveToVault', async (_e, id: string) => {
+  const root = await vaultForSticky()
+  if (!root) return { ok: false, error: '还没选过笔记目录' }
+  return saveStickyToVault(stickyDirOf(), id, root)
+})
+
+ipcMain.handle('sticky:remove', async (_e, id: string) => {
+  await removeSticky(stickyDirOf(), id)
+  await refreshTrayMenu()
+  return true
+})
+
+/* 主窗口这一侧：列表、开一张、开一张已有的、当前工作区、桌面偏好 */
+ipcMain.handle('sticky:list', () => listStickies(stickyDirOf()))
+ipcMain.handle('sticky:new', () => openNewSticky())
+ipcMain.handle('sticky:open', (_e, id: string) => openSticky(id))
+ipcMain.handle('sticky:closeAll', async () => {
+  const n = await closeAllStickies()
+  await refreshTrayMenu()
+  return n
+})
+ipcMain.handle('sticky:count', () => openStickyCount())
+ipcMain.handle('sticky:delete', async (_e, id: string) => {
+  await removeSticky(stickyDirOf(), id)
+  return true
+})
+
+/** 便签另存进库之后，列表那边要能立刻看到「已存入」 */
+ipcMain.handle('sticky:markSaved', async (_e, id: string, rel: string) => {
+  await patchSticky(stickyDirOf(), id, { savedTo: rel })
+  return true
+})
+
+ipcMain.handle('desktop:prefs', async () => ({
+  ...(await readPrefs(LOCAL_APP_DATA)),
+  // 以注册表的实际状态为准：用户可能在任务管理器的「启动」页里关掉了
+  openAtLogin: loginAtStartup(),
+  canAutoStart: canAutoStart(),
+  portable: isPortable(),
+  packaged: app.isPackaged,
+  hotkeyNew: HOTKEY_NEW.replace('CommandOrControl', 'Ctrl'),
+  hotkeyCloseAll: HOTKEY_CLOSE_ALL.replace('CommandOrControl', 'Ctrl'),
+  hotkeyError,
+}))
+
+ipcMain.handle('desktop:setHotkey', async (_e, on: boolean) => {
+  await writePrefs(LOCAL_APP_DATA, { hotkey: on })
+  await applyHotkeys()
+  return { ok: !hotkeyError, error: hotkeyError }
+})
+
+ipcMain.handle('desktop:setAutoStart', async (_e, on: boolean) => setAutoStart(on))
+
+/** 渲染层每打开一个工作区就报一次，便签存笔记时有地方可去 */
+ipcMain.handle('desktop:activeRoot', (_e, root: string | null) => {
+  activeRoot = root
+  return true
+})
+
+/** 设置里「打开便签文件夹」 */
+ipcMain.handle('desktop:revealStickies', async () => {
+  const d = stickyDirOf()
+  await fs.mkdir(d, { recursive: true }).catch(() => {})
+  void shell.openPath(d)
+  return d
+})
 
 /* ── AI ──
    请求走主进程而不是渲染进程：渲染进程的 fetch 会被目标服务的 CORS 拦
@@ -1501,22 +1888,102 @@ async function consumeFreshInstall() {
   }
 }
 
-app.whenReady().then(async () => {
+/* ── 启动 ──
+ *
+ * 单例锁必须最先拿。这个应用有两条「再点一次图标」的路：桌面上双击、
+ * 以及开机自启已经把它挂在托盘里了。没有锁的话第二个进程会起来，
+ * 两个进程同时对着同一个笔记库写文件 —— 那是最难查的一类数据损坏。
+ *
+ * 拿到锁之后的第二次启动走 second-instance：把已有的主窗放出来，
+ * 自己安静退出。 */
+const gotLock = app.requestSingleInstanceLock()
+
+if (!gotLock) {
+  app.quit()
+} else {
+  app.on('second-instance', () => {
+    if (app.isReady()) showMain()
+  })
+
+  app.whenReady().then(boot)
+}
+
+async function boot(): Promise<void> {
   registerMediaProtocol()
   // 从免安装包启动时会先问一句装不装；装/卸界面接管了就不要再开主窗口
   if (await maybeRunInstaller()) return
   // 必须在开窗之前清完：渲染进程一加载就会去读 localStorage
   await consumeFreshInstall()
-  createWindow()
-})
 
-app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') {
-    app.quit()
-    win = null
+  initStickyWindows({
+    localAppData: LOCAL_APP_DATA,
+    preload: path.join(__dirname, 'preload-sticky.cjs'),
+    rendererDist: RENDERER_DIST,
+    devUrl: VITE_DEV_SERVER_URL,
+  })
+
+  /* 上一次多半是被强杀 / 断电 / 任务管理器结束掉的：开着的便签没来得及
+     走收尾，记录里还写着「开着」，可桌面上什么都没有。开窗前先对一遍账，
+     否则列表会显示一堆其实不在的纸。 */
+  try {
+    const rec = await reconcileOnBoot(stickyDirOf())
+    if (rec.archived || rec.dropped) {
+      console.log(`[sticky] 启动对账：归档 ${rec.archived} 张，清掉 ${rec.dropped} 张空白`)
+    }
+  } catch (e) {
+    console.error('[sticky] 启动对账失败：', e)
   }
+
+  buildTray()
+  await applyHotkeys()
+
+  /* 开机自启那一轮带 --hidden：只把托盘和快捷键带起来，不建主窗。
+     早上开机第一件事不是看笔记，没必要先占一屏内存。
+     但托盘要是没建起来（拿不到图标），隐藏启动会让程序彻底失联，
+     那种情况照常开窗。 */
+  const hidden = process.argv.includes('--hidden')
+  if (!hidden || !tray) createWindow()
+}
+
+/**
+ * 窗口全关掉了，但程序不退。
+ *
+ * 以前这里直接 app.quit()。现在不行：主窗点叉只是 hide（不算关），
+ * 便签窗口却会真的关掉 —— 用户收起最后一张便签时这个事件就会来。
+ * 那一刻退出的话，托盘和快捷键就一起没了。
+ *
+ * 唯一的例外是没有托盘：那样「还在后台」就成了看不见的幽灵进程，
+ * 只能退回老行为。
+ */
+app.on('window-all-closed', () => {
+  if (process.platform === 'darwin') return
+  if (!tray) app.quit()
 })
 
 app.on('activate', () => {
   if (BrowserWindow.getAllWindows().length === 0) createWindow()
+})
+
+/**
+ * 退出前把开着的便签落盘。
+ *
+ * before-quit 不能 await，所以先拦下来、等收尾做完再 quit 一次。
+ * 不这么做的话，用户正在打的那半句会跟着进程一起消失 ——
+ * 便签的全部价值就是「随手记的东西不会丢」，这一步不能省。
+ */
+let quitting = false
+app.on('before-quit', (e) => {
+  if (quitting) return
+  e.preventDefault()
+  quitting = true
+  isQuitting = true
+  void flushStickies()
+    .catch(() => {})
+    .finally(() => app.quit())
+})
+
+app.on('will-quit', () => {
+  globalShortcut.unregisterAll()
+  tray?.destroy()
+  tray = null
 })

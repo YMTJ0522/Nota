@@ -1,0 +1,40 @@
+/* 便签窗口的全部样式。
+   刻意不引 tokens.css：那一整套是主界面的三栏、资料栏、编辑区在用的，
+   便签只有一条标题栏和一个输入框，把整套变量拖进来既慢又有冲突风险
+   （它带 html/body 的全局规则）。
+
+   字体也不带 NanxiXinyuanti：那个 woff2 有 1.8MB，而每张便签都是一个
+   独立的渲染进程，等于每开一张纸就多解码一份字体。便签要的是「按下快捷键
+   到能打字」这一段尽可能短，字形精致与否在这里排得很后 —— 系统字体读起来
+   反而更像一张便条。 */
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+  /* 窗口背景由主进程的 backgroundColor 先铺上，这里跟上同一个色，
+     resize 时露出的边缘才不会闪白 */
+  background: #fdf2d0;
+  font-family: "Segoe UI", "Microsoft YaHei UI", "Microsoft YaHei", "PingFang SC",
+    system-ui, sans-serif;
+  /* 便签里不该有半透明拖动残影 */
+  user-select: none;
+}
+
+#sticky-app {
+  height: 100%;
+}
+
+button {
+  font: inherit;
+  color: inherit;
+  background: none;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+}

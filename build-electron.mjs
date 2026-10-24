@@ -33,6 +33,12 @@ const targets = [
     entryPoints: [path.join(root, 'electron/installer-preload.ts')],
     outfile: path.join(root, 'dist-electron/installer-preload.cjs'),
   },
+  // 便签窗口同理，而且更彻底：它拿不到笔记、工作区、AI、云同步的任何方法，
+  // 只有「读自己 / 写自己 / 关自己」这一小把
+  {
+    entryPoints: [path.join(root, 'electron/preload-sticky.ts')],
+    outfile: path.join(root, 'dist-electron/preload-sticky.cjs'),
+  },
 ]
 
 if (watch) {

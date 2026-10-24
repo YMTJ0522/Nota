@@ -180,11 +180,34 @@ onMounted(async () => {
   window.addEventListener('nota:library', onLibrary)
   window.addEventListener('nota:tour', onTour)
   document.addEventListener('click', onLinkClick)
+
+  /* 便签张数：主进程推、这里存一份，侧栏角标和便签列表都读它。
+     只有一个监听点，所以 preload 那边用 removeAllListeners 覆盖式注册
+     不会互相踢掉 —— 别再在别的组件里也挂一次。 */
+  window.api.onStickyCount((n) => {
+    store.state.stickyOpen = n
+  })
+  void window.api.stickyCount().then((n) => (store.state.stickyOpen = n))
+  /* 快捷键按下但便签开不出来（多半是已经开满 12 张），说一句 */
+  window.api.onStickyError((msg) => {
+    window.dispatchEvent(new CustomEvent('nota:toast', { detail: msg }))
+  })
+
   ro = new ResizeObserver(() => {
     winW.value = window.innerWidth
   })
   ro.observe(document.documentElement)
 })
+
+/* 把当前工作区报给主进程：便签窗口是在主进程里独立跑的，
+   用户点「存为笔记」时它得知道往哪个库里写。 */
+watch(
+  () => state.root,
+  (root) => {
+    void window.api.setActiveRoot(root)
+  },
+  { immediate: true },
+)
 
 /**
  * 第一次有工作区时自动放一遍引导。

@@ -122,6 +122,24 @@ interface NoteApi {
     error?: string
     detail?: string
   }>
+  /* 便签：主窗口这边只管列表与开关，正文读写全在便签窗口自己的 preload 里 */
+  stickyList(): Promise<StickyItem[]>
+  stickyNew(): Promise<{ id: string } | { error: string }>
+  stickyOpen(id: string): Promise<boolean>
+  stickyCloseAll(): Promise<number>
+  stickyCount(): Promise<number>
+  stickyDelete(id: string): Promise<boolean>
+  stickyMarkSaved(id: string, rel: string): Promise<boolean>
+  onStickyCount(cb: (n: number) => void): void
+  onStickyError(cb: (msg: string) => void): void
+
+  /* 桌面整合：开机自启、全局快捷键 */
+  desktopPrefs(): Promise<DesktopPrefsInfo>
+  setHotkey(on: boolean): Promise<{ ok: boolean; error: string }>
+  setAutoStart(on: boolean): Promise<boolean>
+  setActiveRoot(root: string | null): Promise<boolean>
+  revealStickies(): Promise<string>
+
   minimize(): Promise<void>
   toggleMaximize(): Promise<boolean>
   closeWindow(): Promise<void>
@@ -143,12 +161,64 @@ interface TreeNode {
   excerpt?: string
 }
 
+/**
+ * 便签窗口的桥（electron/preload-sticky.ts）。只有这一小把能力，
+ * 和主界面的 window.api 是两个完全独立的暴露面 —— 便签窗口拿不到笔记、
+ * 工作区、AI、云同步的任何方法。
+ */
+interface StickyApi {
+  load(
+    id: string,
+  ): Promise<{ text: string; pinned: boolean; color: string; savedTo?: string } | null>
+  write(id: string, text: string): Promise<void>
+  close(id: string): Promise<void>
+  pin(id: string, pinned: boolean): Promise<boolean>
+  color(id: string, color: string): Promise<boolean>
+  saveToVault(id: string): Promise<{ ok: boolean; rel?: string; error?: string }>
+  remove(id: string): Promise<boolean>
+  onFocus(cb: () => void): void
+}
+
 declare global {
   /** 由 vite.config.ts 的 define 注入，值取自 package.json */
   const __APP_VERSION__: string
 
   interface Window {
     api: NoteApi
+    /** 只有便签窗口里才有 */
+    sticky: StickyApi
+  }
+
+  /**
+   * 一条便签。主进程从 %LOCALAPPDATA%\Nota\stickies\ 里扫出来的摘要，
+   * 不含全文 —— 列表不需要，几百张便签全读进内存也没意义。
+   */
+  interface StickyItem {
+    id: string
+    /** 首行，列表里当标题 */
+    title: string
+    preview: string
+    chars: number
+    createdAt: number
+    updatedAt: number
+    /** 有值＝已经关掉归档了，还在列表里等着捞 */
+    closedAt?: number
+    /** 存为笔记后的相对路径 */
+    savedTo?: string
+  }
+
+  /** 桌面级偏好。存在 %LOCALAPPDATA%\Nota\prefs.json，由主进程管 */
+  interface DesktopPrefsInfo {
+    hotkey: boolean
+    openAtLogin: boolean
+    /** 免安装版和开发环境下都是 false */
+    canAutoStart: boolean
+    portable: boolean
+    packaged: boolean
+    hotkeyNew: string
+    hotkeyCloseAll: string
+    /** 非空＝这两个组合被别的程序占了 */
+    hotkeyError: string
   }
 }
 

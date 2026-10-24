@@ -28,6 +28,7 @@ import {
   Server,
   Settings2,
   Sparkles,
+  StickyNote,
   Sun,
   Type,
   X,
@@ -117,8 +118,64 @@ async function checkNow() {
   }
 }
 
+/* ── 桌面整合：开机自启 / 全局快捷键 ──
+ *
+ * 这两项没有跟其他偏好一起放 localStorage，而是由主进程存在
+ * %LOCALAPPDATA%\Nota\prefs.json。原因很实际：它们必须在**没有窗口**的
+ * 时候也生效 —— 主窗收在托盘里时渲染进程已经销毁，开机自启那一轮更是
+ * 压根不建窗口。放在 localStorage 里，主进程就读不到。
+ *
+ * 所以这里每次打开面板都重新问一次主进程，不做本地缓存。 */
+const desk = ref<DesktopPrefsInfo | null>(null)
+const deskBusy = ref(false)
+
+async function loadDesk() {
+  try {
+    desk.value = await window.api.desktopPrefs()
+  } catch {
+    desk.value = null
+  }
+}
+
+function toast(text: string) {
+  window.dispatchEvent(new CustomEvent('nota:toast', { detail: text }))
+}
+
+/** 开机自启。免安装版和开发环境下按钮是灰的 —— 那两种身份写进注册表的
+    路径都是临时的，重启后指向一个不存在的地方，属于「设了但没生效」 */
+async function toggleAutoStart() {
+  if (!desk.value || deskBusy.value || !desk.value.canAutoStart) return
+  const want = !desk.value.openAtLogin
+  deskBusy.value = true
+  try {
+    const ok = await window.api.setAutoStart(want)
+    await loadDesk()
+    if (want && !ok) toast('开机自启没设上，可能被安全软件拦了')
+  } finally {
+    deskBusy.value = false
+  }
+}
+
+async function toggleHotkey() {
+  if (!desk.value || deskBusy.value) return
+  const want = !desk.value.hotkey
+  deskBusy.value = true
+  try {
+    const r = await window.api.setHotkey(want)
+    await loadDesk()
+    if (want && !r.ok) toast(r.error || '快捷键被别的程序占用了')
+  } finally {
+    deskBusy.value = false
+  }
+}
+
+async function revealStickyDir() {
+  await window.api.revealStickies()
+}
+
 const SECTIONS: { id: SectionId; label: string; icon: unknown }[] = [
   { id: 'general', label: '通用', icon: Settings2 },
+  { id: 'sticky', label: '便签', icon: StickyNote },
   { id: 'appearance', label: '外观', icon: Palette },
   { id: 'editor', label: '编辑', icon: Type },
   { id: 'ai', label: 'AI 编写', icon: Sparkles },
@@ -145,6 +202,8 @@ watch(
   ([open, want]) => {
     if (!open || !want) return
     if (SECTIONS.some((s) => s.id === want)) section.value = want
+    // 托盘那边也能改这两项，所以每次打开面板都重新问一次主进程
+    void loadDesk()
   },
   { immediate: true },
 )
@@ -324,6 +383,7 @@ const rootTail = computed(() => {
  */
 const RESET_LABEL: Record<SectionId, string> = {
   general: '恢复通用设置',
+  sticky: '',
   appearance: '恢复外观设置',
   editor: '恢复编辑设置',
   ai: '恢复 AI 设置',
@@ -462,6 +522,117 @@ async function changeWorkspace() {
                     <span class="st-desc">第一次打开会自动走一遍，看漏了可以再走一次</span>
                   </div>
                   <button class="st-btn" @click="replayTour">重看引导</button>
+                </div>
+
+                <!-- 开机自启放在「通用」而不是「便签」：它管的是整个程序上不上电，
+                     只是便签最需要它（快捷键要在 Nota 没被打开时也管用） -->
+                <div class="st-row">
+                  <div class="st-label">
+                    <span class="st-name">开机时自动启动</span>
+                    <span class="st-desc">
+                      {{
+                        desk && !desk.canAutoStart
+                          ? desk.portable
+                            ? '免安装版不支持：解压路径每次都会变，注册表指向会失效'
+                            : '仅安装版可用'
+                          : '开机后静默待在托盘里，不占屏幕，快捷键随时可用'
+                      }}
+                    </span>
+                  </div>
+                  <button
+                    class="st-switch"
+                    role="switch"
+                    :aria-checked="!!desk?.openAtLogin"
+                    :class="{ on: !!desk?.openAtLogin }"
+                    :disabled="!desk?.canAutoStart || deskBusy"
+                    @click="toggleAutoStart"
+                  >
+                    <span class="st-knob" />
+                  </button>
+                </div>
+              </template>
+
+              <!-- ══ 便签 ══ -->
+              <template v-else-if="section === 'sticky'">
+                <div class="st-row">
+                  <div class="st-label">
+                    <span class="st-name">全局快捷键</span>
+                    <span class="st-desc">在任何程序里按下都能弹出一张便签，连按连开</span>
+                  </div>
+                  <button
+                    class="st-switch"
+                    role="switch"
+                    :aria-checked="!!desk?.hotkey"
+                    :class="{ on: !!desk?.hotkey }"
+                    :disabled="deskBusy"
+                    @click="toggleHotkey"
+                  >
+                    <span class="st-knob" />
+                  </button>
+                </div>
+
+                <!-- 被占用时把话说清楚：不写这句的话，用户按下去没反应，
+                     只会以为是软件坏了 -->
+                <div v-if="desk?.hotkeyError" class="st-row warn">
+                  <div class="st-label">
+                    <span class="st-name">快捷键被占用了</span>
+                    <span class="st-desc">{{ desk.hotkeyError }}</span>
+                  </div>
+                </div>
+
+                <div class="st-row">
+                  <div class="st-label">
+                    <span class="st-name">新便签</span>
+                    <span class="st-desc">按一次出一张，位置会一张张错开，不会叠在一起</span>
+                  </div>
+                  <span class="st-keys">
+                    <kbd v-for="k in (desk?.hotkeyNew ?? 'Ctrl+Alt+N').split('+')" :key="k">{{ k }}</kbd>
+                  </span>
+                </div>
+
+                <div class="st-row">
+                  <div class="st-label">
+                    <span class="st-name">收起全部便签</span>
+                    <span class="st-desc">一键把桌面上的纸都收进抽屉，内容还在，随时能捞回来</span>
+                  </div>
+                  <span class="st-keys">
+                    <kbd v-for="k in (desk?.hotkeyCloseAll ?? 'Ctrl+Alt+Shift+N').split('+')" :key="k">{{ k }}</kbd>
+                  </span>
+                </div>
+
+                <div class="st-row">
+                  <div class="st-label">
+                    <span class="st-name">单张便签</span>
+                    <span class="st-desc">Esc 收起当前这张 · Ctrl+S 存进笔记本</span>
+                  </div>
+                </div>
+
+                <div class="st-row">
+                  <div class="st-label">
+                    <span class="st-name">便签存在哪</span>
+                    <span class="st-desc">
+                      和笔记库分开存，换目录、拔硬盘都不影响记东西
+                    </span>
+                  </div>
+                  <button class="st-btn" @click="revealStickyDir">打开文件夹</button>
+                </div>
+
+                <div class="st-row">
+                  <div class="st-label">
+                    <span class="st-name">存为笔记</span>
+                    <span class="st-desc">
+                      便签上点那个笔按钮，会存进当前库的「便签」目录；同名的自动加序号，不会盖掉旧笔记
+                    </span>
+                  </div>
+                </div>
+
+                <div class="st-row">
+                  <div class="st-label">
+                    <span class="st-name">关闭主窗口</span>
+                    <span class="st-desc">
+                      只是收进托盘，程序继续在后台跑 —— 否则快捷键会跟着一起失效。要退出请右键托盘图标
+                    </span>
+                  </div>
                 </div>
               </template>
 
@@ -1495,6 +1666,48 @@ async function changeWorkspace() {
 
 .st-switch.on .st-knob {
   transform: translateX(16px);
+}
+
+/* 灰掉的开关要读得出来是「不能动」而不是「关着」：
+   只降透明度的话，用户会以为是关着、然后反复点 */
+.st-switch:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* 快捷键键帽。拆成一个个 kbd 而不是一整串文字，
+   是因为 Ctrl+Alt+N 里的加号在正文里太小，一眼扫不到边界 */
+.st-keys {
+  justify-self: end;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.st-keys kbd {
+  display: inline-block;
+  min-width: 18px;
+  padding: 2px 5px;
+  border-radius: 4px;
+  background: var(--n-raised);
+  border: 1px solid var(--n-line-strong);
+  border-bottom-width: 2px;
+  font-family: inherit;
+  font-size: 11px;
+  line-height: 1.2;
+  text-align: center;
+  color: var(--n-fg-dim);
+}
+
+/* 出问题的那一行（快捷键被占用）带一点底色，否则在十几行里根本找不到 */
+.st-row.warn {
+  border-radius: 8px;
+  background: color-mix(in oklab, #c0392b 8%, transparent);
+  box-shadow: inset 2px 0 0 #c0392b;
+  padding-left: 10px;
+}
+.st-row.warn .st-name {
+  color: #c0392b;
 }
 
 /* ── 输入类控件：图标 + 输入框 + 尾随按钮 ── */

@@ -85,6 +85,15 @@ export default defineConfig({
   plugins: [vue(), launchElectron()],
   build: {
     outDir: 'dist',
+    /* 两个入口：主界面，以及快捷键弹出来的便签。
+       便签单独成页而不是主界面里的一个路由 —— 按快捷键时不能把整个
+       笔记应用加载一遍（读工作区、建树、加载 AI 配置要好几百毫秒）。 */
+    rollupOptions: {
+      input: {
+        main: path.join(root, 'index.html'),
+        sticky: path.join(root, 'sticky.html'),
+      },
+    },
     /* 关掉 Vite 自己的清目录动作。
        本机安全层按 turn 累计删除数，阈值 50；dist/assets 里有上百个文件，
        Vite 一次 emptyDir 就会撞线，构建半路报 SAFE_DELETE_BULK_CONFIRM_REQUIRED。

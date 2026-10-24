@@ -19,6 +19,7 @@ import {
   Settings,
   Sparkles,
   Star,
+  StickyNote,
   Trash2,
   X,
 } from 'lucide-vue-next'
@@ -83,12 +84,20 @@ async function refreshLibCounts() {
 /** 折叠态窄轨上的图标顺序：搜索 → 四项导航 → 新建 → 库 → AI */
 const railTools = computed(() => {
   const list: { id: string; label: string; icon: unknown }[] = [
+    { id: 'stickies', label: '便签', icon: StickyNote },
     { id: 'attach', label: '附件库', icon: Paperclip },
     { id: 'trash', label: '回收站', icon: Trash2 },
   ]
   if (state.ai.enabled) list.push({ id: 'ai', label: 'AI 编写', icon: Sparkles })
   return list
 })
+
+/** 窄轨上的图标点击。三种去处，挤在一个表达式里会读不出来 */
+function railPick(id: string) {
+  if (id === 'ai') openAi()
+  else if (id === 'stickies') store.setColumnView('stickies')
+  else openLibrary(id === 'attach' ? 'attach' : 'trash')
+}
 
 // 目录树刷新后自动展开顶层目录
 watch(
@@ -507,6 +516,21 @@ onBeforeUnmount(() => document.removeEventListener('pointerdown', onDocPointer))
           </button>
         </nav>
 
+        <!-- 便签：紧挨着笔记放。它不是「另一个地方」，而是笔记的同一条流水线
+             的上一站 —— 想到什么先扔进便签，攒够了一段再存成笔记。
+             角标是「桌面上现在开着几张」，不是总数：那才是此刻会被用到的数。 -->
+        <nav class="nav nav-group">
+          <button
+            class="nav-item"
+            :class="{ on: state.mainView === 'note' && state.columnView === 'stickies' }"
+            @click="store.setColumnView('stickies')"
+          >
+            <span class="nav-ico"><StickyNote :size="15" :stroke-width="1.9" /></span>
+            <span class="nav-label">便签</span>
+            <span v-if="state.stickyOpen > 0" class="nav-count">{{ state.stickyOpen }}</span>
+          </button>
+        </nav>
+
         <!-- 附件库 / 回收站 / AI 编写：三件性质完全不同的事，各自独立成组。
              挤在一个块里会让人以为它们是一类东西。
              点它们不再弹窗，而是把中间那一列切到对应视图。 -->
@@ -733,9 +757,9 @@ onBeforeUnmount(() => document.removeEventListener('pointerdown', onDocPointer))
           v-for="t in railTools"
           :key="t.id"
           class="rail-btn"
-          :class="{ on: state.columnView === (t.id === 'ai' ? 'ai' : t.id) }"
+          :class="{ on: state.mainView === 'note' && state.columnView === t.id }"
           :data-tip="t.label"
-          @click="t.id === 'ai' ? openAi() : openLibrary(t.id === 'attach' ? 'attach' : 'trash')"
+          @click="railPick(t.id)"
         >
           <component :is="t.icon" :size="16" :stroke-width="1.9" />
         </button>

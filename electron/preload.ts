@@ -189,6 +189,58 @@ contextBridge.exposeInMainWorld('api', {
     detail?: string
   }> => ipcRenderer.invoke('app:checkUpdate', current),
 
+  /* ── 便签 ──
+     主窗口这边只负责「列出来 / 开一张 / 关掉全部」，正文读写全在便签窗口
+     自己的 preload 里。两边分开是为了让便签窗口拿不到笔记与工作区。 */
+  stickyList: (): Promise<
+    {
+      id: string
+      title: string
+      preview: string
+      chars: number
+      createdAt: number
+      updatedAt: number
+      closedAt?: number
+      savedTo?: string
+    }[]
+  > => ipcRenderer.invoke('sticky:list'),
+  stickyNew: (): Promise<{ id: string } | { error: string }> => ipcRenderer.invoke('sticky:new'),
+  stickyOpen: (id: string): Promise<boolean> => ipcRenderer.invoke('sticky:open', id),
+  stickyCloseAll: (): Promise<number> => ipcRenderer.invoke('sticky:closeAll'),
+  stickyCount: (): Promise<number> => ipcRenderer.invoke('sticky:count'),
+  stickyDelete: (id: string): Promise<boolean> => ipcRenderer.invoke('sticky:delete', id),
+  stickyMarkSaved: (id: string, rel: string): Promise<boolean> =>
+    ipcRenderer.invoke('sticky:markSaved', id, rel),
+  /** 便签窗口数量变化（开了一张、关了一张） */
+  onStickyCount: (cb: (n: number) => void): void => {
+    ipcRenderer.removeAllListeners('sticky:count')
+    ipcRenderer.on('sticky:count', (_e, n: number) => cb(n))
+  },
+  /** 快捷键按下但便签开不出来（比如已经开了 12 张） */
+  onStickyError: (cb: (msg: string) => void): void => {
+    ipcRenderer.removeAllListeners('sticky:error')
+    ipcRenderer.on('sticky:error', (_e, msg: string) => cb(msg))
+  },
+
+  /* ── 桌面整合：开机自启、全局快捷键 ── */
+  desktopPrefs: (): Promise<{
+    hotkey: boolean
+    openAtLogin: boolean
+    canAutoStart: boolean
+    portable: boolean
+    packaged: boolean
+    hotkeyNew: string
+    hotkeyCloseAll: string
+    hotkeyError: string
+  }> => ipcRenderer.invoke('desktop:prefs'),
+  setHotkey: (on: boolean): Promise<{ ok: boolean; error: string }> =>
+    ipcRenderer.invoke('desktop:setHotkey', on),
+  setAutoStart: (on: boolean): Promise<boolean> => ipcRenderer.invoke('desktop:setAutoStart', on),
+  /** 当前工作区报给主进程：便签「存为笔记」要知道往哪存 */
+  setActiveRoot: (root: string | null): Promise<boolean> =>
+    ipcRenderer.invoke('desktop:activeRoot', root),
+  revealStickies: (): Promise<string> => ipcRenderer.invoke('desktop:revealStickies'),
+
   /* 窗口控制（自绘标题栏用） */
   minimize: (): Promise<void> => ipcRenderer.invoke('window:minimize'),
   toggleMaximize: (): Promise<boolean> => ipcRenderer.invoke('window:toggleMaximize'),
