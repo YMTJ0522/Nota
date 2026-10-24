@@ -33,8 +33,16 @@ await build({
   outfile: OUT,
   logLevel: 'silent',
 })
-const { ensureVault, ensureVaultAt, readVaultPointer, writeVaultPointer, vaultPointerPath } =
-  await import(pathToFileURL(OUT).href)
+const {
+  ensureVault,
+  ensureVaultAt,
+  readVaultPointer,
+  writeVaultPointer,
+  vaultPointerPath,
+  writeFreshFlag,
+  takeFreshFlag,
+  freshFlagPath,
+} = await import(pathToFileURL(OUT).href)
 
 const tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'nota-vault-'))
 const WELCOME = '欢迎使用 Nota.md'
@@ -165,6 +173,30 @@ try {
   ok('空 root 也当没有', (await readVaultPointer(lad)) === null)
   await fs.writeFile(vaultPointerPath(lad), '{"root":123}', 'utf8')
   ok('root 不是字符串也当没有', (await readVaultPointer(lad)) === null)
+
+  console.log('\n[10] 全新安装标记：装完第一次启动要清掉旧状态')
+
+  ok('没装过时没有标记', (await takeFreshFlag(lad)) === null)
+  ok('标记文件也没有', !(await fs.stat(freshFlagPath(lad)).then(() => true).catch(() => false)))
+
+  await writeFreshFlag(lad, '2.7.8')
+  ok('写完之后文件在', await fs.stat(freshFlagPath(lad)).then(() => true).catch(() => false))
+  const flagRaw = JSON.parse(await fs.readFile(freshFlagPath(lad), 'utf8'))
+  ok('记了版本号', flagRaw.version === '2.7.8', JSON.stringify(flagRaw))
+
+  const taken = await takeFreshFlag(lad)
+  ok('读回来带着版本', taken?.version === '2.7.8', JSON.stringify(taken))
+  ok('读完就删掉了（一次性）', (await takeFreshFlag(lad)) === null)
+
+  // 内容坏了也要能消费掉：否则每次启动都当成「刚装完」再清一遍用户配置
+  await fs.mkdir(path.dirname(freshFlagPath(lad)), { recursive: true })
+  await fs.writeFile(freshFlagPath(lad), 'not json', 'utf8')
+  ok('坏内容返回空对象', JSON.stringify(await takeFreshFlag(lad)) === '{}')
+  ok('坏内容也照样删掉', (await takeFreshFlag(lad)) === null)
+
+  // 安装目录都被删掉的情况（用户把 LOCALAPPDATA\Nota 清了）
+  const gone = path.join(tmpRoot, 'no-such-home')
+  ok('目录不存在也不抛', (await takeFreshFlag(gone)) === null)
 } finally {
   await fs.rm(tmpRoot, { recursive: true, force: true })
   await fs.rm(OUT, { force: true })

@@ -1,11 +1,11 @@
-import { app, BrowserWindow, ipcMain, dialog, shell, protocol, net } from 'electron'
+import { app, BrowserWindow, ipcMain, dialog, shell, protocol, net, session } from 'electron'
 import path from 'node:path'
 import fs from 'node:fs/promises'
 import { existsSync } from 'node:fs'
 import { pathToFileURL } from 'node:url'
 import { testConnection, syncWorkspace, onSyncProgress } from './sync'
 import { maybeRunInstaller } from './installer'
-import { ensureVault, ensureVaultAt, readVaultPointer } from './vault'
+import { ensureVault, ensureVaultAt, readVaultPointer, takeFreshFlag } from './vault'
 
 // Vite 注入：开发环境指向 dev server，生产环境加载打包后的 dist
 process.env.APP_ROOT = path.join(__dirname, '..')
@@ -1462,10 +1462,43 @@ function mediaUrl(abs: string) {
   return 'nota-media://local/' + encodeURIComponent(norm)
 }
 
+/**
+ * 刚装完的第一次启动：上一个版本留下的界面状态一律不要。
+ *
+ * 需要清的东西全在 localStorage 里 —— AI 的密钥和地址、所有聊天会话、
+ * 上次打开的目录和笔记、「引导已看过」那个键、侧栏宽度。它们躺在
+ * %APPDATA%\Nota 下，装新版本碰都不会碰。不清，用户装完打开看到的
+ * 还是旧密钥、上次的对话，会以为安装根本没生效。
+ *
+ * 清完 root 也没了，渲染进程那边自然走首次建库（store 里的 bootFirstRun）：
+ * 按安装时记下的笔记目录建库、写《欢迎使用 Nota》并直接打开。
+ *
+ * 只认安装器留的那个标记，所以便携版（双击直接跑）不受影响 —— 那个用法
+ * 本来就没有「安装」这一步，数据留着才对。
+ */
+async function consumeFreshInstall() {
+  const localAppData = process.env.LOCALAPPDATA || path.join(app.getPath('home'), 'AppData', 'Local')
+  const flag = await takeFreshFlag(localAppData)
+  if (!flag) return
+  try {
+    await session.defaultSession.clearStorageData({
+      /* sessionStorage 是会话级的，进程一退就没了，不用管；
+         Electron 这份类型里也没有这个取值。 */
+      storages: ['localstorage', 'indexdb', 'cookies', 'cachestorage', 'shadercache', 'serviceworkers'],
+    })
+    console.log('[fresh] 全新安装：界面状态已清空')
+  } catch (e) {
+    /* 清不掉就带着旧状态开窗，总比让首次启动崩在门口强 */
+    console.error('[fresh] 清界面状态失败：', e)
+  }
+}
+
 app.whenReady().then(async () => {
   registerMediaProtocol()
   // 从免安装包启动时会先问一句装不装；装/卸界面接管了就不要再开主窗口
   if (await maybeRunInstaller()) return
+  // 必须在开窗之前清完：渲染进程一加载就会去读 localStorage
+  await consumeFreshInstall()
   createWindow()
 })
 

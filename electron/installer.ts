@@ -34,7 +34,7 @@ import os from 'node:os'
 import fs from 'node:fs'
 import fsp from 'node:fs/promises'
 import { spawn } from 'node:child_process'
-import { writeVaultPointer } from './vault'
+import { writeVaultPointer, writeFreshFlag } from './vault'
 
 const APP = 'Nota'
 /** 卸载信息写在 HKCU 下 —— 只装给当前用户，不需要管理员权限 */
@@ -307,6 +307,15 @@ async function doInstall() {
       // 记不住位置不算安装失败：主程序退回默认目录，功能不受影响。
       // 但完成页要如实说「会用哪个」，不能显示一个其实没生效的路径。
       logError('vault-pointer', e)
+    }
+
+    /* 留个记号，告诉马上要启动的那个进程：这是刚装出来的，别继承上一个版本的
+       界面状态（AI 密钥、聊天记录、上次开的目录都在 localStorage 里，装着不会动）。
+       安装器自己清不了 —— 这份 LevelDB 正被本进程锁着。 */
+    try {
+      await writeFreshFlag(localAppData(), app.getVersion())
+    } catch (e) {
+      logError('fresh-flag', e)
     }
 
     // 完成页要摆「装到哪、占多大、笔记在哪儿」，所以把这几项一起带回去
