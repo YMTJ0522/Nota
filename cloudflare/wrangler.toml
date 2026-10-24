@@ -14,7 +14,7 @@ compatibility_date = "2025-01-01"
 # 发版时改这一个值，别的地方不用动。
 # （其实也不用手动改：npm run pack 会把它跟 package.json 对齐）
 [vars]
-VERSION = "2.7.10"
+VERSION = "2.7.11"
 
 # 官网静态文件。只有 /d /api /admin 三条路先过 Worker，
 # 其余（/、/icon.png、/shots/*）由边缘直接吐，不占 Worker 调用次数。

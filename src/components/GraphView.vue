@@ -386,7 +386,11 @@ function onUp() {
  */
 function onDblClick(e: MouseEvent) {
   const i = hitTest(e)
-  if (i >= 0) void store.openNote(nodes.value[i].id)
+  if (i < 0) return
+  // 只调 openNote 是不够的：它只换 activePath，主区还停在图上，
+  // 用户双击完看见的还是这张图，以为没反应。先把图收起来，再打开那一篇。
+  store.state.graphOpen = false
+  void store.openNote(nodes.value[i].id)
 }
 
 function onWheel(e: WheelEvent) {
