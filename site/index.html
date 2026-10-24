@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Nota — 一个只做笔记的笔记应用</title>
-<meta name="description" content="Nota 是一个纯本地的 Markdown 笔记应用：文件躺在你自己的目录里，不联网、不上传、不要账号。支持双链、关系图、提示块、图表、公式、云同步，可导出 Markdown / HTML / PDF / Word。">
+<meta name="description" content="Nota 是一个纯本地的 Markdown 笔记应用：文件躺在你自己的目录里，不联网、不上传、不要账号。支持随手便签、双链、关系图、提示块、图表、公式、云同步，可导出 Markdown / HTML / PDF / Word。">
 <link rel="icon" href="icon.png">
 <style>
 /* ══ 基础 ══
@@ -426,6 +426,11 @@ kbd{
         <p>笔记就是你目录里的 .md 文件，断网照常写。想跨设备时填一个 WebDAV 地址——同步在后台按文件比对新旧，冲突会留底，谁的字都不会被悄悄覆盖。</p>
       </div>
       <div class="cell c-2 rv" style="transition-delay:.08s">
+        <div class="ic"><svg viewBox="0 0 24 24" width="19" height="19"><path d="M4 4h11l5 5v11H4z"/><path d="M15 4v5h5"/><path d="M8 13h8M8 17h5"/></svg></div>
+        <h3>随手一张便签</h3>
+        <p>任何程序里按 <code>Ctrl+Alt+N</code>，屏幕角落弹一张纸：连按连开、自动保存、<code>Esc</code> 收起。攒够了一句，按一下就存进笔记库。</p>
+      </div>
+      <div class="cell c-2 rv" style="transition-delay:.16s">
         <div class="ic"><svg viewBox="0 0 24 24" width="19" height="19"><path d="M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.7 1.7"/><path d="M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7l1.7-1.7"/></svg></div>
         <h3>双链与关系图</h3>
         <p><code>[[笔记]]</code> 弹选择器选，不用手打；关系图把谁提到了谁画成连线。</p>
@@ -601,7 +606,7 @@ kbd{
         <span data-dl-ver>当前版本 2.7.12</span>
         <span>Windows 10 / 11 · 64 位</span>
         <span>界面字体：南西新圆体（随包）</span>
-        <span><kbd>Ctrl</kbd>+<kbd>P</kbd> 跳转 · <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>F</kbd> 全文 · <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>G</kbd> 关系图</span>
+        <span><kbd>Ctrl</kbd>+<kbd>P</kbd> 跳转 · <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>F</kbd> 全文 · <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>G</kbd> 关系图 · <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>N</kbd> 便签</span>
         <span>开源，MIT</span>
       </div>
     </div>
