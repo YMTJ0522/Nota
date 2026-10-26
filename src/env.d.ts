@@ -132,9 +132,17 @@ interface NoteApi {
   stickyMarkSaved(id: string, rel: string): Promise<boolean>
   stickyRename(id: string, title: string): Promise<{ ok: boolean; error?: string }>
   stickyPatch(id: string, patch: StickyPatch): Promise<boolean>
+  /** 一批一起改，只写一次盘（多选之后的收起 / 加标签） */
+  stickyBatchPatch(ids: string[], patch: StickyPatch): Promise<number>
+  /** 关掉一张便签窗口（收起）。没开着的话什么也不做 */
+  stickyCloseOne(id: string): Promise<boolean>
+  stickyDeleteMany(ids: string[]): Promise<number>
   stickyText(id: string): Promise<string>
   stickyReveal(id: string): Promise<boolean>
-  stickySaveToVault(id: string): Promise<{ ok: boolean; rel?: string; error?: string }>
+  stickySaveToVault(
+    id: string,
+    archive?: boolean,
+  ): Promise<{ ok: boolean; rel?: string; error?: string; archived?: boolean }>
   onStickyCount(cb: (n: number) => void): void
   onStickyError(cb: (msg: string) => void): void
 
@@ -174,11 +182,15 @@ interface TreeNode {
 interface StickyApi {
   load(
     id: string,
-  ): Promise<{ text: string; pinned: boolean; color: string; savedTo?: string } | null>
+  ): Promise<
+    { text: string; pinned: boolean; color: string; savedTo?: string; tags?: string[] } | null
+  >
   write(id: string, text: string): Promise<void>
   close(id: string): Promise<void>
   pin(id: string, pinned: boolean): Promise<boolean>
   color(id: string, color: string): Promise<boolean>
+  /** 正文里打出来的 `#标签` 自动落到这张纸的记录上，只加不减，返回合并后的全量 */
+  addTags(id: string, names: string[]): Promise<string[]>
   saveToVault(id: string): Promise<{ ok: boolean; rel?: string; error?: string }>
   remove(id: string): Promise<boolean>
   onFocus(cb: () => void): void
@@ -222,6 +234,8 @@ declare global {
   interface StickyPatch {
     tags?: string[]
     icon?: { kind: 'brand' | 'emoji'; id: string } | null
+    /** 数字＝收起来，null＝撤回收起（存为笔记之后后悔了） */
+    closedAt?: number | null
   }
 
   /** 桌面级偏好。存在 %LOCALAPPDATA%\Nota\prefs.json，由主进程管 */

@@ -2,13 +2,22 @@
 /**
  * 一张便签。
  *
- * 设计上只有一个决心：**打开就能打字**。所以这里没有 Markdown 高亮、
- * 没有工具栏、没有标题栏输入框 —— 那些东西每一样都在抢「按下快捷键到
- * 第一个字出现在屏幕上」的那段时间。要排版，点「存为笔记」进主程序去弄。
+ * 设计上只有一个决心：**打开就能打字**。所以这里没有工具栏、没有标题栏
+ * 输入框、没有块级排版 —— 那些东西每一样都在抢「按下快捷键到第一个字
+ * 出现在屏幕上」的那段时间。要排版，点「存为笔记」进主程序去弄。
+ *
+ * 但「纯文本」和「什么也看不出来」是两件事。正文底下叠了一层镜像
+ * （见 sticky/rich.ts）：`#mysql` 会淡出一块底色，`- [ ]` 变成一个能点的
+ * 方框，点一下就把文本里的 `[ ]` 改成 `[x]` —— 存的还是纯文本，只是
+ * 写的时候认得出自己在写什么。
+ *
+ * 正文里打出来的 `#标签` 同时会挂到这张纸的记录上，列表里就能按它筛。
+ * 只增不减：手打的标签不该被正文扫描悄悄抹掉。
  */
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { Check, NotebookPen, Palette, Pin, PinOff, X } from 'lucide-vue-next'
 import { PAPERS, paperOf } from './colors'
+import { mirrorHtml, tagsInText, toggleBox } from './rich'
 
 const id = new URLSearchParams(location.search).get('id') ?? ''
 
@@ -16,11 +25,13 @@ const text = ref('')
 const pinned = ref(true)
 const colorKey = ref('amber')
 const savedTo = ref('')
+const tags = ref<string[]>([])
 const ready = ref(false)
 const picker = ref(false)
 const hint = ref('')
 
 const ta = ref<HTMLTextAreaElement | null>(null)
+const mirrorEl = ref<HTMLElement | null>(null)
 const paper = computed(() => paperOf(colorKey.value))
 
 const style = computed(() => ({
@@ -28,7 +39,12 @@ const style = computed(() => ({
   color: paper.value.fg,
   '--p-dim': paper.value.dim,
   '--p-hover': paper.value.hover,
+  /* textarea 自己的字是透明的（真正显示的是下面那层镜像），
+     所以光标得单独指回正文色，否则 caret-color: auto 会跟着透明 */
+  '--p-fg': paper.value.fg,
 }))
+
+const html = computed(() => mirrorHtml(text.value))
 
 /* ── 自动保存 ──
    280ms 是权衡的结果：再短，一句话打完要写十几次盘；再长，
@@ -48,11 +64,30 @@ async function flush() {
   }
   if (!ready.value) return
   await window.sticky.write(id, text.value)
+  syncTags()
 }
 
 function onInput() {
   savedTo.value = ''
   scheduleSave()
+}
+
+/**
+ * 正文里的 `#tag` 落到记录上。只加不删 —— 用户在标记弹窗里手打过一个
+ * 「运维」，正文里没写 `#运维`，扫描结果里就没有它；照着扫描结果覆盖一遍
+ * 等于把手工分类全抹了。
+ */
+function syncTags() {
+  const found = tagsInText(text.value)
+  if (!found.length) return
+  const next = [...new Set([...tags.value, ...found])]
+  if (next.length === tags.value.length) return
+  tags.value = next
+  // 主进程拿自己的最新值合并后再回传全量：这个窗口可能开着很久，
+  // 期间列表那边给它补过标签，本地这份是旧的
+  void window.sticky.addTags(id, found).then((all) => {
+    if (Array.isArray(all)) tags.value = all
+  })
 }
 
 /* ── 关闭 ──
@@ -64,19 +99,29 @@ async function close() {
 }
 
 /* ── 存为笔记 ──
-   存完不关窗口：用户常常是「先记下来，回头再补两句」，关掉反而要重开。
-   按钮也不置灰 —— 改完想再存一版是合理需求，存储层会自动加 -2。 */
+   存完这张纸会**自己收进列表的抽屉**（主进程那边默认归档）：搬进库就是
+   它的终点，留在桌面上就是同一份东西的第二份。留 700ms 让提示亮一下，
+   用户才知道刚才那一闪发生了什么。这期间又开始打字，就说明他还想写 ——
+   那就别关，把「留在桌面上」说清楚。 */
 async function save() {
   await flush()
   const r = await window.sticky.saveToVault(id)
-  if (r.ok && r.rel) {
-    savedTo.value = r.rel
-    hint.value = `已存入 ${r.rel}`
-    window.setTimeout(() => (hint.value = ''), 2600)
-  } else {
+  if (!(r.ok && r.rel)) {
     hint.value = r.error ?? '没存进去'
     window.setTimeout(() => (hint.value = ''), 3000)
+    return
   }
+  savedTo.value = r.rel
+  hint.value = `已存入 ${r.rel}`
+  const snapshot = text.value
+  window.setTimeout(() => {
+    if (text.value !== snapshot) {
+      hint.value = '已存入，这张留在桌面上继续写'
+      window.setTimeout(() => (hint.value = ''), 2600)
+      return
+    }
+    void window.sticky.close(id)
+  }, 700)
 }
 
 async function togglePin() {
@@ -89,6 +134,29 @@ async function pickColor(key: string) {
   picker.value = false
   await window.sticky.color(id, key)
   ta.value?.focus()
+}
+
+/**
+ * 点镜像层里的待办框。事件是从 span 上冒上来的（那个 span 是唯一
+ * pointer-events: auto 的东西，其余部分点击直接穿透到 textarea）。
+ */
+function onMirrorClick(e: MouseEvent) {
+  const el = (e.target as HTMLElement | null)?.closest?.('.cb') as HTMLElement | null
+  if (!el) return
+  // 不 preventDefault 的话，点击会把光标挪到框里，下面又改了一次文本，位置会跳
+  e.preventDefault()
+  const li = Number(el.dataset.l)
+  if (!Number.isInteger(li)) return
+  const next = toggleBox(text.value, li)
+  if (next == null) return
+  text.value = next
+  scheduleSave()
+  ta.value?.focus()
+}
+
+/** 两层各滚各的是因为 textarea 才是真的滚动容器，镜像得跟着它走 */
+function syncScroll() {
+  if (mirrorEl.value && ta.value) mirrorEl.value.scrollTop = ta.value.scrollTop
 }
 
 /**
@@ -121,6 +189,7 @@ onMounted(async () => {
   pinned.value = data.pinned
   colorKey.value = data.color
   savedTo.value = data.savedTo ?? ''
+  tags.value = data.tags ?? []
   ready.value = true
   await nextTick()
   ta.value?.focus()
@@ -186,7 +255,7 @@ watch(
           <Pin v-if="pinned" :size="13" :stroke-width="2" />
           <PinOff v-else :size="13" :stroke-width="2" />
         </button>
-        <button class="ico" title="存为笔记 (Ctrl+S)" @click="save">
+        <button class="ico" title="存为笔记并收起来 (Ctrl+S)" @click="save">
           <Check v-if="savedTo" :size="14" :stroke-width="2.4" />
           <NotebookPen v-else :size="13" :stroke-width="2" />
         </button>
@@ -210,15 +279,31 @@ watch(
       </div>
     </Transition>
 
-    <textarea
-      ref="ta"
-      v-model="text"
-      class="body"
-      spellcheck="false"
-      placeholder="想到什么就写…"
-      @input="onInput"
-      @keydown="onKey"
-    />
+    <!-- 正文是两层叠出来的：
+         · 下面 .mirror 用同一套字体行高把字画成彩色（`#tag` 有底色、
+           待办框是能点的方框），它不接收指针事件，除了那些方框；
+         · 上面 .body 是真的 textarea，字设成透明，只剩光标和选区。
+         两层的字体/行高/内边距/滚动条宽度必须一模一样，差一个像素，
+         字就会错位成鬼影 —— 改这里任何一条尺寸都要两边一起改。 -->
+    <div class="body-wrap">
+      <div
+        ref="mirrorEl"
+        class="mirror"
+        aria-hidden="true"
+        v-html="html"
+        @click="onMirrorClick"
+      />
+      <textarea
+        ref="ta"
+        v-model="text"
+        class="body"
+        spellcheck="false"
+        placeholder="想到什么就写…"
+        @input="onInput"
+        @keydown="onKey"
+        @scroll="syncScroll"
+      />
+    </div>
 
     <Transition name="fade">
       <p v-if="hint" class="hint">{{ hint }}</p>
@@ -282,7 +367,7 @@ watch(
   position: absolute;
   top: 34px;
   right: 8px;
-  z-index: 5;
+  z-index: 8;
   display: flex;
   gap: 6px;
   padding: 6px 7px;
@@ -307,27 +392,71 @@ watch(
   box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.3);
 }
 
-.body {
+/* 两层共用的排版。抽成一条规则是为了让它们不会各写一份然后慢慢走偏 */
+.body-wrap {
   flex: 1;
   min-height: 0;
-  width: 100%;
+  position: relative;
+}
+
+.mirror,
+.body {
   /* 上边留 6px：贴着标题栏开始写字，第一行看着像被顶到了框外 */
   padding: 6px 15px 14px;
-  border: 0;
-  outline: none;
-  resize: none;
-  background: transparent;
-  color: inherit;
   font-family: inherit;
   font-size: 14px;
   line-height: 1.66;
   letter-spacing: 0.01em;
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+  word-break: normal;
+  border: 0;
+  /* textarea 的 UA 样式本来就是 border-box，镜像是个 div —— 不显式对齐的话
+     两边的内容宽度差出一圈内边距，换行位置就开始错 */
+  box-sizing: border-box;
+  scrollbar-gutter: stable;
+}
+
+/* 镜像层：只负责画字。它整层不接指针事件，唯一的例外是下面那些待办框 */
+.mirror {
+  position: absolute;
+  inset: 0;
+  overflow-y: auto;
+  pointer-events: none;
+  user-select: none;
+  color: inherit;
+}
+/* 滚动条只是用来占住和 textarea 一样的宽度，不能真的显形 */
+.mirror::-webkit-scrollbar {
+  width: 7px;
+}
+.mirror::-webkit-scrollbar-thumb,
+.mirror::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* 真输入框：字是透明的（不然会和镜像层叠成双影），光标和选区留着 */
+.body {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 1;
+  resize: none;
+  outline: none;
+  background: transparent;
+  color: transparent;
+  caret-color: var(--p-fg);
   user-select: text;
-  /* 字距稍微松一点，中文密排的便条读起来会累 */
 }
 .body::placeholder {
   color: var(--p-dim);
   opacity: 0.75;
+}
+/* 选区色块要压在镜像层上面、又不能把字完全盖住，用一层很淡的墨 */
+.body::selection {
+  background: rgba(0, 0, 0, 0.16);
+  color: transparent;
 }
 
 .body::-webkit-scrollbar {
@@ -344,12 +473,74 @@ watch(
   background: transparent;
 }
 
+/* ── 镜像层里的两枚记号 ──
+   注意：v-html 插进来的节点拿不到 scoped 的 data 属性，所以必须用 :deep() */
+
+/* `#tag` 只加一层极淡的底色，不改字重也不改字号 —— 改宽度就会和上面那层错位 */
+.mirror :deep(.tg) {
+  background: rgba(0, 0, 0, 0.075);
+  border-radius: 3px;
+}
+
+/* 待办行前面那个 `- ` 是留给「存为笔记」的 Markdown 记号，在这一层压淡：
+   opacity 不改宽度，两层仍然严格对齐 */
+.mirror :deep(.li) {
+  opacity: 0.32;
+}
+
+/* 待办框：文字留着占位但染成透明的，方块和勾都是画上去的 */
+.mirror :deep(.cb) {
+  position: relative;
+  z-index: 3;
+  color: transparent;
+  cursor: pointer;
+  pointer-events: auto;
+}
+.mirror :deep(.cb::before) {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  box-sizing: border-box;
+  width: 13px;
+  height: 13px;
+  transform: translate(-50%, -50%);
+  border-radius: 3.5px;
+  border: 1.5px solid color-mix(in oklab, var(--p-dim) 88%, transparent);
+  background: rgba(255, 255, 255, 0.46);
+  transition:
+    background 110ms ease,
+    border-color 110ms ease;
+}
+.mirror :deep(.cb:hover::before) {
+  border-color: var(--p-dim);
+  background: rgba(255, 255, 255, 0.72);
+}
+.mirror :deep(.cb.on::before) {
+  /* 用正文色而不是次级色：次级色在白勾下面太淡，勾会糊成一团 */
+  background: color-mix(in oklab, var(--p-fg) 72%, transparent);
+  border-color: transparent;
+}
+.mirror :deep(.cb.on::after) {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 4px;
+  height: 7px;
+  transform: translate(-50%, -58%) rotate(42deg);
+  border-right: 1.6px solid #fff;
+  border-bottom: 1.6px solid #fff;
+  border-radius: 1px;
+}
+
 /* 提示条压在底部，不占正文高度：存完跳一行字出来，不该把正在写的东西往上顶 */
 .hint {
   position: absolute;
   left: 12px;
   right: 12px;
   bottom: 8px;
+  z-index: 4;
   margin: 0;
   padding: 4px 8px;
   border-radius: 6px;

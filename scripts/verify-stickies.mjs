@@ -210,6 +210,56 @@ try {
   ok('标签写成了 frontmatter', md.startsWith('---\ntags: [docker, 运维]\n---'), md.slice(0, 40))
   ok('正文接在 frontmatter 后面', md.includes('收起来以后改的名字'))
 
+  /* 存进库就自己收起来：搬进笔记库等于「这张纸的终点」，
+     留在桌面上就是同一份东西的第二份，攒一个月抽屉里全是尸体 */
+  const afterSave = (await S.listStickies(dir)).find((x) => x.id === rn.id)
+  ok('存为笔记后自动收起', !!afterSave?.closedAt, JSON.stringify(afterSave?.closedAt))
+  ok('存为笔记后记下去处', afterSave?.savedTo === saved.rel, afterSave?.savedTo)
+
+  /* ── 批量 ── */
+  const m1 = await S.createSticky(dir)
+  const m2 = await S.createSticky(dir)
+  await S.writeSticky(dir, m1.id, '批量一')
+  await S.writeSticky(dir, m2.id, '批量二')
+
+  const nClosed = await S.batchPatch(dir, [m1.id, m2.id], { closedAt: 5000 })
+  eq('批量收起返回改动张数', nClosed, 2)
+  eq(
+    '两张都收起来了',
+    (await S.listStickies(dir)).filter((x) => [m1.id, m2.id].includes(x.id) && x.closedAt).length,
+    2,
+  )
+
+  /* closedAt 传 null 是「删掉这个字段」（重新放回桌面），不是写 null 进去 ——
+     写进去的话 isClosed 判断会一直为真，那张纸再也回不到桌面 */
+  const nOpen = await S.batchPatch(dir, [m1.id, m2.id], { closedAt: null })
+  eq('批量放回桌面返回改动张数', nOpen, 2)
+  const reopened = (await S.listStickies(dir)).filter((x) => [m1.id, m2.id].includes(x.id))
+  ok(
+    '放回桌面后 closedAt 字段消失',
+    reopened.every((x) => x.closedAt === undefined),
+    JSON.stringify(reopened.map((x) => x.closedAt)),
+  )
+
+  await S.batchPatch(dir, [m1.id, m2.id], { tags: ['批量'] })
+  ok(
+    '两张都有了这个标签',
+    (await S.listStickies(dir))
+      .filter((x) => [m1.id, m2.id].includes(x.id))
+      .every((x) => x.tags?.includes('批量')),
+  )
+
+  const nDel = await S.removeStickies(dir, [m1.id, m2.id])
+  eq('批量删除返回张数', nDel, 2)
+  ok(
+    '批量删除后两张都不在列表里',
+    !(await S.listStickies(dir)).some((x) => [m1.id, m2.id].includes(x.id)),
+  )
+  ok(
+    '批量删除后文件也清掉了',
+    !(await fs.readdir(dir)).some((f) => f.startsWith(m1.id) || f.startsWith(m2.id)),
+  )
+
   /* 用户自己在便签里写了 frontmatter 的话，不能再顶一段上去 ——
      两段 frontmatter 会让解析器只认第一段，用户写的字段当场失效 */
   const own = await S.createSticky(dir)

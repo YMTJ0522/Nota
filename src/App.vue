@@ -6,6 +6,7 @@ import SideColumn from '@/components/SideColumn.vue'
 import SplitHandle from '@/components/SplitHandle.vue'
 import EditorPane from '@/components/EditorPane.vue'
 import GraphView from '@/components/GraphView.vue'
+import StickyBoard from '@/components/StickyBoard.vue'
 import SearchPalette from '@/components/SearchPalette.vue'
 import WelcomeView from '@/components/WelcomeView.vue'
 import TourOverlay from '@/components/TourOverlay.vue'
@@ -266,8 +267,12 @@ onBeforeUnmount(() => {
 
       <main class="main">
         <!-- 右侧编辑区自己会画顶栏；没有打开笔记时它不出现，
-             所以这两种空态各自补一条顶栏，窗口才拖得动、关得掉 -->
-        <header v-if="!state.activePath" class="bare">
+             所以这两种空态各自补一条顶栏，窗口才拖得动、关得掉。
+             便签墙和关系图都自带顶栏，这里要给它们让开。 -->
+        <header
+          v-if="!state.activePath && !state.graphOpen && state.columnView !== 'stickies'"
+          class="bare"
+        >
           <span class="mark">Nota</span>
           <WindowControls />
         </header>
@@ -276,6 +281,10 @@ onBeforeUnmount(() => {
         <!-- 关系图占的是主区（中间那一列只有 300px，画不下几百个节点）。
              它不是「关掉当前笔记」：从图上点一篇跳过去、再关掉图，正文还该在。 -->
         <GraphView v-else-if="state.graphOpen" />
+        <!-- 便签视图下主区换成一面墙。以前这里还挂着上一篇笔记：左边整理便条，
+             右边是被晾着的正文，两件事没有关系。activePath 不动 —— 切回笔记页
+             还在原来那一篇上。 -->
+        <StickyBoard v-else-if="state.columnView === 'stickies'" />
         <EditorPane v-else-if="state.activePath" />
         <div v-else class="idle">
           <p>从左侧选一篇笔记，或者<button class="link" @click="store.newNote()">新建一篇</button></p>
@@ -318,6 +327,26 @@ onBeforeUnmount(() => {
   display: flex;
   flex-direction: column;
   background: var(--n-bg);
+}
+
+/* 主区四块（正文 / 关系图 / 便签墙 / 空态）以前是硬切：换过去的那一帧
+   整块内容凭空出现，眼睛要重新对焦。给挂载加一次 120ms 的淡入就够了 ——
+   不延迟挂载（那会让打开笔记变慢），只在元素出现时给个过渡。 */
+.main > * {
+  animation: main-in 120ms var(--n-ease) both;
+}
+@keyframes main-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .main > * {
+    animation: none;
+  }
 }
 
 /* 资料栏收起 / 展开的过渡写在 SideColumn 自己的 `.col` 上（宽度 200ms）。

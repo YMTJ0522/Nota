@@ -2751,6 +2751,9 @@ function setColumnView(v: ColumnView) {
   state.columnView = v
   // 两者是同一个意思的两种写法：mainView 给「主区在看什么」，columnView 给这一列
   state.mainView = v === 'ai' ? 'ai' : 'note'
+  /* 关系图铺在主区。切到便签 / 附件 / 回收站的时候主区已经换人了，
+     图要跟着收起来 —— 不然会出现「我明明切到便签了，屏幕上还是一张图」。 */
+  if (v !== 'notes' && v !== 'ai') state.graphOpen = false
   localStorage.setItem(COLUMN_KEY, v)
 }
 

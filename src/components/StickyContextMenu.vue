@@ -17,6 +17,7 @@ import {
   NotebookPen,
   PencilLine,
   Shapes,
+  SquareCheck,
   StickyNote,
   Trash2,
 } from 'lucide-vue-next'
@@ -34,6 +35,7 @@ const emit = defineEmits<{
   (e: 'open'): void
   (e: 'rename'): void
   (e: 'mark'): void
+  (e: 'select'): void
   (e: 'copy'): void
   (e: 'save'): void
   (e: 'reveal'): void
@@ -55,6 +57,9 @@ const emit = defineEmits<{
 
     <ContextMenuItem :icon="PencilLine" label="重命名" @select="emit('rename')" />
     <ContextMenuItem :icon="Shapes" label="标记…" @select="emit('mark')" />
+    <!-- 批量选择从这一条进：底栏那颗按钮是「从零开始选」，从某一张进的时候
+         多半是「从这张往下都要」，所以带上它一起选中 -->
+    <ContextMenuItem :icon="SquareCheck" label="选择这张…" @select="emit('select')" />
 
     <ContextMenuSeparator />
 

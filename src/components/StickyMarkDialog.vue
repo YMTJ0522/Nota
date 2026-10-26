@@ -19,12 +19,17 @@ import MarkIconGrid, { type MarkIcon } from '@/components/MarkIconGrid.vue'
 
 const props = defineProps<{
   open: boolean
-  /** 便签标题，只用于标题栏预览 */
+  /** 便签标题，只用于标题栏预览。多选时传「3 张便签」 */
   title: string
   icon?: MarkIcon | null
   tags?: string[]
   /** 所有便签上用过的标签，点一下就能加，免得同义词越攒越多 */
   known?: { name: string; count: number }[]
+  /**
+   * 只开标签页。多选之后「批量打标签」用它：给十张纸挑同一个技术栈图标
+   * 没有意义，图标是「这张纸长什么样」，一张一个。
+   */
+  tagsOnly?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -77,9 +82,10 @@ watch(
     if (!v) return
     q.value = ''
     // 默认停在图标页：便签上的标记绝大多数时候回答「这是哪个技术栈的」，
-    // 那是图标；标签是次要的、可以随时补。
-    pane.value = 'icon'
+    // 那是图标；标签是次要的、可以随时补。批量模式下只有标签页。
+    pane.value = props.tagsOnly ? 'tag' : 'icon'
     await nextTick()
+    if (props.tagsOnly) input.value?.focus()
   },
 )
 </script>
@@ -97,7 +103,7 @@ watch(
           </button>
         </header>
 
-        <div class="sm-tabs">
+        <div v-if="!tagsOnly" class="sm-tabs">
           <button :class="{ on: pane === 'icon' }" @click="pane = 'icon'">
             <Shapes :size="12" :stroke-width="2.2" /><span>图标</span>
           </button>
@@ -107,7 +113,7 @@ watch(
         </div>
 
         <MarkIconGrid
-          v-if="pane === 'icon'"
+          v-if="!tagsOnly && pane === 'icon'"
           class="sm-grid"
           :current="icon ?? null"
           @pick="(ic) => emit('pickIcon', ic)"
@@ -152,7 +158,9 @@ watch(
         </div>
 
         <footer class="sm-foot">
-          <button class="sm-btn ghost" @click="emit('pickIcon', null)">去掉图标</button>
+          <button v-if="!tagsOnly" class="sm-btn ghost" @click="emit('pickIcon', null)">
+            去掉图标
+          </button>
           <button class="sm-btn" @click="emit('close')">完成</button>
         </footer>
       </div>
@@ -277,7 +285,8 @@ watch(
   display: flex;
   flex-direction: column;
   gap: 8px;
-  padding: 10px 14px 12px;
+  /* 上下都留 12：批量模式没有页签，这一条就是它到标题栏的全部间距 */
+  padding: 12px 14px;
   overflow-y: auto;
 }
 

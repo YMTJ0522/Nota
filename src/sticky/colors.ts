@@ -14,7 +14,8 @@ export interface Paper {
   bg: string
   /** 正文 */
   fg: string
-  /** 次级文字、分隔线 */
+  /** 次级文字、分隔线。压得比「淡淡的灰」深一档：便签墙上的正文就是预览，
+      太浅会读不动；4:1 左右的对比度在这套浅纸上是能读又不抢标题的上限 */
   dim: string
   /** 悬停底色 */
   hover: string
@@ -26,7 +27,7 @@ export const PAPERS: Paper[] = [
     name: '米黄',
     bg: '#fdf2d0',
     fg: '#3f3722',
-    dim: '#9b8f6d',
+    dim: '#7f7353',
     hover: '#f6e8bd',
   },
   {
@@ -34,7 +35,7 @@ export const PAPERS: Paper[] = [
     name: '浅粉',
     bg: '#fbe3e4',
     fg: '#4a2b2e',
-    dim: '#a8848a',
+    dim: '#8b656d',
     hover: '#f6d6d8',
   },
   {
@@ -42,7 +43,7 @@ export const PAPERS: Paper[] = [
     name: '薄荷',
     bg: '#e2f2e4',
     fg: '#26402b',
-    dim: '#7f9d86',
+    dim: '#637f6a',
     hover: '#d5ebd8',
   },
   {
@@ -50,7 +51,7 @@ export const PAPERS: Paper[] = [
     name: '天蓝',
     bg: '#e3edf9',
     fg: '#25323f',
-    dim: '#8296ab',
+    dim: '#64788d',
     hover: '#d6e5f5',
   },
   {
@@ -58,7 +59,7 @@ export const PAPERS: Paper[] = [
     name: '淡紫',
     bg: '#eee7f7',
     fg: '#362b45',
-    dim: '#9385a6',
+    dim: '#776a8c',
     hover: '#e5dcf2',
   },
   {
@@ -66,7 +67,7 @@ export const PAPERS: Paper[] = [
     name: '素灰',
     bg: '#ebebeb',
     fg: '#2e2e2e',
-    dim: '#8c8c8c',
+    dim: '#6e6e6e',
     hover: '#e0e0e0',
   },
 ]

@@ -122,6 +122,26 @@ export function safeName(raw: string): string {
   return s || '空白便签'
 }
 
+/**
+ * 预览里不该出现 Markdown 记号。
+ *
+ * 「- [ ] 换成 alpine 基底」直接拼进一句话，读起来是「- 方括号 空 方括号」，
+ * 那是源码不是内容。列表和墙上的卡片都靠这一条吃饭，所以在这里一次清干净。
+ */
+function plainLine(l: string): string {
+  return (
+    l
+      .trim()
+      /* 标题记号只认「# 加空格」。`#docker` 里的那个 # 是标签的一部分，
+         去掉之后就认不出它是标签行，预览里会把它当成正文再念一遍 */
+      .replace(/^#{1,6}\s+/, '')
+      .replace(/^(?:[*+\-]|>)\s+/, '')
+      .replace(/^\d+[.)]\s+/, '')
+      .replace(/^\[[ xX]\]\s*/, '')
+      .trim()
+  )
+}
+
 /** 从正文里抠出列表要显示的两行：标题 + 预览，顺便数一下字数 */
 function summarize(text: string): { title: string; preview: string; chars: number } {
   const chars = text.replace(/\s/g, '').length
@@ -137,12 +157,16 @@ function summarize(text: string): { title: string; preview: string; chars: numbe
   const rest = lines
     .slice(Math.max(0, lines.findIndex((l) => l.replace(/^[#>\-*\s]+/, '').trim())))
     .slice(1)
-    .map((l) => l.trim())
-    .filter(Boolean)
+    .map(plainLine)
+    /* 一行只由标签组成的（就是正文里写的 `#docker`）跳过：那些标签
+       会在条目和卡片下面单独显示一行，预览里再来一遍就是同一句话说两次 */
+    .filter((l) => l && !/^(#[^\s#]+\s*)+$/.test(l))
     .join(' ')
   return {
     title: title || '空白便签',
-    preview: rest.length > 90 ? `${rest.slice(0, 90)}…` : rest,
+    /* 220 而不是 90：便签墙上的一张卡片要显示到四五行为止。
+       列表那一侧只用一行 ellipsis，多一点字数不影响它。 */
+    preview: rest.length > 220 ? `${rest.slice(0, 220)}…` : rest,
     chars,
   }
 }
@@ -433,6 +457,61 @@ export async function removeSticky(dir: string, id: string): Promise<boolean> {
 }
 
 /**
+ * 一批便签改同一个字段（多选之后「收起」「加标签」都走这里）。
+ *
+ * 不用循环调 patchSticky：那是「读 index → 改一条 → 写回」乘 N 遍，
+ * 选十张纸就是十次读十次写，中途任一次抛错还会留下改了一半的状态。
+ * 这里一次读、一次改、一次写。
+ *
+ * 字段语义和 patchSticky 完全一致：null 是删字段，undefined 是跳过。
+ */
+export async function batchPatch(
+  dir: string,
+  ids: string[],
+  patch: StickyPatch,
+): Promise<number> {
+  const want = new Set(ids)
+  if (!want.size) return 0
+  return serialize(async () => {
+    const metas = await readIndex(dir)
+    let n = 0
+    for (let i = 0; i < metas.length; i++) {
+      if (!want.has(metas[i].id)) continue
+      const next = { ...metas[i] } as Record<string, unknown>
+      for (const [k, v] of Object.entries(patch)) {
+        if (v === null) delete next[k]
+        else if (v !== undefined) next[k] = v
+      }
+      metas[i] = next as unknown as StickyMeta
+      n++
+    }
+    if (n) await writeIndex(dir, metas)
+    return n
+  })
+}
+
+/** 一批便签真删。文件一个一个清（可能本来就没落过盘），索引只写一次 */
+export async function removeStickies(dir: string, ids: string[]): Promise<number> {
+  const want = new Set(ids)
+  if (!want.size) return 0
+  for (const id of want) {
+    try {
+      await fs.unlink(path.join(dir, `${id}.md`))
+    } catch {
+      /* 新建了没打字的，磁盘上本来就没有文件 */
+    }
+  }
+  await serialize(async () => {
+    const metas = await readIndex(dir)
+    await writeIndex(
+      dir,
+      metas.filter((m) => !want.has(m.id)),
+    )
+  })
+  return want.size
+}
+
+/**
  * 把标签写成 frontmatter 顶到正文前面。用户自己已经写了 frontmatter
  * （便签里手打 `---` 块）就不碰它——两段 frontmatter 会让解析器只认第一段，
  * 用户写的那些字段当场失效。`\---` 也算分隔符，跟导出/预览那边同一个判据。
@@ -449,13 +528,20 @@ function withTags(text: string, tags: string[]): string {
  * 写进 <库>/便签/ 子目录，不散在库根上 —— 便签是速记的产物，
  * 混进用户自己整理好的目录结构里会很难看。同名自动加 -2 -3。
  *
+ * **存完默认把这张纸收起来。** 以前只补一个 savedTo 就完事，纸还留在
+ * 桌面上；用上一个月，列表里堆的全是「已经进了库、却还赖着不走」的尸体，
+ * 而「已收起」「已存入」两枚状态又叠在一起，越看越乱。搬进库本来就是
+ * 这张纸的终点，终点之后就该收起来。想留着继续写，调用方传 archive: false
+ * （或者存完立刻「撤销」）。
+ *
  * 返回相对库根的路径（"便签/xxx.md"），界面拿它显示「已存入」。
  */
 export async function saveToVault(
   dir: string,
   id: string,
   vaultRoot: string,
-): Promise<{ ok: boolean; rel?: string; error?: string }> {
+  opts: { archive?: boolean } = {},
+): Promise<{ ok: boolean; rel?: string; error?: string; archived?: boolean }> {
   const text = await readSticky(dir, id)
   if (!text.trim()) return { ok: false, error: '这张便签还是空的' }
 
@@ -479,8 +565,11 @@ export async function saveToVault(
       // wx：同名就换下一个，绝不覆盖用户已有的笔记
       await fs.writeFile(path.join(targetDir, name), body, { encoding: 'utf8', flag: 'wx' })
       const rel = `便签/${name}`
-      await patchSticky(dir, id, { savedTo: rel })
-      return { ok: true, rel }
+      const archive = opts.archive !== false
+      const patch: StickyPatch = { savedTo: rel }
+      if (archive) patch.closedAt = Date.now()
+      await patchSticky(dir, id, patch)
+      return { ok: true, rel, archived: archive }
     } catch (e) {
       const code = (e as NodeJS.ErrnoException).code
       if (code !== 'EEXIST') return { ok: false, error: String(e) }

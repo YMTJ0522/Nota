@@ -217,16 +217,38 @@ contextBridge.exposeInMainWorld('api', {
   /** 改标题 = 改正文第一行，标题只有一份，不另存名字 */
   stickyRename: (id: string, title: string): Promise<{ ok: boolean; error?: string }> =>
     ipcRenderer.invoke('sticky:rename', id, title),
-  /** 打标签 / 换图标。icon 传 null 是「去掉这枚图标」 */
+  /** 打标签 / 换图标 / 归档状态。icon 传 null 是「去掉这枚图标」，
+      closedAt 传 null 是「撤回收起」（存为笔记之后后悔了） */
   stickyPatch: (
     id: string,
-    patch: { tags?: string[]; icon?: { kind: 'brand' | 'emoji'; id: string } | null },
+    patch: {
+      tags?: string[]
+      icon?: { kind: 'brand' | 'emoji'; id: string } | null
+      closedAt?: number | null
+    },
   ): Promise<boolean> => ipcRenderer.invoke('sticky:patch', id, patch),
+  /** 一批一起改。多选以后「收起 / 加标签」走这条，只写一次盘 */
+  stickyBatchPatch: (
+    ids: string[],
+    patch: {
+      tags?: string[]
+      icon?: { kind: 'brand' | 'emoji'; id: string } | null
+      closedAt?: number | null
+    },
+  ): Promise<number> => ipcRenderer.invoke('sticky:batchPatch', ids, patch),
+  /** 关掉一张便签窗口（收起）。没开着的话什么也不做 */
+  stickyCloseOne: (id: string): Promise<boolean> => ipcRenderer.invoke('sticky:closeOne', id),
+  stickyDeleteMany: (ids: string[]): Promise<number> =>
+    ipcRenderer.invoke('sticky:deleteMany', ids),
   stickyText: (id: string): Promise<string> => ipcRenderer.invoke('sticky:text', id),
   stickyReveal: (id: string): Promise<boolean> => ipcRenderer.invoke('sticky:reveal', id),
-  /** 存为笔记。落点由主进程决定（当前工作区 → 安装时选的目录 → 文档\Nota） */
-  stickySaveToVault: (id: string): Promise<{ ok: boolean; rel?: string; error?: string }> =>
-    ipcRenderer.invoke('sticky:saveToVault', id),
+  /** 存为笔记。落点由主进程决定（当前工作区 → 安装时选的目录 → 文档\Nota）。
+      archive 默认 true：存完这张纸自动收起，传 false 才留在桌面上 */
+  stickySaveToVault: (
+    id: string,
+    archive?: boolean,
+  ): Promise<{ ok: boolean; rel?: string; error?: string; archived?: boolean }> =>
+    ipcRenderer.invoke('sticky:saveToVault', id, archive),
   /** 便签窗口数量变化（开了一张、关了一张） */
   onStickyCount: (cb: (n: number) => void): void => {
     ipcRenderer.removeAllListeners('sticky:count')

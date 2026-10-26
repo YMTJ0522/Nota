@@ -35,10 +35,12 @@ import {
   setStickyPinned,
 } from './sticky-window'
 import {
+  batchPatch as batchPatchStickies,
   listStickies,
   patchSticky,
   readSticky,
   reconcileOnBoot,
+  removeStickies,
   removeSticky,
   renameSticky,
   saveToVault as saveStickyToVault,
@@ -410,6 +412,7 @@ ipcMain.handle('sticky:load', async (_e, id: string) => {
     pinned: m.pinned !== false,
     color: m.color ?? 'amber',
     savedTo: m.savedTo,
+    tags: m.tags ?? [],
   }
 })
 
@@ -426,10 +429,13 @@ ipcMain.handle('sticky:pin', (_e, id: string, pinned: boolean) => setStickyPinne
 
 ipcMain.handle('sticky:color', (_e, id: string, color: string) => setStickyColor(id, color))
 
-ipcMain.handle('sticky:saveToVault', async (_e, id: string) => {
+ipcMain.handle('sticky:saveToVault', async (_e, id: string, archive?: boolean) => {
   const root = await vaultForSticky()
   if (!root) return { ok: false, error: '还没选过笔记目录' }
-  return saveStickyToVault(stickyDirOf(), id, root)
+  const r = await saveStickyToVault(stickyDirOf(), id, root, { archive })
+  // 默认存完就收起来了，托盘菜单里那张要跟着消失
+  if (r.ok && r.archived) await refreshTrayMenu()
+  return r
 })
 
 ipcMain.handle('sticky:remove', async (_e, id: string) => {
@@ -465,14 +471,51 @@ ipcMain.handle('sticky:rename', (_e, id: string, title: string) =>
   renameSticky(stickyDirOf(), id, title),
 )
 
-ipcMain.handle(
-  'sticky:patch',
-  async (
-    _e,
-    id: string,
-    patch: { tags?: string[]; icon?: { kind: 'brand' | 'emoji'; id: string } | null },
-  ) => !!(await patchSticky(stickyDirOf(), id, patch)),
+/* 标记 / 归档状态。
+   closedAt 传数字是「收起来」，传 null 是「撤回收起」——撤销存为笔记那一步
+   走的就是它。传 undefined 的字段一律跳过，别把没提到的字段清掉。 */
+type StickyPatchIn = {
+  tags?: string[]
+  icon?: { kind: 'brand' | 'emoji'; id: string } | null
+  closedAt?: number | null
+}
+
+ipcMain.handle('sticky:patch', async (_e, id: string, patch: StickyPatchIn) =>
+  !!(await patchSticky(stickyDirOf(), id, patch)),
 )
+
+/* 一批的同一个改动。多选之后「收起 / 打标签」用它，一次写盘 */
+ipcMain.handle('sticky:batchPatch', async (_e, ids: string[], patch: StickyPatchIn) => {
+  const n = await batchPatchStickies(stickyDirOf(), ids, patch)
+  if ('closedAt' in patch && patch.closedAt != null) await refreshTrayMenu()
+  return n
+})
+
+/* 关掉一张（列表里批量「收起」用）。没开着的话是空操作，
+   它本来就该是收起状态。 */
+ipcMain.handle('sticky:closeOne', async (_e, id: string) => {
+  await requestCloseSticky(id)
+  await refreshTrayMenu()
+  return true
+})
+
+ipcMain.handle('sticky:deleteMany', async (_e, ids: string[]) => {
+  const n = await removeStickies(stickyDirOf(), ids)
+  await refreshTrayMenu()
+  return n
+})
+
+/* 便签窗口把正文里扫出来的 `#标签` 挂到这张纸上。
+   走「只加不减」：窗口可能停在那儿开着很久，期间用户从列表里给它补过标签，
+   窗口手里那份是旧的 —— 拿旧值整套覆盖回去，列表上刚做的分类就没了。
+   所以让主进程读一次最新的再合并。 */
+ipcMain.handle('sticky:addTags', async (_e, id: string, names: string[]) => {
+  const cur = (await listStickies(stickyDirOf())).find((m) => m.id === id)?.tags ?? []
+  const next = [...new Set([...cur, ...names.filter(Boolean)])]
+  if (next.length === cur.length) return next
+  await patchSticky(stickyDirOf(), id, { tags: next })
+  return next
+})
 
 ipcMain.handle('sticky:text', (_e, id: string) => readSticky(stickyDirOf(), id))
 
