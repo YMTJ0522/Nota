@@ -40,6 +40,7 @@ import {
   readSticky,
   reconcileOnBoot,
   removeSticky,
+  renameSticky,
   saveToVault as saveStickyToVault,
 } from './stickies'
 
@@ -455,6 +456,34 @@ ipcMain.handle('sticky:delete', async (_e, id: string) => {
 /** 便签另存进库之后，列表那边要能立刻看到「已存入」 */
 ipcMain.handle('sticky:markSaved', async (_e, id: string, rel: string) => {
   await patchSticky(stickyDirOf(), id, { savedTo: rel })
+  return true
+})
+
+/* 列表这一屏的管理动作：改名、打标签/换图标、读正文、定位文件。
+   全部走主进程落盘，渲染层不碰路径——便签目录不一定在用户想得到的地方。 */
+ipcMain.handle('sticky:rename', (_e, id: string, title: string) =>
+  renameSticky(stickyDirOf(), id, title),
+)
+
+ipcMain.handle(
+  'sticky:patch',
+  async (
+    _e,
+    id: string,
+    patch: { tags?: string[]; icon?: { kind: 'brand' | 'emoji'; id: string } | null },
+  ) => !!(await patchSticky(stickyDirOf(), id, patch)),
+)
+
+ipcMain.handle('sticky:text', (_e, id: string) => readSticky(stickyDirOf(), id))
+
+ipcMain.handle('sticky:reveal', async (_e, id: string) => {
+  const p = path.join(stickyDirOf(), `${id}.md`)
+  try {
+    await fs.access(p)
+  } catch {
+    return false // 还没落盘的空便签，没有文件可定位
+  }
+  shell.showItemInFolder(p)
   return true
 })
 

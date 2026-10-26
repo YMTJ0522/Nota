@@ -21,6 +21,7 @@
  */
 import { computed, ref, watch } from 'vue'
 import {
+  ChevronsDown,
   FilePlus2,
   FileText,
   ListTree,
@@ -144,6 +145,27 @@ async function doImport() {
     importing.value = false
   }
 }
+
+function toast(text: string) {
+  window.dispatchEvent(new CustomEvent('nota:toast', { detail: text }))
+}
+
+/**
+ * 便签这一屏的两枚入口，位置和笔记页的「新建 / 导入」对齐：
+ * 不管在哪一屏，「从这一屏新建一个东西」永远在这一列的右上角。
+ *
+ * 以前它们长在列表正上方一条横排里 —— 那一列别处都没有这种条，
+ * 一条彩色实心按钮杵在中间，看着像半路插进来的一块外来零件。
+ */
+async function doNewSticky() {
+  const r = await window.api.stickyNew()
+  if ('error' in r) toast(r.error)
+}
+
+async function doCloseAllSticky() {
+  const n = await window.api.stickyCloseAll()
+  if (n > 0) toast(`已收起 ${n} 张便签`)
+}
 </script>
 
 <template>
@@ -177,11 +199,50 @@ async function doImport() {
         <span class="col-spacer" />
       </template>
 
+      <!-- 便签这一屏自己的一进一出。位置和笔记页那两枚对齐：
+           这一列右上角永远回答同一个问题 ——「从这一屏能新建什么」。
+           以前这两件事长在列表正上方一条横排里，别处都没有那种条，
+           一条实心彩按钮杵在中间，像半路插进来的一块外来零件。 -->
+      <template v-if="view === 'stickies'">
+        <button
+          class="col-act"
+          data-role="new-sticky"
+          title="新建便签 (Ctrl+Alt+N)"
+          @click="doNewSticky"
+        >
+          <!-- 自绘：一张纸 + 中间一个加号。
+               lucide 没有「带加号的便签」，而「便签图标 + 右下角小加号」
+               在 26px 的按钮里挤成一团黑点，远看像一枚坏掉的图标。
+               方框加号是所有人都认识的那个意思，和笔记页的「新建」同类。 -->
+          <svg
+            class="act-sticky-new"
+            viewBox="0 0 24 24"
+            width="15"
+            height="15"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.8"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <rect x="4" y="4" width="16" height="16" rx="3" />
+            <path d="M12 8.6v6.8M8.6 12h6.8" />
+          </svg>
+        </button>
+        <button
+          class="col-act"
+          data-role="close-all-stickies"
+          title="收起桌面上的全部便签"
+          :disabled="state.stickyOpen === 0"
+          @click="doCloseAllSticky"
+        >
+          <ChevronsDown :size="14" :stroke-width="2" />
+        </button>
+      </template>
+
       <!-- 一进一出，永远在这一列的右上角：
-           不管当前看的是笔记、附件还是 AI，收起笔记的地方都在同一处。
-           便签那一屏例外：它自己顶上有「新便签」，这两枚在这里只能
-           让人点错（点下去建的是笔记，眼前这一屏跟新笔记没有关系）。 -->
-      <template v-if="view !== 'stickies'">
+           不管当前看的是笔记、附件还是 AI，收起笔记的地方都在同一处。 -->
+      <template v-else>
         <button
           class="col-act"
           data-role="new-note"
@@ -378,6 +439,17 @@ async function doImport() {
 .col-act:disabled {
   opacity: 0.4;
   cursor: default;
+}
+
+/* 「新建便签」自绘图标：填充与描边走同一个色，和旁边的 lucide 图标并排看
+   不会一个发虚一个发实 */
+.act-sticky-new {
+  flex: none;
+  overflow: visible;
+}
+
+.act-sticky-new path {
+  stroke: currentColor;
 }
 
 .spinning {

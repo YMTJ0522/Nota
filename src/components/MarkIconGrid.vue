@@ -9,7 +9,7 @@
  *
  * 这里只负责「铺出来 + 报出点了哪个」，选中态由外面决定。
  */
-import { computed, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { Search } from 'lucide-vue-next'
 import { BRAND_ICONS } from '@/assets/brand-icons'
 import { WORK_EMOJI } from '@/assets/work-emoji'
@@ -26,6 +26,38 @@ const emit = defineEmits<{ (e: 'pick', icon: MarkIcon): void }>()
 const tab = ref<'brand' | 'emoji'>('brand')
 const q = ref('')
 const input = ref<HTMLInputElement | null>(null)
+const grid = ref<HTMLElement | null>(null)
+
+/**
+ * 网格按行裁，容器高度除不尽一行的行高时，底部会永远露出半行图标 ——
+ * 看着像渲染坏了，其实是「还能往下滚」但没人知道。溢出时把底边淡出，
+ * 滚到底再撤掉，淡出就等于「下面还有」的信号。
+ */
+const more = ref(false)
+
+function measure() {
+  const el = grid.value
+  if (!el) return
+  const rest = el.scrollHeight - el.clientHeight - el.scrollTop
+  more.value = rest > 2
+}
+
+let ro: ResizeObserver | null = null
+onMounted(() => {
+  measure()
+  if (typeof ResizeObserver !== 'undefined' && grid.value) {
+    ro = new ResizeObserver(measure)
+    ro.observe(grid.value)
+  }
+})
+onBeforeUnmount(() => ro?.disconnect())
+
+watch([tab, q], () => nextTick(measure))
+// 换页签、改搜索都会换掉整批格子，高度要等渲染完才准
+watch(
+  () => [props.current?.kind, props.current?.id],
+  () => nextTick(measure),
+)
 
 const keyword = computed(() => q.value.trim().toLowerCase())
 
@@ -78,7 +110,12 @@ defineExpose({ focus })
       </label>
     </div>
 
-    <div class="ig-grid">
+    <div
+      ref="grid"
+      class="ig-grid"
+      :class="{ more }"
+      @scroll.passive="measure"
+    >
       <template v-if="tab === 'brand'">
         <button
           v-for="i in brands"
@@ -190,6 +227,13 @@ defineExpose({ focus })
   gap: 4px;
   padding: 10px 12px;
   align-content: start;
+}
+
+/* 淡出用 mask 而不是盖一层渐变：不用知道底下是什么颜色，
+   笔记那套 MarkDialog 和便签的弹窗背景色并不一样 */
+.ig-grid.more {
+  -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 22px), transparent);
+  mask-image: linear-gradient(to bottom, #000 calc(100% - 22px), transparent);
 }
 
 .ig-cell {

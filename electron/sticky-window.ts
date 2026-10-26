@@ -315,8 +315,10 @@ export async function openSticky(id: string): Promise<boolean> {
   const meta = metas.find((m) => m.id === id)
   if (!meta) return false
   const text = await readSticky(dir(), id)
-  // 重新打开时把归档标记撤掉，否则列表里会显得它还关着
-  await patchSticky(dir(), id, { closedAt: undefined })
+  // 重新打开时把归档标记撤掉，否则列表里会显得它还关着。
+  // 传 null 而不是 undefined：patchSticky 把 null 当「删掉这个字段」，
+  // undefined 则是「没给这个字段」直接跳过，归档标记就留下了。
+  await patchSticky(dir(), id, { closedAt: null })
   return !!(await mount({ ...meta, closedAt: undefined }, text))
 }
 

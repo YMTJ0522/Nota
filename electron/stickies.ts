@@ -38,6 +38,16 @@ export interface StickyMeta {
   closedAt?: number
   /** 存为笔记后的相对路径，用来把按钮置成「已存入」 */
   savedTo?: string
+  /**
+   * 手打的标签。只活在这张便签自己的记录里，**不进笔记库的标签表**。
+   *
+   * 便签刻意和库解耦（见文件头），标签也一样：没有库的时候也得能打标签，
+   * 否则「按一下记一句、顺手归个类」这件事就得先建库才能做。
+   * 存为笔记时才把这些标签写成 frontmatter，那时候它们才成为库里的标签。
+   */
+  tags?: string[]
+  /** 标记图标（技术栈 / emoji）。列表里一眼认出来，不用读标题 */
+  icon?: { kind: 'brand' | 'emoji'; id: string }
 }
 
 export interface StickyRecord extends StickyMeta {
@@ -255,20 +265,75 @@ export async function writeSticky(dir: string, id: string, text: string): Promis
   return true
 }
 
-/** 改位置 / 尺寸 / 钉住 / 颜色 / 归档。patch 里没给的字段保持不动 */
+/**
+ * 可改的字段。每个字段都可以给 null —— 那是「删掉它」，见 patchSticky 的注释。
+ */
+export type StickyPatch = {
+  [K in keyof Omit<StickyMeta, 'id' | 'createdAt'>]?:
+    | Omit<StickyMeta, 'id' | 'createdAt'>[K]
+    | null
+}
+
+/**
+ * 改位置 / 尺寸 / 钉住 / 颜色 / 标签 / 图标 / 归档。patch 里没给的字段保持不动。
+ *
+ * **传 null = 删掉这个字段**。JSON 存不下 undefined，所以「把图标去掉」
+ * 这件事没法用 undefined 表达——写成 icon: undefined 的话
+ * JSON.stringify 会把它整个吞掉，旧图标下次读回来又回来了。
+ */
 export async function patchSticky(
   dir: string,
   id: string,
-  patch: Partial<Omit<StickyMeta, 'id' | 'createdAt'>>,
+  patch: StickyPatch,
 ): Promise<StickyMeta | null> {
   return serialize(async () => {
     const metas = await readIndex(dir)
     const i = metas.findIndex((m) => m.id === id)
     if (i < 0) return null
-    metas[i] = { ...metas[i], ...patch }
+    const next = { ...metas[i] } as Record<string, unknown>
+    for (const [k, v] of Object.entries(patch)) {
+      if (v === null) delete next[k]
+      else if (v !== undefined) next[k] = v
+    }
+    metas[i] = next as unknown as StickyMeta
     await writeIndex(dir, metas)
     return metas[i]
   })
+}
+
+/**
+ * 重命名 = 改正文第一行。
+ *
+ * 便签的标题本来就是「第一行」，另设一个 name 字段会让列表上显示的名字
+ * 和打开以后看到的第一行对不上——两个名字，迟早有一个是错的。
+ *
+ * 这里不走 writeSticky：那个函数动正文时会把 closedAt 撤掉（认为这张纸
+ * 重新开张了）。但给一张已经收起来的便签改个名字，不该让它跳回「在桌面」。
+ */
+export async function renameSticky(
+  dir: string,
+  id: string,
+  title: string,
+): Promise<{ ok: boolean; error?: string }> {
+  const t = title.replace(/\s+/g, ' ').trim()
+  if (!t) return { ok: false, error: '标题不能为空' }
+
+  const text = await readSticky(dir, id)
+  const lines = text.split(/\r?\n/)
+  const at = lines.findIndex((l) => l.replace(/^[#>\-*\s]+/, '').trim())
+  const next = at < 0 ? t : (lines.splice(at, 1, t), lines.join('\n'))
+
+  await fs.mkdir(dir, { recursive: true })
+  await writeAtomic(path.join(dir, `${id}.md`), next)
+  await serialize(async () => {
+    const metas = await readIndex(dir)
+    const i = metas.findIndex((m) => m.id === id)
+    if (i >= 0) {
+      metas[i].updatedAt = Date.now()
+      await writeIndex(dir, metas)
+    }
+  })
+  return { ok: true }
 }
 
 /**
@@ -368,6 +433,17 @@ export async function removeSticky(dir: string, id: string): Promise<boolean> {
 }
 
 /**
+ * 把标签写成 frontmatter 顶到正文前面。用户自己已经写了 frontmatter
+ * （便签里手打 `---` 块）就不碰它——两段 frontmatter 会让解析器只认第一段，
+ * 用户写的那些字段当场失效。`\---` 也算分隔符，跟导出/预览那边同一个判据。
+ */
+function withTags(text: string, tags: string[]): string {
+  if (!tags.length) return text
+  if (/^(---|\\---)\r?\n/.test(text)) return text
+  return `---\ntags: [${tags.join(', ')}]\n---\n\n${text}`
+}
+
+/**
  * 把一张便签搬进笔记库。
  *
  * 写进 <库>/便签/ 子目录，不散在库根上 —— 便签是速记的产物，
@@ -383,6 +459,11 @@ export async function saveToVault(
   const text = await readSticky(dir, id)
   if (!text.trim()) return { ok: false, error: '这张便签还是空的' }
 
+  /* 便签自己打的标签跟着搬进库里。便签是速记的纸，笔记才是长期存放的地方；
+     标记在搬家这一步丢掉的话，用户在列表里做的那点分类就白做了。 */
+  const tags = (await readIndex(dir)).find((m) => m.id === id)?.tags ?? []
+  const body = withTags(text, tags)
+
   const targetDir = path.join(vaultRoot, '便签')
   try {
     await fs.mkdir(targetDir, { recursive: true })
@@ -396,7 +477,7 @@ export async function saveToVault(
   for (let n = 2; n < 100; n++) {
     try {
       // wx：同名就换下一个，绝不覆盖用户已有的笔记
-      await fs.writeFile(path.join(targetDir, name), text, { encoding: 'utf8', flag: 'wx' })
+      await fs.writeFile(path.join(targetDir, name), body, { encoding: 'utf8', flag: 'wx' })
       const rel = `便签/${name}`
       await patchSticky(dir, id, { savedTo: rel })
       return { ok: true, rel }

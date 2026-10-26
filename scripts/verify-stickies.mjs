@@ -157,6 +157,68 @@ try {
   )
   ok('对账可以把已归档的留在原处', (await S.listStickies(dir)).length >= 2)
 
+  /* ── 重命名 / 标记 ──
+     重命名就是改正文第一行（便签的标题只有一份，另存一个字段迟早对不上）；
+     标签和图标只活在 index.json 里，不碰文件。 */
+  const rn = await S.createSticky(dir)
+  await S.writeSticky(dir, rn.id, '原来的标题\n第二行内容')
+  const rnRes = await S.renameSticky(dir, rn.id, '改过的标题')
+  ok('重命名成功', rnRes.ok === true)
+  const rnText = await S.readSticky(dir, rn.id)
+  ok('重命名改的是第一行', rnText.startsWith('改过的标题'), rnText.split('\n')[0])
+  ok('第二行原样保留', rnText.includes('第二行内容'))
+  eq(
+    '列表标题跟着变',
+    (await S.listStickies(dir)).find((x) => x.id === rn.id)?.title,
+    '改过的标题',
+  )
+  ok('空标题被拒', (await S.renameSticky(dir, rn.id, '   ')).ok === false)
+
+  /* 已归档的便签改名后仍然是归档状态。
+     走 writeSticky 的话它会顺手撤掉 closedAt（正文动过＝重新开张），
+     结果就是「给一张收起来的纸改个名，它自己跳回桌面」。 */
+  await S.patchSticky(dir, rn.id, { closedAt: Date.now() })
+  await S.renameSticky(dir, rn.id, '收起来以后改的名字')
+  ok(
+    '归档的便签改名后不会跳回桌面',
+    !!(await S.listStickies(dir)).find((x) => x.id === rn.id)?.closedAt,
+  )
+
+  const blank = await S.createSticky(dir)
+  await S.renameSticky(dir, blank.id, '起个名字')
+  eq('空便签改名会落成正文', (await S.readSticky(dir, blank.id)).trim(), '起个名字')
+
+  await S.patchSticky(dir, rn.id, {
+    tags: ['docker', '运维'],
+    icon: { kind: 'brand', id: 'docker' },
+  })
+  const tagged = (await S.listStickies(dir)).find((x) => x.id === rn.id)
+  eq('标签存住了', tagged.tags, ['docker', '运维'])
+  eq('图标存住了', tagged.icon, { kind: 'brand', id: 'docker' })
+
+  /* icon: null = 去掉这枚图标。JSON 存不下 undefined ——
+     写 undefined 会被 stringify 吞掉，读回来旧图标又在了。 */
+  await S.patchSticky(dir, rn.id, { icon: null })
+  const unicon = (await S.listStickies(dir)).find((x) => x.id === rn.id)
+  ok('传 null 能把图标去掉', unicon.icon === undefined, JSON.stringify(unicon.icon))
+  eq('去图标不影响标签', unicon.tags, ['docker', '运维'])
+
+  /* 标签跟着搬进库：便签上的分类在「存为笔记」这一步不能丢 */
+  const saved = await S.saveToVault(dir, rn.id, vault)
+  ok('带标签的便签能存进库', saved.ok === true, saved.error)
+  const md = await fs.readFile(path.join(vault, saved.rel ?? 'x'), 'utf8')
+  ok('标签写成了 frontmatter', md.startsWith('---\ntags: [docker, 运维]\n---'), md.slice(0, 40))
+  ok('正文接在 frontmatter 后面', md.includes('收起来以后改的名字'))
+
+  /* 用户自己在便签里写了 frontmatter 的话，不能再顶一段上去 ——
+     两段 frontmatter 会让解析器只认第一段，用户写的字段当场失效 */
+  const own = await S.createSticky(dir)
+  await S.writeSticky(dir, own.id, '---\ntitle: 我自己的\ntags: [x]\n---\n正文')
+  await S.patchSticky(dir, own.id, { tags: ['别加'] })
+  const ownSaved = await S.saveToVault(dir, own.id, vault)
+  const ownMd = await fs.readFile(path.join(vault, ownSaved.rel ?? 'x'), 'utf8')
+  eq('已经有 frontmatter 就不再顶一段', ownMd.match(/^---/g)?.length, 1)
+
   /* ── 删除 ── */
   const before = (await S.listStickies(dir)).length
   await S.removeSticky(dir, b.id)

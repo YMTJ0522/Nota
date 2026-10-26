@@ -130,6 +130,11 @@ interface NoteApi {
   stickyCount(): Promise<number>
   stickyDelete(id: string): Promise<boolean>
   stickyMarkSaved(id: string, rel: string): Promise<boolean>
+  stickyRename(id: string, title: string): Promise<{ ok: boolean; error?: string }>
+  stickyPatch(id: string, patch: StickyPatch): Promise<boolean>
+  stickyText(id: string): Promise<string>
+  stickyReveal(id: string): Promise<boolean>
+  stickySaveToVault(id: string): Promise<{ ok: boolean; rel?: string; error?: string }>
   onStickyCount(cb: (n: number) => void): void
   onStickyError(cb: (msg: string) => void): void
 
@@ -205,6 +210,18 @@ declare global {
     closedAt?: number
     /** 存为笔记后的相对路径 */
     savedTo?: string
+    /** 自己打的标签，不进笔记库的标签表，存为笔记时才写进 frontmatter */
+    tags?: string[]
+    /** 标记图标：技术栈一眼认出来 */
+    icon?: { kind: 'brand' | 'emoji'; id: string }
+    /** 纸色 key（默认 amber）。列表里画那枚小圆点用 */
+    color?: string
+  }
+
+  /** 便签的可改字段。值给 null 表示「去掉这个字段」 */
+  interface StickyPatch {
+    tags?: string[]
+    icon?: { kind: 'brand' | 'emoji'; id: string } | null
   }
 
   /** 桌面级偏好。存在 %LOCALAPPDATA%\Nota\prefs.json，由主进程管 */

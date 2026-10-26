@@ -202,6 +202,9 @@ contextBridge.exposeInMainWorld('api', {
       updatedAt: number
       closedAt?: number
       savedTo?: string
+      tags?: string[]
+      icon?: { kind: 'brand' | 'emoji'; id: string }
+      color?: string
     }[]
   > => ipcRenderer.invoke('sticky:list'),
   stickyNew: (): Promise<{ id: string } | { error: string }> => ipcRenderer.invoke('sticky:new'),
@@ -211,6 +214,19 @@ contextBridge.exposeInMainWorld('api', {
   stickyDelete: (id: string): Promise<boolean> => ipcRenderer.invoke('sticky:delete', id),
   stickyMarkSaved: (id: string, rel: string): Promise<boolean> =>
     ipcRenderer.invoke('sticky:markSaved', id, rel),
+  /** 改标题 = 改正文第一行，标题只有一份，不另存名字 */
+  stickyRename: (id: string, title: string): Promise<{ ok: boolean; error?: string }> =>
+    ipcRenderer.invoke('sticky:rename', id, title),
+  /** 打标签 / 换图标。icon 传 null 是「去掉这枚图标」 */
+  stickyPatch: (
+    id: string,
+    patch: { tags?: string[]; icon?: { kind: 'brand' | 'emoji'; id: string } | null },
+  ): Promise<boolean> => ipcRenderer.invoke('sticky:patch', id, patch),
+  stickyText: (id: string): Promise<string> => ipcRenderer.invoke('sticky:text', id),
+  stickyReveal: (id: string): Promise<boolean> => ipcRenderer.invoke('sticky:reveal', id),
+  /** 存为笔记。落点由主进程决定（当前工作区 → 安装时选的目录 → 文档\Nota） */
+  stickySaveToVault: (id: string): Promise<{ ok: boolean; rel?: string; error?: string }> =>
+    ipcRenderer.invoke('sticky:saveToVault', id),
   /** 便签窗口数量变化（开了一张、关了一张） */
   onStickyCount: (cb: (n: number) => void): void => {
     ipcRenderer.removeAllListeners('sticky:count')
