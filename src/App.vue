@@ -8,6 +8,7 @@ import EditorPane from '@/components/EditorPane.vue'
 import GraphView from '@/components/GraphView.vue'
 import StickyBoard from '@/components/StickyBoard.vue'
 import SearchPalette from '@/components/SearchPalette.vue'
+import CommandPalette from '@/components/CommandPalette.vue'
 import WelcomeView from '@/components/WelcomeView.vue'
 import TourOverlay from '@/components/TourOverlay.vue'
 import WindowControls from '@/components/WindowControls.vue'
@@ -32,6 +33,15 @@ function onLibrary(e: Event) {
  * body 这个标记决定打开时搜不搜正文，面板自己按它改文案和提示。
  */
 const search = ref<{ open: boolean; body: boolean }>({ open: false, body: false })
+
+/**
+ * 命令面板（Ctrl+K）。
+ *
+ * 它不做任何新功能 —— 只是把已经散在侧栏、工具栏、菜单、快捷键里的动作
+ * 排成一列让人能搜到。Nota 的功能已经不少，问题一直是「想不起来在哪」。
+ * 面板自己管内部状态，这里只留一个开关。
+ */
+const cmdk = ref(false)
 
 /**
  * 新手引导。两条路进来：
@@ -102,7 +112,12 @@ function onKey(e: KeyboardEvent) {
   const mod = e.ctrlKey || e.metaKey
   if (!mod) return
 
-  if (e.key === 's') {
+  if (e.key === 'k') {
+    // 开关式：开着再按一次收起来。不做「按了就重开」——
+    // 那会让人以为没反应，其实是把原来的关掉又开了个新的。
+    e.preventDefault()
+    cmdk.value = !cmdk.value
+  } else if (e.key === 's') {
     e.preventDefault()
     store.saveNote()
   } else if (e.key === 'n') {
@@ -307,6 +322,9 @@ onBeforeUnmount(() => {
       :body="search.body"
       @close="search.open = false"
     />
+
+    <!-- 命令面板：一个框，搜命令也搜笔记 -->
+    <CommandPalette :open="cmdk" @close="cmdk = false" />
 
     <!-- 全应用共用的轻提示：把各处抛出的 nota:toast 接住 -->
     <ToastHost />

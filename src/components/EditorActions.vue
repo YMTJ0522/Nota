@@ -103,11 +103,18 @@ function onReposition() {
   if (openMenu.value) place()
 }
 
+/** 命令面板里「当前笔记的版本历史」走这里。
+    那颗按钮只活在本组件里，外面拿不到它的 ref，所以用事件递一个「打开」进来。 */
+function onHistoryRequest() {
+  historyOpen.value = true
+}
+
 onMounted(() => {
   document.addEventListener('pointerdown', onDocPointer)
   document.addEventListener('keydown', onKey)
   window.addEventListener('resize', onReposition)
   window.addEventListener('scroll', onReposition, true)
+  window.addEventListener('nota:history', onHistoryRequest)
 })
 
 onBeforeUnmount(() => {
@@ -115,6 +122,7 @@ onBeforeUnmount(() => {
   document.removeEventListener('keydown', onKey)
   window.removeEventListener('resize', onReposition)
   window.removeEventListener('scroll', onReposition, true)
+  window.removeEventListener('nota:history', onHistoryRequest)
 })
 </script>
 

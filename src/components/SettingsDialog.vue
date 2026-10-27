@@ -324,10 +324,22 @@ function onDocPointer(e: PointerEvent) {
   if ((e.target as HTMLElement | null)?.closest('.st-drop')) return
   presetOpen.value = false
 }
+/**
+ * Esc 一次退一层：先收里面的下拉（模型列表），再关面板本身。
+ *
+ * 以前这里只管下拉 —— 面板本身按 Esc 关不掉，可关闭按钮的 title 一直写着
+ * 「关闭 (Esc)」。承诺了却没做到，用户按一下没反应，会以为界面卡住了。
+ */
 function onEsc(e: KeyboardEvent) {
-  if (!presetOpen.value || e.key !== 'Escape') return
+  if (e.key !== 'Escape') return
+  if (presetOpen.value) {
+    e.stopPropagation()
+    presetOpen.value = false
+    return
+  }
+  if (!props.open) return
   e.stopPropagation()
-  presetOpen.value = false
+  emit('close')
 }
 
 async function testConnection() {
