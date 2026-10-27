@@ -15,9 +15,10 @@
  * 的卡片会让主区变成第二个小编辑器，和独立窗口抢活。点一下就是把它放到
  * 桌面上，和列表里点一条是同一个动作。
  */
-import { computed, ref, watch } from 'vue'
+import { computed, ref } from 'vue'
 import { Check, Plus, StickyNote } from 'lucide-vue-next'
-import { store } from '@/store'
+import { store, touchStickies } from '@/store'
+import { dropFromStickies, stickyStore } from '@/store/stickies'
 import BrandGlyph from '@/components/BrandGlyph.vue'
 import WindowControls from '@/components/WindowControls.vue'
 import PromptDialog from '@/components/PromptDialog.vue'
@@ -26,8 +27,10 @@ import StickyMarkDialog from '@/components/StickyMarkDialog.vue'
 import { paperOf } from '@/sticky/colors'
 import { relTime } from '@/sticky/format'
 
-const items = ref<StickyItem[]>([])
-const loading = ref(false)
+/* 和左边那一列读的是**同一份**内存数据（见 store/stickies.ts）。
+   以前各捏一份快照、靠 stickyRev 互相喊，加第三个入口就得记得也挂 watch。 */
+const items = computed(() => stickyStore.items)
+const loading = computed(() => stickyStore.loading)
 /** 桌面上（开着）的几张往往就是当下要处理的，历史不该一上来占满整面墙 */
 const onlyOpen = ref(false)
 
@@ -47,31 +50,6 @@ const knownTags = computed(() => {
   return [...n.entries()].map(([name, count]) => ({ name, count }))
 })
 
-async function load() {
-  loading.value = true
-  try {
-    items.value = await window.api.stickyList()
-  } catch {
-    items.value = []
-  } finally {
-    loading.value = false
-  }
-}
-
-watch(
-  () => store.state.columnView,
-  (v) => {
-    if (v === 'stickies') void load()
-  },
-  { immediate: true },
-)
-watch(
-  () => store.state.stickyOpen,
-  () => {
-    if (store.state.columnView === 'stickies') void load()
-  },
-)
-
 function toast(text: string) {
   window.dispatchEvent(new CustomEvent('nota:toast', { detail: text }))
 }
@@ -85,13 +63,13 @@ function toastUndo(text: string, run: () => void) {
 async function create() {
   const r = await window.api.stickyNew()
   if ('error' in r) return toast(r.error)
-  await load()
+  touchStickies()
 }
 
 async function open(s: StickyItem) {
   const ok = await window.api.stickyOpen(s.id)
   if (!ok) toast('开不出来了，先关掉几张别的便签')
-  else void load()
+  else touchStickies()
 }
 
 /* ── 右键菜单：和左边那一列是同一个组件、同一套动作 ── */
@@ -100,40 +78,38 @@ function onMenu(e: MouseEvent, s: StickyItem) {
   menu.value = { x: e.clientX, y: e.clientY, id: s.id, saved: !!s.savedTo }
 }
 
-function take(): string {
-  const id = menu.value?.id ?? ''
-  actId.value = id
-  menu.value = null
-  return id
-}
-
-function onMenuOpen() {
-  const id = take()
+/* 菜单动作带 id 进来（见 StickyContextMenu 顶上的注释）：
+   每个动作自己把菜单收掉，不再有一个共享的 take() 去猜「刚才点的是哪张」。 */
+function onMenuOpen(id: string) {
   const s = items.value.find((x) => x.id === id)
   if (s) void open(s)
 }
 
-function onMenuRename() {
-  if (!take()) return
+function onMenuRename(id: string) {
+  if (!id) return
+  actId.value = id
+  menu.value = null
   renameOpen.value = true
 }
 
-function onMenuMark() {
-  if (!take()) return
+function onMenuMark(id: string) {
+  if (!id) return
+  actId.value = id
+  menu.value = null
   markOpen.value = true
 }
 
 /** 墙上手动挑一张开始框选式管理的时候，把用户送回左边那一列 —— 批量动作在那里 */
-function onMenuSelect() {
-  const id = take()
+function onMenuSelect(id: string) {
   if (!id) return
+  menu.value = null
   store.setColumnView('stickies')
   window.dispatchEvent(new CustomEvent('nota:sticky-select', { detail: id }))
 }
 
-async function onMenuCopy() {
-  const id = take()
+async function onMenuCopy(id: string) {
   if (!id) return
+  menu.value = null
   const text = await window.api.stickyText(id)
   if (!text.trim()) return toast('这张便签还是空的')
   try {
@@ -144,24 +120,24 @@ async function onMenuCopy() {
   }
 }
 
-async function onMenuSave() {
-  const id = take()
+async function onMenuSave(id: string) {
   if (!id) return
+  menu.value = null
   const r = await window.api.stickySaveToVault(id)
   if (!r.ok) return toast(r.error ?? '存不进去')
-  await load()
+  touchStickies()
   toastUndo(`已存入 ${r.rel}`, () => void undoArchive([id]))
 }
 
 async function undoArchive(ids: string[]) {
   await window.api.stickyBatchPatch(ids, { closedAt: null })
   for (const id of ids) await window.api.stickyOpen(id)
-  await load()
+  touchStickies()
 }
 
-async function onMenuReveal() {
-  const id = take()
+async function onMenuReveal(id: string) {
   if (!id) return
+  menu.value = null
   const ok = await window.api.stickyReveal(id)
   if (!ok) toast('这张便签还没写过字，磁盘上还没有文件')
 }
@@ -170,11 +146,12 @@ async function onMenuReveal() {
  * 墙上的删除不做两段式：先要右键、再点一次「删除」，路径已经比列表里
  * 那个一碰就中的红叉长得多，再加一道确认就是啰嗦。
  */
-async function onMenuRemove() {
-  const id = take()
+async function onMenuRemove(id: string) {
   if (!id) return
+  menu.value = null
   await window.api.stickyDelete(id)
-  await load()
+  dropFromStickies([id])
+  touchStickies()
   toast('便签已删除')
 }
 
@@ -184,26 +161,24 @@ async function commitRename(v: string) {
   if (!id || !v.trim()) return
   const r = await window.api.stickyRename(id, v)
   if (!r.ok) return toast(r.error ?? '改不了名字')
-  void load()
+  touchStickies()
 }
 
 async function pickIcon(ic: { kind: 'brand' | 'emoji'; id: string } | null) {
   const id = actId.value
   if (!id) return
   await window.api.stickyPatch(id, { icon: ic })
-  const s = items.value.find((x) => x.id === id)
-  if (s) {
-    if (ic) s.icon = { ...ic }
-    else delete s.icon
-  }
+  /* 不就地改 items 里那个对象：这期间任何一次 reloadStickies()（切视图、张数变化）
+     都会把 items 换成新数组，手里的引用就作废了，改在一张没人再渲染的旧
+     卡片上 —— 看着就是「设完图标，墙没变」。发信号，两边都重取一遍。 */
+  touchStickies()
 }
 
 async function setTags(tags: string[]) {
   const id = actId.value
   if (!id) return
   await window.api.stickyPatch(id, { tags })
-  const s = items.value.find((x) => x.id === id)
-  if (s) s.tags = [...tags]
+  touchStickies()
 }
 
 /** 卡片的纸色。整张铺满而不是只染一条边：一面墙上各种颜色的纸，是这一屏的气质 */

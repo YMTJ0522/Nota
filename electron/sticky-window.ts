@@ -13,6 +13,7 @@
 import { BrowserWindow, Menu, screen } from 'electron'
 import path from 'node:path'
 import { existsSync } from 'node:fs'
+import { lockZoom } from './lock-zoom'
 import {
   createSticky,
   listStickies,
@@ -153,6 +154,10 @@ async function mount(meta: StickyMeta, text: string): Promise<BrowserWindow | nu
   })
 
   if (meta.pinned !== false) win.setAlwaysOnTop(true, 'floating')
+
+  /* 便签窗口同样不许被 Ctrl ± / 捏合缩放：一张纸突然变大又变小，
+     比主窗口更吓人（它还是置顶的） */
+  lockZoom(win)
 
   const id = meta.id
   const entry: Live = { win, text, saveTimer: null, done: false }

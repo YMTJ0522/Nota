@@ -21,6 +21,7 @@ import { testConnection, syncWorkspace, onSyncProgress } from './sync'
 import { maybeRunInstaller } from './installer'
 import { ensureVault, ensureVaultAt, readVaultPointer, takeFreshFlag } from './vault'
 import { checkUpdate } from './update'
+import { lockZoom } from './lock-zoom'
 import { readPrefs, writePrefs } from './prefs'
 import {
   closeAllStickies,
@@ -142,6 +143,10 @@ function createWindow() {
   })
 
   win.once('ready-to-show', () => win?.show())
+
+  /* 页面缩放必须关（Ctrl ±、触控板捏合都会把整屏放大再缩小，还会记住比例）。
+     做法与理由见 electron/lock-zoom.ts */
+  lockZoom(win)
 
   /* 点右上角那颗叉不再退出程序，只把它收进托盘 —— 这是便签功能能成立的
      前提。便签的使用场景是「用电脑的时候突然想到一件事」，那个时刻

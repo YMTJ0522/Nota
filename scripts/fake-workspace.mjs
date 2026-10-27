@@ -165,7 +165,7 @@ export function makeInject(opts = {}) {
     '  { key: "tr-2", rel: "读书/书评.md", name: "书评.md", deletedAt: Date.now()-2*86400000, size: 512 },' +
     ' ];' +
     ' window.__imported = [];' +
-    ' window.api = {' +
+    ' const __api = {' +
     `  pickWorkspace: async () => ${JSON.stringify(ws)},` +
     /* 首次启动建库。默认返回空 —— 老脚本都在页面加载后才注入，那时
        bootFirstRun 早就因为找不到这个接口安静退出了，行为跟以前一致；
@@ -280,7 +280,40 @@ export function makeInject(opts = {}) {
     '  appInfo: async () => ({ electron: "33.3.1", chrome: "130.0.6723.191", node: "20.18.0", platform: "win32", arch: "x64" }),' +
     '  minimize: async () => {}, toggleMaximize: async () => false, closeWindow: async () => {},' +
     '  onMaximizeChange: (cb) => { if (window.__maximized) cb(true) },' +
+    /* 便签：主界面上只有一个「开着几张」的计数、一面便签墙和一条右键菜单。
+       这里给一份空列表就够 audit-layout 量版式了；要断言便签行为的是
+       verify-stickies / verify-sticky-ui 两份，它们走真主进程或自己的桩。 */
+    '  stickyCount: async () => (window.__stickies || []).length,' +
+    '  onStickyCount: (cb) => { window.__stickyCountCb = cb },' +
+    '  onStickyError: (cb) => { window.__stickyErrCb = cb },' +
+    '  stickyList: async () => window.__stickies ?? [],' +
+    '  stickyNew: async () => ({ ok: true, id: "s-new" }),' +
+    '  stickyOpen: async () => true,' +
+    '  stickyText: async () => "",' +
+    '  stickySaveToVault: async () => ({ ok: true, rel: "便签/新便签.md" }),' +
+    '  stickyBatchPatch: async (ids) => ids.length,' +
+    '  stickyBatch: async (ids) => ids.length,' +
+    '  stickyReveal: async () => true,' +
+    '  stickyDelete: async () => true,' +
+    '  stickyDeleteMany: async (ids) => ids.length,' +
+    '  stickyRename: async () => ({ ok: true }),' +
+    '  stickyPatch: async () => ({ ok: true }),' +
+    '  stickyCloseOne: async () => true,' +
+    '  stickyCloseAll: async () => 0,' +
+    '  revealStickies: async () => {},' +
+    '  setActiveRoot: async () => true,' +
     ' };' +
+    /* 兜底：桩里没写的方法不要返回 undefined。
+       以前是直接崩在挂载阶段 —— `window.api.someNewThing()` 抛 TypeError，
+       整个 App 的 setup 中断，页面只剩一半，而巡检脚本照样报「0 个视图有问题」。
+       漏掉的方法记进 __missingApi，脚本可以打出来，但不该让界面挂掉。 */
+    ' window.__missingApi = [];' +
+    ' window.api = new Proxy(__api, {' +
+    '  get(t, k) {' +
+    '    if (k in t) return t[k];' +
+    '    return (...a) => { window.__missingApi.push(String(k)); return Promise.resolve(null) }' +
+    '  },' +
+    ' });' +
     ` window.__maximized = ${opts.maximized ? 'true' : 'false'};` +
     ' const css = document.createElement("style");' +
     ' css.textContent = "*{-webkit-app-region:no-drag !important}";' +

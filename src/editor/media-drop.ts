@@ -14,6 +14,7 @@ import { EditorView } from '@codemirror/view'
 import type { Extension } from '@codemirror/state'
 import { store } from '@/store'
 import { escapeLinkDestination } from './markdown-commands'
+import { tableFromClipboard } from './paste-table'
 
 /** 只接住这两类。拖一个 .zip 进来不该变成一段没人认的 Markdown */
 const MEDIA_RE = /\.(png|jpe?g|gif|webp|bmp|svg|avif|mp4|webm|mov|m4v|ogv|mkv|avi)$/i
@@ -197,6 +198,28 @@ async function absorb(view: EditorView, files: File[], from: number, fromDrop: b
   if (done) toast(done > 1 ? `已存入 ${done} 个文件` : '已存入工作区')
 }
 
+/**
+ * 把一张表写进文档。
+ *
+ * 表格是块级结构：光标停在半行中间时直接塞进去，第一行的竖线会和上一行的
+ * 文字挤在同一段里，marked 就不把它当表格了。所以行中间先换行。
+ * 选区有内容时直接替换 —— 粘贴本来就是「用新的盖掉选中的」。
+ */
+function insertTable(view: EditorView, block: string) {
+  const sel = view.state.selection.main
+  const line = view.state.doc.lineAt(sel.from)
+  const blank = line.text.trim().length === 0
+  const atStart = sel.from === line.from
+  const prefix = blank || atStart ? '' : '\n'
+  const text = prefix + block + '\n'
+  view.dispatch({
+    changes: { from: sel.from, to: sel.to, insert: text },
+    selection: { anchor: sel.from + text.length },
+    scrollIntoView: true,
+    userEvent: 'input.paste',
+  })
+}
+
 export function mediaDrop(): Extension {
   return EditorView.domEventHandlers({
     // 不拦 dragover 的话浏览器默认行为是「禁止放下」，drop 根本不会触发
@@ -230,12 +253,23 @@ export function mediaDrop(): Extension {
 
     paste(event, view) {
       const dt = (event as ClipboardEvent).clipboardData
-      const files = dt ? Array.from(dt.files) : []
-      const media = files.filter((f) => MEDIA_RE.test(f.name) || f.type.startsWith('image/'))
-      if (media.length === 0) return false
-      // 有图就不再走默认粘贴：否则会把图片的文件名当文本插进来
+      if (!dt) return false
+      const media = Array.from(dt.files).filter(
+        (f) => MEDIA_RE.test(f.name) || f.type.startsWith('image/'),
+      )
+      if (media.length) {
+        // 有图就不再走默认粘贴：否则会把图片的文件名当文本插进来
+        event.preventDefault()
+        void absorb(view, media, view.state.selection.main.from, false)
+        return true
+      }
+      /* 没有文件，那可能是一张从网页或 Excel 复制来的表。
+         `tableFromClipboard` 只在「整个剪贴板就是一张表」时才给东西，
+         认不出来就返回 false —— 交回浏览器默认粘贴，纯文本照原样进。 */
+      const table = tableFromClipboard(dt)
+      if (!table) return false
       event.preventDefault()
-      void absorb(view, media, view.state.selection.main.from, false)
+      insertTable(view, table)
       return true
     },
   })

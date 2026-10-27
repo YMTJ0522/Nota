@@ -36,7 +36,8 @@ import {
   Check,
   X,
 } from 'lucide-vue-next'
-import { store } from '@/store'
+import { store, touchStickies } from '@/store'
+import { dropFromStickies, stickyStore } from '@/store/stickies'
 import BrandGlyph from '@/components/BrandGlyph.vue'
 import PromptDialog from '@/components/PromptDialog.vue'
 import StickyContextMenu from '@/components/StickyContextMenu.vue'
@@ -44,8 +45,10 @@ import StickyMarkDialog from '@/components/StickyMarkDialog.vue'
 import { paperOf } from '@/sticky/colors'
 import { relTime } from '@/sticky/format'
 
-const items = ref<StickyItem[]>([])
-const loading = ref(false)
+/* 便签数据只有一份（见 store/stickies.ts）。这里读的是共享对象本身，
+   不是自己那份快照 —— 所以右边那面墙改了什么，这一列不用重新拉就已经变了。 */
+const items = computed(() => stickyStore.items)
+const loading = computed(() => stickyStore.loading)
 /** 已归档的默认收起来：桌面上真正在用的一般就那么几张，历史不该占满一屏 */
 const showArchived = ref(false)
 /** 正在等着二次确认的那一条 */
@@ -154,41 +157,25 @@ const allSel = computed(
   () => visible.value.length > 0 && visible.value.every((s) => selected.value.includes(s.id)),
 )
 
-async function load() {
-  loading.value = true
-  try {
-    items.value = await window.api.stickyList()
-    // 删掉的那些要从选中集里清出去，否则底栏会一直显示「3 张」而列表上只剩一张
-    const alive = new Set(items.value.map((s) => s.id))
+/**
+ * 选中集要跟着数据走：某条被删掉（可能是右边的墙删的）之后，
+ * 它不能继续算在「已选 3 张」里 —— 底栏会显示三张、列表上只剩两张。
+ *
+ * 这是**这一列自己的**显示状态，不是数据同步，所以留在这儿而不是共享模块里。
+ */
+watch(
+  () => stickyStore.items,
+  () => {
+    const alive = new Set(stickyStore.items.map((s) => s.id))
     selected.value = selected.value.filter((id) => alive.has(id))
-  } catch {
-    items.value = []
-  } finally {
-    loading.value = false
     void nextTick(checkTagsMore)
-  }
-}
+  },
+)
 
 watch(
   () => store.state.columnView,
   (v) => {
-    if (v === 'stickies') void load()
-    else exitSelect()
-  },
-  { immediate: true },
-)
-
-/**
- * 便签窗口开了 / 关了，主进程推张数过来（App.vue 存进 store），
- * 张数一变就重取一遍列表。
- *
- * 这里不去挂 ipc 监听：那个通道只有一个位置能挂（preload 里是覆盖式注册），
- * 挂在 App 上、大家读同一个值，才不会互相踢掉。
- */
-watch(
-  () => store.state.stickyOpen,
-  () => {
-    if (store.state.columnView === 'stickies') void load()
+    if (v !== 'stickies') exitSelect()
   },
 )
 
@@ -235,7 +222,7 @@ function toastUndo(text: string, run: () => void) {
 async function open(s: StickyItem) {
   const ok = await window.api.stickyOpen(s.id)
   if (!ok) toast('开不出来了，先关掉几张别的便签')
-  else void load()
+  else touchStickies()
 }
 
 /**
@@ -253,7 +240,7 @@ async function remove(s: StickyItem) {
   confirming.value = null
   if (confirmTimer) window.clearTimeout(confirmTimer)
   await window.api.stickyDelete(s.id)
-  items.value = items.value.filter((x) => x.id !== s.id)
+  dropFromStickies([s.id])
   toast('便签已删除')
 }
 
@@ -332,7 +319,7 @@ async function batchSave() {
     }
   }
   exitSelect()
-  await load()
+  touchStickies()
   if (!done.length) return toast('一张都没存进去，先打开看看是不是空的')
   const text =
     done.length === 1 ? `已存入 ${first}` : `已存入 ${done.length} 张，收进抽屉了`
@@ -354,7 +341,7 @@ async function undoArchive(ids: string[]) {
     const ok = await window.api.stickyOpen(id)
     if (!ok) failed++
   }
-  await load()
+  touchStickies()
   if (failed) toast(`已经放回列表，但有 ${failed} 张没能弹到桌面上（便签开太多了）`)
 }
 
@@ -364,7 +351,7 @@ async function batchArchive() {
   // 开着的走 closeOne（关窗 → finishSticky → 写 closedAt），没开着的本来就是归档态
   for (const id of ids) await window.api.stickyCloseOne(id)
   exitSelect()
-  await load()
+  touchStickies()
   toast(`已收起 ${ids.length} 张`)
 }
 
@@ -382,7 +369,7 @@ function batchDelete() {
   void (async () => {
     await window.api.stickyDeleteMany(ids)
     exitSelect()
-    await load()
+    touchStickies()
     toast(`已删除 ${ids.length} 张`)
   })()
 }
@@ -403,39 +390,37 @@ function closeMenu() {
   menu.value = null
 }
 
-/** 菜单里那些动作都对准右键点中的那一张，顺手把菜单收掉 */
-function take(): string {
-  const id = menu.value?.id ?? ''
-  actId.value = id
-  closeMenu()
-  return id
-}
-
-function onMenuOpen() {
-  const id = take()
+/**
+ * 菜单动作一律**自带 id**：`@mark="onMenuMark"` 收的是菜单报出来的那一张。
+ *
+ * 以前每个动作第一句都是 `take()` —— 回头去读 `menu.value?.id`。可菜单
+ * 收起（`@close` 把 menu 置 null）跟动作是同一轮事件里发生的，谁先谁后
+ * 取决于点击落在哪个节点上。抢在前面时 id 就是空的，动作静默变成空操作：
+ * 「标记里设完图标、点完成，右边没变」正是这么来的 —— 写盘那一步根本没发生。
+ * 菜单是界面状态，动作要的参数不该从界面状态里反查。
+ */
+function onMenuOpen(id: string) {
   const s = items.value.find((x) => x.id === id)
   if (s) void open(s)
 }
 
-function onMenuRename() {
-  if (!take()) return
+function onMenuRename(id: string) {
+  actId.value = id
   markBatch.value = false
   renameOpen.value = true
 }
 
-function onMenuMark() {
-  if (!take()) return
+function onMenuMark(id: string) {
+  actId.value = id
   markBatch.value = false
   markOpen.value = true
 }
 
-function onMenuSelect() {
-  const id = take()
+function onMenuSelect(id: string) {
   if (id) enterSelect(id)
 }
 
-async function onMenuCopy() {
-  const id = take()
+async function onMenuCopy(id: string) {
   if (!id) return
   const text = await window.api.stickyText(id)
   if (!text.trim()) return toast('这张便签还是空的')
@@ -452,22 +437,19 @@ async function onMenuCopy() {
  * 因为搬进库本来就是它的终点；想留着继续写就点提示上那颗「撤销」。
  * 以前只补一枚「已存入」标就走人，桌面上越堆越多已经搬过家的空壳。
  */
-async function onMenuSave() {
-  const id = take()
+async function onMenuSave(id: string) {
   if (!id) return
   const r = await window.api.stickySaveToVault(id)
   if (!r.ok) return toast(r.error ?? '存不进去')
-  await load()
+  touchStickies()
   toastUndo(`已存入 ${r.rel}`, () => void undoArchive([id]))
 }
 
-function onMenuReveal() {
-  const id = take()
+function onMenuReveal(id: string) {
   if (id) void reveal(id)
 }
 
-async function onMenuRemove() {
-  const id = take()
+async function onMenuRemove(id: string) {
   const s = items.value.find((x) => x.id === id)
   if (s) await remove(s)
 }
@@ -479,7 +461,7 @@ async function commitRename(v: string) {
   if (!id || !v.trim()) return
   const r = await window.api.stickyRename(id, v)
   if (!r.ok) return toast(r.error ?? '改不了名字')
-  void load()
+  touchStickies()
 }
 
 /** 图标改动即时生效：关掉弹窗不该把点过的选择弄丢 */
@@ -487,11 +469,10 @@ async function pickIcon(ic: { kind: 'brand' | 'emoji'; id: string } | null) {
   const id = actId.value
   if (!id) return
   await window.api.stickyPatch(id, { icon: ic })
-  const s = items.value.find((x) => x.id === id)
-  if (s) {
-    if (ic) s.icon = { ...ic }
-    else delete s.icon
-  }
+  /* 写完发信号，两边一起重拉（这一列和右边那面墙各捏着一份快照）。
+     就地改手里的对象不行：这期间任何一次 reloadStickies() 都会把它换成新数组，
+     改中的是一张没人再渲染的旧卡片 —— 就是「点了没反应」。 */
+  touchStickies()
 }
 
 /**
@@ -514,13 +495,17 @@ async function setTags(tags: string[]) {
       await window.api.stickyPatch(s.id, { tags: next })
       s.tags = next
     }
+    /* 批量也可能是从墙上进来的（墙上的「选择这张…」会把用户送回这一列），
+       墙那份快照同样得刷 —— 所以信号统一在最后发一次 */
+    touchStickies()
     return
   }
   const id = actId.value
   if (!id) return
   await window.api.stickyPatch(id, { tags })
-  const s = items.value.find((x) => x.id === id)
-  if (s) s.tags = [...tags]
+  /* 同 pickIcon：发信号，让墙和这一列都重拉。批量那条路改的是 `selItems`，
+     它同样是快照 —— 只改它，下一轮 load 就把它冲掉了 */
+  touchStickies()
   // 正在按某个标签筛，而它刚被从最后一张便签上去掉 —— 筛出来的空列表会让人以为丢了东西
   if (tagFilter.value && !items.value.some((x) => x.tags?.includes(tagFilter.value!)))
     tagFilter.value = null

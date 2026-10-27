@@ -216,6 +216,19 @@ interface State {
   columnView: ColumnView
   /** 桌面上开着的便签张数。主进程推过来，侧栏角标和便签列表都读它 */
   stickyOpen: number
+  /**
+   * 「便签数据在磁盘上被改过」的信号。
+   *
+   * 便签的内存副本只有一份（`store/stickies.ts`），所以这里**不再是**
+   * 「每个显示便签的地方都盯着它重拉」那种广播 —— 那套要求每加一个入口就
+   * 记得挂一次 watch，漏掉是静默失效。现在只有一处订阅：共享模块把它翻成
+   * 一次 `reloadStickies()`，读的人读同一个 reactive 对象，自动跟着变。
+   *
+   * 写操作仍然只发这个数（`touchStickies()`），因为它比「谁改的」更简单：
+   * 谁改的都该重拉，不需要区分。加一而不是塞事件，是为了幂等 —— 同一次改动
+   * 连发两次也只是多拉一遍，不会错位。
+   */
+  stickyRev: number
   /** 各栏宽度（拖动分隔线改的就是它们） */
   sidebarWidth: number
   columnWidth: number
@@ -349,6 +362,7 @@ const state = reactive<State>({
   graphOpen: false,
   columnView: 'notes',
   stickyOpen: 0,
+  stickyRev: 0,
   sidebarWidth: 232,
   columnWidth: 296,
   outlineWidth: 176,
@@ -2757,9 +2771,22 @@ function setColumnView(v: ColumnView) {
   localStorage.setItem(COLUMN_KEY, v)
 }
 
+/**
+ * 便签数据改过一笔 —— 写盘之后调一次。
+ *
+ * 它只做一件事：把 `stickyRev` 加一。真正重拉在 `store/stickies.ts` 那唯一
+ * 一处订阅里，拉到的结果是所有摊着便签的地方共用的那一份数据。
+ *
+ * 所以这个函数**不需要读者知道**：加多少个显示便签的界面，都只调它、
+ * 不各自订阅。以前反过来（每处自己 watch 再自己 load），漏一处就
+ * 「这边改了那边不动」，而且是静默的。
+ */
+export function touchStickies() {
+  state.stickyRev++
+}
+
 /* ── 各栏宽度：拖动分隔线改的就是这几个值 ──
-   都带上下限，免得被拖成 0 或者宽到把正文挤没。 */
-export const WIDTH_LIMITS = {
+   都带上下限，免得被拖成 0 或者宽到把正文挤没。 */export const WIDTH_LIMITS = {
   sidebar: { min: 180, max: 420, collapsed: 48 },
   column: { min: 220, max: 560, collapsed: 34 },
   outline: { min: 140, max: 340 },

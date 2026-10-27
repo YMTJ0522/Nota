@@ -11,6 +11,7 @@ import { LanguageDescription, syntaxTree } from '@codemirror/language'
 import type { EditorState, Extension } from '@codemirror/state'
 import { EditorView, keymap } from '@codemirror/view'
 import { fencedCodeLanguages } from './code-languages'
+import { store } from '@/store'
 
 /**
  * 代码块补全。
@@ -24,9 +25,15 @@ import { fencedCodeLanguages } from './code-languages'
  *  写命令笔记时最烦的是「前面写过 `systemctl restart`，这里又想打一遍」；
  *  文档词补全解决的正是这个，而且不需要任何语言服务。
  *
- * 正文（围栏以外）**一个候选都不给**，自动弹和手动唤都没有。
+ * 正文（围栏以外）平时**一个候选都不给**，自动弹和手动唤都没有。
  * 那半套本来是给「中文里想引一下前文术语」准备的，实测没人用得上，
  * 反而在中文输入法组字时不断冒出英文词 —— 删掉比留着更清净。
+ *
+ * **唯一的例外是 `[[`**（双链）：它不是「顺手打出来的一个词」，而是一个
+ * 明确的语法意图——人已经说了「我要引用一篇笔记」。这时候给列表不是打扰，
+ * 不给才怪；而且双链的名字不带目录，同一份工作区里重名很常见，凭记忆手打
+ * 常常指向错的那篇（`resolveWikiNote` 遇到重名会直接判「找不着」）。
+ * 详见下面 wikiCompletion 的注释。
  *
  * 语言骨架刻意只写「语法本身就有的东西」（`if __name__ == "__main__":`、
  * `for f in *; do` 这种），不编具体 API —— 编出来的 API 是假的，
@@ -277,30 +284,153 @@ function snippetOptions(lang: string, token = ''): Completion[] {
     )
 }
 
+/* ── 双链补全（正文） ── */
+
 /**
- * 唯一的补全源。
+ * `[[` 之后、光标之前那一段还没闭合的名字。
  *
- * 只有一种情况给候选：**光标在围栏代码块里**。
- * 正文一律返回 null —— 自动弹不给，Ctrl+Shift+Space 手动唤也不给。
+ * 刻意不含 `]`：光标在 `[[会议记录]]` 的 `]]` 之后时，这段就匹配不上，
+ * 也就不会在一条已经写完的链接后面接着弹候选。
+ *
+ * 也不含 `[`：`[[a[[b` 这种明显是打错了，不去猜它想指哪一段。
  */
-function notaCompletion(ctx: CompletionContext): CompletionResult | null {
+const WIKI_TAIL = /\[\[[^\[\]\n]*/
+
+/** 名字里出现这些字符会把 `[[…]]` 撕开 —— 这种文件宁可不给候选，也别补出一句坏语法 */
+const BAD_NOTE_NAME = /[\[\]|^\\]/
+
+interface NoteName {
+  /** 显示用，也是「名字唯一」时插进正文的内容 */
+  name: string
+  /** 工作区内的相对路径（posix，不带 .md）。重名时插这个 */
+  rel: string
+  /** 所在目录，重名时用来分辨「你说的哪个会议记录」 */
+  dir: string
+}
+
+/**
+ * 工作区里所有笔记。不缓存：`[[` 是低频动作（一天几十次，不像普通打字
+ * 每键都来），而按 `allFiles` 的引用做缓存又得处理重命名、新建、删除三种
+ * 失效，省下来的那点时间还不值这段代码的风险。
+ */
+function noteNames(): NoteName[] {
+  const root = (store.state.root ?? '').replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase()
+  const out: NoteName[] = []
+  for (const f of store.allFiles.value) {
+    if (!/\.md$/i.test(f.name)) continue
+    const name = f.name.replace(/\.md$/i, '')
+    if (BAD_NOTE_NAME.test(name)) continue
+    let rel = f.path.replace(/\\/g, '/')
+    if (root && rel.toLowerCase().startsWith(root + '/')) rel = rel.slice(root.length + 1)
+    rel = rel.replace(/\.md$/i, '')
+    const cut = rel.lastIndexOf('/')
+    out.push({ name, rel, dir: cut >= 0 ? rel.slice(0, cut) : '' })
+  }
+  return out
+}
+
+/** 同名了几篇：只在重名时才需要插路径，也只在重名时才需要显示目录 */
+function baseCounts(list: NoteName[]): Map<string, number> {
+  const n = new Map<string, number>()
+  for (const it of list) {
+    const k = it.name.toLowerCase()
+    n.set(k, (n.get(k) ?? 0) + 1)
+  }
+  return n
+}
+
+function wikiCompletion(ctx: CompletionContext): CompletionResult | null {
+  const m = ctx.matchBefore(WIKI_TAIL)
+  if (!m) return null
+
+  const typed = m.text.slice(2)
+  const needle = typed.toLowerCase()
+  const all = noteNames()
+  if (!all.length) return null
+
+  /* 三段排序：名字以它开头的 → 名字里包含它的 → 只有路径包含它的。
+     打「周报」时最想要的是《周报模板》，不是《2026 年第 3 周报表》。 */
+  const hits: { it: NoteName; rank: number }[] = []
+  for (const it of all) {
+    const low = it.name.toLowerCase()
+    let rank = -1
+    if (!needle) rank = 0
+    else if (low.startsWith(needle)) rank = 0
+    else if (low.includes(needle)) rank = 1
+    else if (it.rel.toLowerCase().includes(needle)) rank = 2
+    if (rank >= 0) hits.push({ it, rank })
+  }
+  if (!hits.length) return null
+
+  hits.sort(
+    (a, b) =>
+      a.rank - b.rank ||
+      a.it.name.length - b.it.name.length ||
+      a.it.rel.localeCompare(b.it.rel, 'zh-Hans-CN'),
+  )
+
+  const dup = baseCounts(all)
+  const options: Completion[] = hits.slice(0, 40).map(({ it, rank }) => {
+    /* 重名的笔记**必须插路径**：resolveWikiNote 对重名不猜（猜错了跳到
+       另一篇上，比报错更糟）。而路径形式它能直接命中。 */
+    const ambiguous = (dup.get(it.name.toLowerCase()) ?? 1) > 1
+    const insert = ambiguous ? it.rel : it.name
+    return {
+      label: it.name,
+      // 重名时把目录亮出来，两条一模一样的名字靠它分辨
+      detail: ambiguous ? it.dir || '根目录' : undefined,
+      type: 'text',
+      sortText: `${rank}${String(hits.length).padStart(3, '0')}`,
+      apply: (view, _c, from, to) => {
+        /* `]]` 通常已经在（closeBrackets 敲第二个 `[` 时就补上了）。
+           在就别再补一对，否则变成 `[[名字]]]]`。 */
+        const doc = view.state.doc
+        const closed = doc.sliceString(to, Math.min(to + 2, doc.length)) === ']]'
+        const text = insert + (closed ? '' : ']]')
+        const end = from + text.length
+        view.dispatch({
+          changes: { from, to, insert: text },
+          // 已经闭合的话光标跳过那对括号：链接写完了，下一句在链接外面
+          selection: { anchor: closed ? Math.min(end + 2, doc.length) : end },
+          userEvent: 'input.complete',
+          scrollIntoView: true,
+        })
+      },
+    }
+  })
+
+  return { from: m.from + 2, options, validFor: /^[^\[\]\n]*$/ }
+}
+
+/* ── 代码块补全 ── */
+
+/** 只有一种情况给代码候选：光标在围栏里。正文的事交给 wikiCompletion */
+function codeCompletion(ctx: CompletionContext, lang: string): CompletionResult | null {
   const { state } = ctx
 
-  // 组字期间直接退出。放在最前面：这时候连 matchBefore 都不该跑。
-  if (composing) return null
-
-  // 先看字，再决定要不要去判断围栏 —— 单字符输入是最高频的按键，
-  // 早退在这里能省掉绝大部分「扫全篇找围栏」的开销。
+  // 先看字，再决定要不要扫全篇：单字符输入是最高频的按键
   const match = ctx.matchBefore(TOKEN_RE)
   const token = match?.text ?? ''
   if (!ctx.explicit && token.length < 2) return null
 
-  const fence = fenceContextAt(state, ctx.pos)
-  if (!fence) return null
-
-  const options = [...snippetOptions(fence.lang, token), ...wordOptions(state, token)]
+  const options = [...snippetOptions(lang, token), ...wordOptions(state, token)]
   if (!options.length) return null
   return { from: match?.from ?? ctx.pos, options, validFor: TOKEN_RE }
+}
+
+/**
+ * 唯一的补全源。
+ *
+ * 分岔只有一条：光标在围栏代码块里 → 代码候选；否则 → 只认 `[[`。
+ * 围栏里**绝不能**走双链那条路：Shell 的 `[[ -f "$f" ]]` 满地都是，
+ * 在那里弹笔记名是把一个正经语法当成引用意图。
+ */
+function notaCompletion(ctx: CompletionContext): CompletionResult | null {
+  // 组字期间直接退出。放在最前面：这时候连围栏都不该去判断。
+  if (composing) return null
+
+  const fence = fenceContextAt(ctx.state, ctx.pos)
+  return fence ? codeCompletion(ctx, fence.lang) : wikiCompletion(ctx)
 }
 
 /**

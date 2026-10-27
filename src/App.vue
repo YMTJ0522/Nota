@@ -184,13 +184,21 @@ onMounted(async () => {
 
   /* 便签张数：主进程推、这里存一份，侧栏角标和便签列表都读它。
      只有一个监听点，所以 preload 那边用 removeAllListeners 覆盖式注册
-     不会互相踢掉 —— 别再在别的组件里也挂一次。 */
-  window.api.onStickyCount((n) => {
+     不会互相踢掉 —— 别再在别的组件里也挂一次。
+
+     三个调用都带可选链：preload 是单独编译的一份产物，版本对不上、
+     或者压根没有（浏览器里直接开 dist 就是这样）时，这里会抛
+     TypeError，setup 一断整屏只剩一半——而且不打红屏，看起来像白屏。
+     少一个角标远好过白屏；真缺方法时下面这句会留个记号，好查。 */
+  if (!window.api) console.warn('[nota] window.api 不存在，preload 没加载上')
+  window.api?.onStickyCount?.((n) => {
     store.state.stickyOpen = n
   })
-  void window.api.stickyCount().then((n) => (store.state.stickyOpen = n))
+  void Promise.resolve(window.api?.stickyCount?.()).then((n) => {
+    if (typeof n === 'number') store.state.stickyOpen = n
+  })
   /* 快捷键按下但便签开不出来（多半是已经开满 12 张），说一句 */
-  window.api.onStickyError((msg) => {
+  window.api?.onStickyError?.((msg) => {
     window.dispatchEvent(new CustomEvent('nota:toast', { detail: msg }))
   })
 
@@ -205,7 +213,9 @@ onMounted(async () => {
 watch(
   () => state.root,
   (root) => {
-    void window.api.setActiveRoot(root)
+    /* 同上，带可选链：这一句是 immediate 的，没有 preload 时会在 setup
+       第一轮就抛，整屏直接停在半渲染状态 */
+    void window.api?.setActiveRoot?.(root)
   },
   { immediate: true },
 )

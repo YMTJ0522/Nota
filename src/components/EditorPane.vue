@@ -965,11 +965,16 @@ function insertNoteRef(rel: string) {
  */
 function resolveWikiNote(name: string): string | null {
   const want = name.replace(/\\/g, '/').replace(/^\/+/, '').replace(/\.md$/i, '')
-  const root = (state.root ?? '').replace(/\\/g, '')
+  const root = (state.root ?? '').replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase()
   const files = store.allFiles.value
-  const full = root ? `${root}\\${want.replace(/\//g, '\\')}.md` : ''
-  if (full) {
-    const hit = files.find((f) => f.path === full || f.path.replace(/\//g, '\\') === full)
+  /* 第一档是**路径形式**，重名的时候全靠它（补全遇到重名插的就是路径）。
+     以前这里写的是 `root.replace(/\\/g, '')` —— 把分隔符删掉而不是统一，
+     拼出来是 `C:Users…笔记.md` 这种四不像，一条也命中不了；于是「选择器
+     给的就是路径，必中」这句话是假的，一切重名的笔记都只能掉到下面那条
+     按名字猜的路上，而按名字猜的规则是「重名就不猜」→ 永远指向空处。 */
+  if (root) {
+    const full = `${root}/${want}.md`
+    const hit = files.find((f) => f.path.replace(/\\/g, '/').toLowerCase() === full)
     if (hit) return hit.path
   }
   const base = want.slice(want.lastIndexOf('/') + 1).toLowerCase()

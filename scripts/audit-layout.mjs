@@ -27,9 +27,15 @@ const INJECT = makeInject({ notes: NOTES, tree: TREE })
 await send('Page.navigate', { url: `http://127.0.0.1:${PORT}/` })
 await sleep(1600)
 await evaluate('localStorage.clear()')
-await send('Page.navigate', { url: `http://127.0.0.1:${PORT}/` })
-await sleep(2000)
-await evaluate(INJECT)
+/* 假 IPC 要在**文档开始执行之前**就挂上。
+   以前是先加载、再 evaluate(INJECT) —— 那第一轮里 App 的 setup 会因为
+   `window.api` 还不存在直接抛出来，界面只挂了一半，而末尾那段「0 个视图
+   有问题」照样打印（它量的是残页）。预注入之后第一轮就是完整的界面，
+   报错数组也可以从干净的零开始数。 */
+await send('Page.addScriptToEvaluateOnNewDocument', { source: INJECT })
+await send('Page.reload')
+await sleep(2200)
+errors.length = 0
 await evaluate("document.querySelector('.cta')?.click()")
 await sleep(1200)
 await evaluate(INJECT)

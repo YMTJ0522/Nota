@@ -96,16 +96,30 @@ ok(
   after.length ? after.at(-1)[1] : '',
 )
 
-/* ── 钉住 / 换色 ── */
-await evaluate(`document.querySelectorAll('header .ico')[0].click()`)
+/* ── 钉住 / 换色 ──
+   头部按钮按 title 找，不按位置找。
+   位置是会变的：2.7.13 把「当前纸色」那颗圆点换成了调色板图标，
+   顺序从 [图钉, 圆点, 笔, 叉] 变成 [调色板, 图钉, 笔, 叉]，
+   按下标点的断言会在没人动过功能的情况下集体报错。 */
+async function clickIco(kw) {
+  return evaluate(`(() => {
+    const bs = [...document.querySelectorAll('header .ico')];
+    const b = bs.find((x) => (x.title || '').includes(${JSON.stringify(kw)}));
+    if (!b) throw new Error('头部没有「' + ${JSON.stringify(kw)} + '」按钮，现有：' + bs.map((x) => x.title).join(' / '));
+    b.click();
+    return b.title;
+  })()`)
+}
+
+await clickIco('钉')
 await sleep(120)
 const pinCall = await evaluate(`(window.__calls || []).filter(c => c[0] === 'pin')`)
 ok('点图钉会调 pin，并且取反', pinCall.length === 1 && pinCall[0][2] === false, JSON.stringify(pinCall))
 
-await evaluate(`document.querySelector('.dot').click()`)
+await clickIco('换纸色')
 await sleep(200)
 const swatches = await evaluate(`document.querySelectorAll('.sw').length`)
-eq('点色点弹出六种纸色', swatches, 6)
+eq('点调色板弹出六种纸色', swatches, 6)
 
 await evaluate(`document.querySelectorAll('.sw')[3].click()`)
 await sleep(160)
@@ -116,12 +130,20 @@ const bg = await evaluate(`getComputedStyle(document.querySelector('.note')).bac
 ok('纸色真的变了（不是只记了个 key）', /rgb\(227, 237, 249\)/.test(bg), bg)
 
 /* ── 存为笔记 ── */
-await evaluate(`document.querySelectorAll('header .ico')[1].click()`)
+await clickIco('存为笔记')
 await sleep(300)
 const saveCall = await evaluate(`(window.__calls || []).filter(c => c[0] === 'save')`)
 ok('点笔按钮会存进笔记库', saveCall.length === 1, JSON.stringify(saveCall))
 const hint = await evaluate(`document.querySelector('.hint')?.textContent || ''`)
 ok('存完给了一句回执', hint.includes('便签/第一行标题.md'), hint)
+
+/* ── 存完自己收起 ──
+   存进库之后 700ms 会自己 close（「搬进库就是终点」）。
+   这一段必须先等它发生并把这次 close 记成基准数：后面测 Esc 时
+   如果从 0 开始数，会自动收起那一次算进去，报出「Esc 关了两回」的假警报。 */
+await sleep(1100)
+const autoClose = await evaluate(`(window.__calls || []).filter(c => c[0] === 'close').length`)
+eq('存完一会儿自己收起来', autoClose, 1)
 
 /* ── Esc 关闭，但组词中不能误关 ── */
 await evaluate(`(() => {
@@ -129,9 +151,10 @@ await evaluate(`(() => {
   ta.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', isComposing: true, bubbles: true }));
 })()`)
 await sleep(150)
-ok(
+eq(
   '中文输入法组词时按 Esc 不关窗口',
-  (await evaluate(`(window.__calls || []).filter(c => c[0] === 'close').length`)) === 0,
+  await evaluate(`(window.__calls || []).filter(c => c[0] === 'close').length`),
+  autoClose,
 )
 
 await evaluate(`(() => {
@@ -140,7 +163,7 @@ await evaluate(`(() => {
 })()`)
 await sleep(200)
 const closeCall = await evaluate(`(window.__calls || []).filter(c => c[0] === 'close')`)
-ok('正常按 Esc 关掉这张便签', closeCall.length === 1, JSON.stringify(closeCall))
+eq('正常按 Esc 关掉这张便签', closeCall.length, autoClose + 1)
 
 /* ── 关之前有没有把最后那一笔写下去 ──
    close 之前必须先 write 一次：直接发 close 的话，主进程手里那份
