@@ -250,7 +250,10 @@ function blocked(c: Command) {
 .cp-mask {
   position: fixed;
   inset: 0;
-  z-index: 72;
+  /* 压在设置 / 版本历史（都是 1000）之上，只在 Toast（2000）之下：
+     这两个面板开着的时候按 Ctrl+K，面板也得看得见 ——
+     否则会出现「屏幕上什么都没变，但按 Esc 会关掉一个看不见的东西」。 */
+  z-index: 1100;
   display: flex;
   align-items: flex-start;
   justify-content: center;

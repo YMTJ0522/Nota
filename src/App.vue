@@ -117,6 +117,10 @@ function onKey(e: KeyboardEvent) {
     // 那会让人以为没反应，其实是把原来的关掉又开了个新的。
     e.preventDefault()
     cmdk.value = !cmdk.value
+    /* 新手引导正摊在屏幕上时，这一下等于「我要自己动手了」，让它让路。
+       不让的话，引导那层（z-index 900）会盖在面板上：挖洞气泡恰好压在
+       列表中间，看得见一半、点不到 —— 第一次装完就撞上。 */
+    if (cmdk.value) tourOpen.value = false
   } else if (e.key === 's') {
     e.preventDefault()
     store.saveNote()

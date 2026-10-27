@@ -74,6 +74,13 @@
   --n-selection: oklch(from var(--n-accent) 87% calc(c * 0.42) h);
   --n-selection-fg: #1b1f1c;
   --n-active-line: color-mix(in oklab, var(--n-accent) 5%, transparent);
+  /* 行悬停 / 键盘选中行的底。
+     这两个名字早就在搜索面板和命令面板里被引用了，但一直没在这里定义过——
+     未定义的 var() 整条声明会被丢掉，于是「选中行」从来没有任何底色，
+     按 ↑↓ 看不出走到第几行。用暖黑（跟 --n-mask 同色系）不用纯黑，
+     压在纸色底上不发灰。 */
+  --n-hover: rgba(30, 28, 24, 0.045);
+  --n-active: rgba(30, 28, 24, 0.075);
   --n-code-bg: #f1efe9;
   --n-code-fg: #7a4a2b;
   /* 荧光笔高亮：够亮能一眼看到，但不能盖住黑字的笔画 */
@@ -211,6 +218,10 @@
   --n-selection: oklch(from var(--n-accent) 48% calc(c * 0.8) h);
   --n-selection-fg: #f4f7f3;
   --n-active-line: color-mix(in oklab, var(--n-accent) 6%, transparent);
+  /* 深色下反过来用白：黑压黑看不出来，白一点点就够。
+     9% 是「一眼能定位到哪一行」但不抢文字的分量。 */
+  --n-hover: rgba(255, 255, 255, 0.05);
+  --n-active: rgba(255, 255, 255, 0.09);
   --n-code-bg: #191a1e;
   --n-code-fg: #e0b48c;
   /* 深色下用低亮度琥珀，压得住又不刺眼 */

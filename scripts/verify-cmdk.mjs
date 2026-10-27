@@ -96,6 +96,16 @@ eq('命令没有重复', new Set(all.map((r) => r.t)).size, all.length)
 eq('空输入时只有一个分段「全部命令」', JSON.stringify(await secs()), JSON.stringify(['全部命令']))
 ok('有快捷键的命令把键位标出来了', all.some((r) => r.kbd === 'Ctrl+N'), JSON.stringify(all.filter((r) => r.kbd).map((r) => r.kbd)))
 
+/* 新手引导那层是 900，设置 / 版本历史是 1000。命令面板必须比它们都高，
+   否则第一次装完按 Ctrl+K，面板会被引导的挖洞气泡压住 —— 看得见一半、点不到。 */
+const zIndex = await evaluate(`parseInt(getComputedStyle(document.querySelector('.cp-mask')).zIndex, 10)`)
+ok('面板层级高过新手引导与设置（>1000）', zIndex > 1000, `z-index=${zIndex}`)
+
+/* --n-active 早先根本没定义，`.cp-row.on` 的底色一直是透明的：
+   按 ↑↓ 完全看不出走到哪一行。这条断言挡住它再退回去。 */
+const onBg = await evaluate(`getComputedStyle(document.querySelector('.cp-row.on')).backgroundColor`)
+ok('选中的那一行有可见底色', onBg !== 'rgba(0, 0, 0, 0)' && onBg !== 'transparent', `background=${onBg}`)
+
 const offRows = all.filter((r) => r.off)
 ok('还没打开笔记时，依赖笔记的命令置灰', offRows.length > 0, `置灰 ${offRows.length} 条`)
 ok(
