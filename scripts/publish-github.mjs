@@ -205,24 +205,39 @@ step(`建 Release ${TAG}`, () => {
 })
 
 /* ── 4. 传安装包 ── */
-step('传安装包', () => {
-  /* 传之前先看这条 Release 上已经有哪几个文件：重跑时同名再传一遍会 422，
-     而脚本要能反复重跑。同名且大小一致的直接跳过。 */
-  let existing = []
-  if (!DRY && releaseId) {
-    const g = curlWithToken(
-      [`https://api.github.com/repos/${REPO}/releases/${releaseId}/assets`],
-      TOKEN,
-    )
-    try {
-      const arr = JSON.parse(g.out)
-      if (Array.isArray(arr)) existing = arr
-    } catch { /* 取不到就当空的，后面照传 */ }
-  }
 
+/* 这条 Release 上现在挂了哪些文件。重跑时同名再传一遍会 422，传之前得先看；
+   传完之后也要再看一眼 —— 判成没成的唯一依据是 state。 */
+function listAssets() {
+  if (DRY || !releaseId) return []
+  const g = curlWithToken(
+    [`https://api.github.com/repos/${REPO}/releases/${releaseId}/assets`],
+    TOKEN,
+  )
+  try {
+    const arr = JSON.parse(g.out)
+    return Array.isArray(arr) ? arr : []
+  } catch {
+    return [] /* 取不到就当空的，后面照传 */
+  }
+}
+
+const dropAsset = (id) =>
+  curlWithToken(
+    ['-X', 'DELETE', `https://api.github.com/repos/${REPO}/releases/assets/${id}`],
+    TOKEN,
+  )
+
+/* 单次上传的时间上限。这条链路正常时两三分钟传完 68MB，最慢实测 539 秒
+   （2026-10-27 那次，全程 130KB/s）。给 25 分钟上限，是为了别把「慢」误判成
+   「死」—— 之前用它当 240 秒，慢一点就被自己掐断重来，永远传不完。 */
+const UPLOAD_TRIES = 2
+const UPLOAD_MAX = 1500
+
+step('传安装包', () => {
   for (const f of FILES) {
     const size = fs.statSync(path.join(root, f.file)).size
-    const hit = existing.find((a) => a.name === f.name)
+    const hit = listAssets().find((a) => a.name === f.name)
     if (hit) {
       /* state 必须是 uploaded 才算数。上传被中断（代理断在半路）时，
          GitHub 会把这条记录留下，state 停在 starter、size 却是最终大小 ——
@@ -233,32 +248,63 @@ step('传安装包', () => {
         continue
       }
       console.log(`  ${f.name} 上次没传完（state=${hit.state}），删掉重传`)
-      const d = curlWithToken(
-        ['-X', 'DELETE', `https://api.github.com/repos/${REPO}/releases/assets/${hit.id}`],
-        TOKEN,
-      )
-      if (d.code !== 0) {
+      const d = dropAsset(hit.id)
+      if (!DRY && d.code !== 0) {
         console.error(`  删旧资源失败：`, (d.out || '').trim().slice(0, 200))
         process.exit(1)
       }
     }
+
     const url = `https://uploads.github.com/repos/${REPO}/releases/${
       releaseId ?? 'LATEST'
     }/assets?name=${f.name}`
-    const r = curlWithToken(
-      [
-        '-X', 'POST',
-        '-H', 'Content-Type: application/octet-stream',
-        '--data-binary', `@${f.file}`,
-        url,
-      ],
-      TOKEN,
-    )
-    if (!DRY && r.code !== 0) {
-      console.error(`  ${f.name} 上传失败：`, (r.out || '').trim().slice(0, 300))
+
+    let ok = false
+    for (let i = 1; i <= UPLOAD_TRIES && !ok; i++) {
+      const t0 = Date.now()
+      const r = curlWithToken(
+        [
+          /* 这两条参数是 2026-10-27 试出来的，缺了就会「连上了但一个字节不发」：
+             curl 默认用 HTTP/2，且大于 1KB 的请求体会先发 Expect: 100-continue，
+             本机 MITM 代理这两样都处理不好 —— 报 schannel: timed out sending
+             data (bytes sent: 0)，每次白等满 max-time。4 字节的小文件能传，
+             71MB 的一个字节都过不去，所以一直以为是「网络卡」。 */
+          '--http1.1',
+          '-H', 'Expect:',
+          '-X', 'POST',
+          '--max-time', String(UPLOAD_MAX),
+          '-H', 'Content-Type: application/octet-stream',
+          '--data-binary', `@${f.file}`,
+          url,
+        ],
+        TOKEN,
+      )
+      const secs = ((Date.now() - t0) / 1000).toFixed(0)
+      if (DRY) {
+        ok = true
+        break
+      }
+      /* curl 的退出码不算数：本机 MITM 代理会把 POST 的响应截成半截，
+         这时候 curl 报错、可文件其实已经上去了。只认 state。 */
+      const after = listAssets().find((a) => a.name === f.name)
+      if (after && after.state === 'uploaded' && Number(after.size) === size) {
+        ok = true
+        break
+      }
+      const why = (r.out || '').trim().split('\n').pop().slice(0, 120)
+      console.log(
+        `  第 ${i} 次没成（${secs}s，${after ? `state=${after.state}` : '没有记录'}）：${why}`,
+      )
+      if (after) dropAsset(after.id)
+    }
+    if (!ok) {
+      console.error(
+        `  ${f.name} 连传 ${UPLOAD_TRIES} 次都没成，网络这会儿不行；` +
+          '前面几步已经做完，网络好了再执行同一条命令即可（会跳过已完成的）',
+      )
       process.exit(1)
     }
-    console.log(`  ${DRY ? '（dry）' : '✓'} ${f.name}`)
+    console.log(`  ✓ ${f.name}`)
   }
 })
 
