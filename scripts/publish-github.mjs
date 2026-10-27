@@ -145,6 +145,31 @@ if (!NO_PUSH) {
 /* ── 3. 建 Release ── */
 let releaseId = null
 step(`建 Release ${TAG}`, () => {
+  /** 按 tag 取回一条已经建好的 Release。拿不到（还没建 / 网络抖）就返回 null */
+  const fetchByTag = () => {
+    const g = curlWithToken([`https://api.github.com/repos/${REPO}/releases/tags/${TAG}`], TOKEN)
+    try {
+      return JSON.parse(g.out)
+    } catch {
+      return null
+    }
+  }
+
+  /* 先问一句「是不是已经建过了」，再决定要不要 POST。
+     以前是「先 POST，失败再看 already_exists」—— 这条路上有个坑：本机代理
+     偶尔把 POST 的响应截成半截 JSON，`JSON.parse` 直接失败，于是明明建成功
+     了却报「建 Release 失败」，重跑一次又要靠 already_exists 那个字符串兜底，
+     而它同样要求响应体完整。先查后建不看响应长什么样，结果只认 tag 上的事实。 */
+  if (!DRY) {
+    const existing = fetchByTag()
+    if (existing?.id) {
+      releaseId = existing.id
+      console.log(`  Release ${TAG} 已经在了，续传安装包`)
+      console.log(`  ✓ https://github.com/${REPO}/releases/tag/${TAG}`)
+      return
+    }
+  }
+
   const body = JSON.stringify({
     tag_name: TAG,
     name: `Nota ${VERSION}`,
@@ -166,19 +191,12 @@ step(`建 Release ${TAG}`, () => {
     TOKEN,
   )
   try { fs.unlinkSync(payloadPath) } catch { /* 无所谓 */ }
+
   let rel = null
-  try { rel = JSON.parse(r.out) } catch { /* 下面统一报错 */ }
-  /* 422 already_exists：上一次其实建成功了，只是响应被代理吞掉（本机会这样），
-     重跑时不该当成失败。改为按 tag 取回那条 Release 接着传包。 */
-  if (!DRY && (!rel || !rel.id) && /already_exists/.test(r.out || '')) {
-    const g = curlWithToken(
-      [`https://api.github.com/repos/${REPO}/releases/tags/${TAG}`],
-      TOKEN,
-    )
-    try { rel = JSON.parse(g.out) } catch { /* 下面统一报错 */ }
-    if (rel?.id) console.log(`  Release ${TAG} 已存在，改为续传安装包`)
-  }
-  if (!DRY && (!rel || !rel.id)) {
+  try { rel = JSON.parse(r.out) } catch { /* 下面再问一次 */ }
+  // 响应不可信就回到「tag 上有没有」，这一步才是结论
+  if (!DRY && !rel?.id) rel = fetchByTag()
+  if (!DRY && !rel?.id) {
     console.error('  建 Release 失败：', (r.out || '').trim().slice(0, 300))
     process.exit(1)
   }
