@@ -32,6 +32,8 @@ import {
 import {
   toolbarInline,
   toolbarInlineCode,
+  toolbarHighlight,
+  highlightColors,
   toolbarBlockPrefix,
   toolbarHeading,
   toolbarLink,
@@ -93,6 +95,7 @@ function run(fn: (view: EditorView) => void) {
    工具栏里再挂一个入口只会让人以为它跟「加粗」是一类东西。 */
 type MenuId =
   | 'heading'
+  | 'highlight'
   | 'reference'
   | 'image'
   | 'note'
@@ -106,8 +109,20 @@ type MenuId =
 
 /** 顺序即工具栏从左到右的顺序，方向键切换也按它 */
 const MENU_ORDER: Exclude<MenuId, null>[] = [
-  'heading', 'reference', 'image', 'note', 'code', 'chart', 'table', 'math', 'block', 'callout',
+  'heading', 'highlight', 'reference', 'image', 'note', 'code', 'chart', 'table', 'math', 'block', 'callout',
 ]
+
+/* 五支荧光笔。黄色的色块直接吃 --n-mark，其余四支各有自己的 token，
+   明暗两套主题里各配一次（见 tokens.css）——色块和预览里的底色必须是同一个变量，
+   否则「菜单里挑的那个颜色」和「正文里出现的颜色」会对不上。 */
+const HL_LABEL: Record<string, { label: string; kbd: string; bg: string }> = {
+  yellow: { label: '黄色', kbd: '==文字==', bg: 'var(--n-mark)' },
+  green: { label: '绿色', kbd: '=={green}文字==', bg: 'var(--n-mark-green)' },
+  blue: { label: '蓝色', kbd: '=={blue}文字==', bg: 'var(--n-mark-blue)' },
+  rose: { label: '粉色', kbd: '=={rose}文字==', bg: 'var(--n-mark-rose)' },
+  purple: { label: '紫色', kbd: '=={purple}文字==', bg: 'var(--n-mark-purple)' },
+}
+const hlList = highlightColors().map((c) => ({ color: c, ...HL_LABEL[c] }))
 
 const openMenu = ref<MenuId>(null)
 
@@ -389,9 +404,43 @@ function insertTable(rows: number, cols: number) {
       <button class="tb-btn" title="删除线 (Ctrl+Shift+X)" @click="run((v) => toolbarInline(v, 'strikethrough'))">
         <Strikethrough :size="ICON" :stroke-width="STROKE" />
       </button>
-      <button class="tb-btn" title="高亮 (Ctrl+Shift+H)" @click="run((v) => toolbarInline(v, 'highlight'))">
-        <Highlighter :size="ICON" :stroke-width="STROKE" />
-      </button>
+      <!-- 高亮：和其它下拉一样是**一颗**按钮（图标 + 内嵌箭头），
+           点开才选色。曾经拆成「本体直接涂黄 + 单独一颗小箭头」两格，
+           结果是这一组在工具栏里比谁都宽、还像个半拉断开的控件，
+           和旁边「标题」「链接」「代码」全都对不上。统一成一体。 -->
+      <div :ref="wrapRef('highlight')" class="tb-group tb-menu-wrap">
+        <button
+          class="tb-btn"
+          :class="{ on: openMenu === 'highlight' }"
+          title="高亮（可选颜色，Ctrl+Shift+H 直接涂黄）"
+          @click="toggle('highlight')"
+        >
+          <Highlighter :size="ICON" :stroke-width="STROKE" />
+          <ChevronDown class="caret" :size="10" :stroke-width="2" />
+        </button>
+        <Teleport to="body">
+          <div
+            v-if="openMenu === 'highlight'"
+            :ref="menuRef('highlight')"
+            class="tb-menu tb-menu--float n-menu"
+            :style="menuStyle"
+          >
+            <button
+              v-for="c in hlList"
+              :key="c.color"
+              class="tb-item n-menu-item"
+              :data-hl="c.color"
+              @click="pick((v) => toolbarHighlight(v, c.color))"
+            >
+              <span class="tb-dot-row">
+                <i class="tb-dot" :style="{ background: c.bg }" />
+                {{ c.label }}
+              </span>
+              <span class="kbd">{{ c.kbd }}</span>
+            </button>
+          </div>
+        </Teleport>
+      </div>
       <button class="tb-btn" title="行内代码 (Ctrl+E)" @click="run((v) => toolbarInlineCode(v))">
         <Code :size="ICON" :stroke-width="STROKE" />
       </button>

@@ -256,6 +256,67 @@
   white-space: nowrap;
 }
 
+/* ── Front Matter 属性卡 ──
+   源码里是英文 YAML（工具栏「Front Matter」插的那一段），预览里换成中文。
+   做成一张很轻的卡：读者要看的是正文，元数据只是抬头，不该抢眼。
+   配色跟代码块同一套（block-bg / block-line），它们都是「正文之外的块」。 */
+.md-body .pv-fm {
+  margin: 0 0 1.7em;
+  padding: 0.68em 1em 0.72em;
+  background: var(--n-block-bg);
+  border: 1px solid var(--n-block-line);
+  border-radius: 10px;
+  font-size: 0.94em;
+}
+.md-body .pv-fm-row {
+  display: flex;
+  align-items: baseline;
+  gap: 0.9em;
+  padding: 0.2em 0;
+}
+.md-body .pv-fm-k {
+  flex: 0 0 auto;
+  /* 两到三个字的标签对齐成一列，值才不会参差 */
+  min-width: 3.6em;
+  color: var(--n-fg-dim);
+  font-size: 0.9em;
+  letter-spacing: 0.02em;
+  -webkit-user-select: none;
+  user-select: none;
+}
+.md-body .pv-fm-v {
+  flex: 1 1 auto;
+  /* 长 URL / 长标题要能折行，而不是把卡片撑破 */
+  min-width: 0;
+  color: var(--n-fg);
+  overflow-wrap: anywhere;
+}
+.md-body .pv-fm-row.is-title .pv-fm-v {
+  font-size: 1.16em;
+  font-weight: 600;
+}
+.md-body .pv-fm-none {
+  color: var(--n-fg-faint);
+}
+/* 标签胶囊自己带一层底 + 一道描边：只靠 accent-soft 在深色下几乎看不见 */
+.md-body .pv-fm-tag,
+.md-body .pv-fm-item {
+  display: inline-block;
+  margin: 0 0.4em 0.15em 0;
+  padding: 0.02em 0.5em;
+  border-radius: 999px;
+  background: color-mix(in oklab, var(--n-accent) 18%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--n-accent) 26%, transparent);
+  color: color-mix(in oklab, var(--n-accent) 62%, var(--n-fg));
+  font-size: 0.92em;
+  line-height: 1.7;
+}
+.md-body .pv-fm-item {
+  background: var(--n-hover);
+  box-shadow: inset 0 0 0 1px var(--n-line);
+  color: var(--n-fg-dim);
+}
+
 /* ── 块 ID `^名称` ──
    给一段内容起的名字，别处用 `[[#^名称]]` 指过来。
    比正文淡一号，既不抢眼也不会读着读着失踪。 */
@@ -576,6 +637,34 @@
     border-color 0.14s ease,
     background 0.14s ease;
 }
+
+/* 有待办的这一行不画项目符号 —— 勾选框自己就是符号，
+   两个并排的话左边会多出一个圆点，文字被推得比别的列表项远一截。
+   grid 两列是为了折行：第二行必须贴着文字列，而不是绕回勾选框下面。
+   松散列表（条目之间空一行）里的勾选框会被包进 <p>，两种结构都得认。 */
+.md-body li:has(> .pv-task),
+.md-body li:has(> p:first-child > .pv-task) {
+  list-style: none;
+  display: grid;
+  grid-template-columns: 15px minmax(0, 1fr);
+  column-gap: 0.45em;
+  align-items: start;
+}
+/* 让勾选框的中线落在首行文字的中线上。用 lh 算而不是写死像素：
+   正文行高会随字号/缩进设置变，写死的话换个字号就歪。 */
+.md-body li:has(> .pv-task) > .pv-task,
+.md-body li:has(> p:first-child > .pv-task) > p:first-child > .pv-task {
+  margin: calc((1lh - 15px) / 2) 0 0;
+  vertical-align: top;
+}
+/* 已完成 = 划线 + 压淡。划在 li 上，勾选框是 inline-flex（原子行内盒），
+   装饰线不会穿进它里面；显式再关一次是防别的主题把它打开。 */
+.md-body li:has(> .pv-task.on) {
+  color: var(--n-fg-faint);
+  text-decoration: line-through;
+  text-decoration-thickness: 1px;
+  text-decoration-color: color-mix(in oklab, var(--n-fg) 38%, transparent);
+}
 .md-body .pv-task:hover {
   border-color: var(--n-accent);
 }
@@ -626,12 +715,28 @@
   font-family: var(--n-font-mono);
   font-size: 0.84em;
 }
-/* ── 高亮与公式 ── */
+/* ── 高亮与公式 ──
+   `==文字==` 是黄笔；想换颜色写成 `=={green}文字==`，data-c 在这里接上对应的笔。 */
 .md-body .pv-mark {
   padding: 0.08em 0.15em;
   border-radius: 3px;
   color: var(--n-fg);
   background: var(--n-mark);
+  /* 高亮是行内底色，跨行折行时别把上一行的底带到下一行开头去 */
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+}
+.md-body .pv-mark[data-c='green'] {
+  background: var(--n-mark-green);
+}
+.md-body .pv-mark[data-c='blue'] {
+  background: var(--n-mark-blue);
+}
+.md-body .pv-mark[data-c='rose'] {
+  background: var(--n-mark-rose);
+}
+.md-body .pv-mark[data-c='purple'] {
+  background: var(--n-mark-purple);
 }
 
 /* 未渲染完成时先按等宽源码展示，避免一片空白让人以为丢了内容 */

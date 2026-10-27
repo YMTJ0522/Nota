@@ -289,23 +289,38 @@ const presetIndex = computed(() => {
   const i = AI_PRESETS.findIndex((p) => normUrl(p.baseUrl) === cur)
   return i < 0 ? 0 : i + 1
 })
+
+/**
+ * 用户点过「自定义…」。
+ *
+ * 只靠地址反推不够：地址还停在一套预设上时点「自定义」，反推出来的仍是那套
+ * 预设，于是下拉文字一动不动 —— 点了没反应。可「自定义」又不是一种地址，
+ * 没法从 baseUrl 里读出来，只能当场记一笔。
+ *
+ * 这笔只在**手改地址或重选预设**时清掉：地址变了，反推才是准的。
+ * 不落盘 —— 关掉设置再打开，显示的仍然由地址决定，那才是它真实的样子。
+ */
+const presetCustom = ref(false)
+const isCustom = computed(() => presetCustom.value || !presetIndex.value)
 const presetLabel = computed(() =>
-  presetIndex.value ? AI_PRESETS[presetIndex.value - 1].label : '自定义…',
+  isCustom.value ? '自定义…' : AI_PRESETS[presetIndex.value - 1].label,
 )
 
-/** 「自定义…」不是一个状态、是一件动作：把光标送进接口地址那一格，接着打字就行。
-    它同时是「当前这套地址不匹配任何一个预设」的指示灯 —— 匹配不上时那一行打勾。 */
+/** 「自定义…」是一个动作 + 一枚指示灯：先把光标送进接口地址那一格（接着打字就行），
+    同时把下拉文字切成「自定义」。匹配不上任何预设时那一行本来就会打勾。 */
 const urlInput = ref<HTMLInputElement | null>(null)
 
 function pickPreset(i: number) {
   presetOpen.value = false
   if (i < 0) {
+    presetCustom.value = true
     urlInput.value?.focus()
     urlInput.value?.select()
     return
   }
   const p = AI_PRESETS[i]
   if (!p) return
+  presetCustom.value = false
   store.setAiConfig({ baseUrl: p.baseUrl, model: p.model })
   testResult.value = null
   testModels.value = []
@@ -598,7 +613,7 @@ async function changeWorkspace() {
                     <span class="st-desc">按一次出一张，位置会一张张错开，不会叠在一起</span>
                   </div>
                   <span class="st-keys">
-                    <kbd v-for="k in (desk?.hotkeyNew ?? 'Ctrl+Alt+N').split('+')" :key="k">{{ k }}</kbd>
+                    <kbd v-for="k in (desk?.hotkeyNew ?? 'Alt+N').split('+')" :key="k">{{ k }}</kbd>
                   </span>
                 </div>
 
@@ -608,7 +623,7 @@ async function changeWorkspace() {
                     <span class="st-desc">一键把桌面上的纸都收进抽屉，内容还在，随时能捞回来</span>
                   </div>
                   <span class="st-keys">
-                    <kbd v-for="k in (desk?.hotkeyCloseAll ?? 'Ctrl+Alt+Shift+N').split('+')" :key="k">{{ k }}</kbd>
+                    <kbd v-for="k in (desk?.hotkeyCloseAll ?? 'Alt+Shift+N').split('+')" :key="k">{{ k }}</kbd>
                   </span>
                 </div>
 
@@ -889,23 +904,27 @@ async function changeWorkspace() {
                     <div v-if="presetOpen" class="n-menu n-menu-inline st-drop-menu">
                       <button
                         class="n-menu-item"
-                        :class="{ on: !presetIndex }"
+                        :class="{ on: isCustom }"
                         data-preset="自定义"
                         @click="pickPreset(-1)"
                       >
                         <span class="n-menu-name">自定义…</span>
-                        <Check v-if="!presetIndex" :size="12" :stroke-width="2.2" />
+                        <Check v-if="isCustom" :size="12" :stroke-width="2.2" />
                       </button>
                       <button
                         v-for="(p, i) in AI_PRESETS"
                         :key="p.label"
                         class="n-menu-item"
-                        :class="{ on: presetIndex === i + 1 }"
+                        :class="{ on: !isCustom && presetIndex === i + 1 }"
                         :data-preset="p.label"
                         @click="pickPreset(i)"
                       >
                         <span class="n-menu-name">{{ p.label }}</span>
-                        <Check v-if="presetIndex === i + 1" :size="12" :stroke-width="2.2" />
+                        <Check
+                          v-if="!isCustom && presetIndex === i + 1"
+                          :size="12"
+                          :stroke-width="2.2"
+                        />
                       </button>
                     </div>
                   </div>
@@ -925,6 +944,7 @@ async function changeWorkspace() {
                       type="text"
                       placeholder="http://localhost:11434/v1"
                       spellcheck="false"
+                      @input="presetCustom = false"
                     />
                   </div>
                 </div>
@@ -1688,7 +1708,7 @@ async function changeWorkspace() {
 }
 
 /* 快捷键键帽。拆成一个个 kbd 而不是一整串文字，
-   是因为 Ctrl+Alt+N 里的加号在正文里太小，一眼扫不到边界 */
+   是因为 Alt+N 里的加号在正文里太小，一眼扫不到边界 */
 .st-keys {
   justify-self: end;
   display: inline-flex;

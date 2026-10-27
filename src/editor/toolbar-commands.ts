@@ -19,6 +19,9 @@ import {
   toggleInlineCodeSpan,
   toggleInlineFormat,
   toggleWrap,
+  setHighlightColor,
+  HIGHLIGHT_COLORS,
+  type HighlightColor,
   type MarkdownCommandResult,
 } from "./markdown-commands";
 import {
@@ -76,6 +79,16 @@ export function toolbarInline(
   format: Parameters<typeof toggleInlineFormat>[2],
 ) {
   dispatchResult(view, toggleInlineFormat(doc(view), selection(view), format));
+}
+
+/** 高亮：默认黄笔，也可以指定一支。已高亮的文字再点别的色＝换笔，不会套第二层。 */
+export function toolbarHighlight(view: EditorView, color: HighlightColor = "yellow") {
+  dispatchResult(view, setHighlightColor(doc(view), selection(view), color));
+}
+
+/** 工具栏那排色点要画五种颜色，得知道都有哪些 */
+export function highlightColors(): readonly HighlightColor[] {
+  return HIGHLIGHT_COLORS;
 }
 
 /** Paired wraps beyond the inline marks: `[[ ]]`, `![[ ]]`, `[[#^ ]]`. */

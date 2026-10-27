@@ -3,7 +3,7 @@
  *
  * 便签和笔记库是**两套互不相干的东西**，这是整个功能成立的前提。
  *
- * 按 Ctrl+Alt+N 的那一刻，用户的笔记库可能挂在没插上的移动硬盘里、
+ * 按 Alt+N 的那一刻，用户的笔记库可能挂在没插上的移动硬盘里、
  * 可能刚被换成另一个目录、也可能压根还没建过。如果便签也要先找到库
  * 才能落地，那一下就会弹「找不到工作区」——「想到就记」这件事当场碎掉。
  *
@@ -48,6 +48,14 @@ export interface StickyMeta {
   tags?: string[]
   /** 标记图标（技术栈 / emoji）。列表里一眼认出来，不用读标题 */
   icon?: { kind: 'brand' | 'emoji'; id: string }
+  /**
+   * 贴进来的图片，存的是便签目录下 `media/` 里的文件名。
+   *
+   * 不写进正文：正文底下那层镜像靠行高和 textarea 严格对齐，插一张图
+   * 之后所有行都错位。所以图片挂在纸底部的一条托盘上，正文里一个字不提；
+   * 存为笔记时才转成 Markdown 图片链接。
+   */
+  shots?: string[]
 }
 
 export interface StickyRecord extends StickyMeta {
@@ -511,6 +519,205 @@ export async function removeStickies(dir: string, ids: string[]): Promise<number
   return want.size
 }
 
+/* ── 删除：进回收站 ──
+   和笔记那一边保持同一套语义：删掉不是消失，是「先挪到一边」。
+   便签和库是解耦的（见文件头），所以垃圾桶也放在便签目录自己下面，
+   不塞进某个工作区的 .nota/trash —— 换库、没建库都不该影响便签的生死。
+   回收站页面把它和笔记的条目并在一起显示，恢复时再按 kind 分流。 */
+
+const TRASH = '.trash'
+const trashDir = (dir: string) => path.join(dir, TRASH)
+
+/** 回收站能在页面上认出来的一行。key 带 `sticky:` 前缀，和笔记的 base64 key 区分 */
+export interface StickyTrashEntry {
+  key: string
+  name: string
+  deletedAt: number
+  size: number
+  isSticky: true
+}
+
+/**
+ * 挪进垃圾桶：文件、记录、元信息一起留着。
+ *
+ * 记录（tags / color / icon / 尺寸）也要存一份 —— 只留 .md 的话，恢复回来
+ * 纸色和标签全掉回默认，等于「恢复了一半」。没写过字的便签没有文件，
+ * 但记录还得留着，不然它连一条空纸都不算。
+ */
+export async function trashSticky(dir: string, id: string): Promise<boolean> {
+  const metas = await readIndex(dir)
+  const meta = metas.find((m) => m.id === id)
+  const text = await readSticky(dir, id)
+  const td = trashDir(dir)
+  await fs.mkdir(td, { recursive: true })
+  try {
+    await fs.rename(path.join(dir, `${id}.md`), path.join(td, `${id}.md`))
+  } catch {
+    /* 没写过内容：磁盘上本来就没有文件 */
+  }
+  const title = summarize(text).title
+  await writeAtomic(
+    path.join(td, `${id}.json`),
+    `${JSON.stringify({ id, name: title, deletedAt: Date.now(), meta: meta ?? null }, null, 2)}\n`,
+  )
+  await serialize(async () => {
+    const now = await readIndex(dir)
+    await writeIndex(
+      dir,
+      now.filter((m) => m.id !== id),
+    )
+  })
+  return true
+}
+
+export async function listStickyTrash(dir: string): Promise<StickyTrashEntry[]> {
+  let files: string[] = []
+  try {
+    files = (await fs.readdir(trashDir(dir))).filter((n) => n.endsWith('.json'))
+  } catch {
+    return []
+  }
+  const out: StickyTrashEntry[] = []
+  for (const f of files) {
+    const id = f.slice(0, -5)
+    try {
+      const j = JSON.parse(await fs.readFile(path.join(trashDir(dir), f), 'utf8'))
+      const size = await fs
+        .stat(path.join(trashDir(dir), `${id}.md`))
+        .then((s) => s.size, () => 0)
+      out.push({
+        key: `sticky:${id}`,
+        name: typeof j?.name === 'string' && j.name ? j.name : '空白便签',
+        deletedAt: Number(j?.deletedAt) || 0,
+        size,
+        isSticky: true,
+      })
+    } catch {
+      /* 元信息坏了就跳过这一条 */
+    }
+  }
+  return out.sort((a, b) => b.deletedAt - a.deletedAt)
+}
+
+/**
+ * 从垃圾桶捞回来。
+ *
+ * 恢复的这张纸按「已收起」放回列表：它被删的时候多半是收起的，而直接
+ * 摊到桌面上会让用户以为删掉的东西自己弹出来了。想接着写就点一下。
+ */
+export async function restoreSticky(dir: string, key: string): Promise<boolean> {
+  const id = key.replace(/^sticky:/, '')
+  const td = trashDir(dir)
+  let meta: StickyMeta | null = null
+  try {
+    const j = JSON.parse(await fs.readFile(path.join(td, `${id}.json`), 'utf8'))
+    meta = (j?.meta ?? null) as StickyMeta | null
+  } catch {
+    /* 没有元信息也能把文件捞回来 */
+  }
+  await fs.mkdir(dir, { recursive: true })
+  try {
+    await fs.rename(path.join(td, `${id}.md`), path.join(dir, `${id}.md`))
+  } catch {
+    /* 本来就没有文件 */
+  }
+  await serialize(async () => {
+    const metas = await readIndex(dir)
+    if (metas.some((m) => m.id === id)) return
+    const now = Date.now()
+    metas.push(meta ?? { id, createdAt: now, updatedAt: now, pinned: true, color: 'amber' })
+    await writeIndex(dir, metas)
+  })
+  await fs.rm(path.join(td, `${id}.json`), { force: true })
+  return true
+}
+
+/** 彻底删掉一条（顺带清掉它的图片；不然贴过图的纸删十次就攒下几十兆垃圾） */
+export async function purgeStickyTrash(dir: string, key: string): Promise<boolean> {
+  const id = key.replace(/^sticky:/, '')
+  const td = trashDir(dir)
+  await fs.rm(path.join(td, `${id}.md`), { force: true })
+  await fs.rm(path.join(td, `${id}.json`), { force: true })
+  await removeShotFiles(dir, id)
+  return true
+}
+
+export async function emptyStickyTrash(dir: string): Promise<boolean> {
+  const td = trashDir(dir)
+  let files: string[] = []
+  try {
+    files = await fs.readdir(td)
+  } catch {
+    return true
+  }
+  for (const f of files) {
+    if (!f.endsWith('.json')) continue
+    await removeShotFiles(dir, f.slice(0, -5))
+  }
+  await fs.rm(td, { recursive: true, force: true })
+  return true
+}
+
+/* ── 贴进来的图片 ──
+   正文是纯文本、底下还压着一层必须逐行对齐的镜像（见 StickyNote.vue）。
+   图片要是插进正文，那层的行高就再也对不上了 —— 所以图单独放，
+   挂在纸的底部一条托盘里，正文里只字不提。存为笔记时再转成 Markdown。 */
+
+const MEDIA = 'media'
+
+export function shotPath(dir: string, name: string): string {
+  return path.join(dir, MEDIA, name)
+}
+
+async function removeShotFiles(dir: string, id: string): Promise<void> {
+  const mdir = path.join(dir, MEDIA)
+  let files: string[] = []
+  try {
+    files = await fs.readdir(mdir)
+  } catch {
+    return
+  }
+  for (const f of files) {
+    if (!f.startsWith(`${id}-`)) continue
+    await fs.rm(path.join(mdir, f), { force: true })
+  }
+}
+
+export async function addShot(
+  dir: string,
+  id: string,
+  data: Uint8Array,
+  ext: string,
+): Promise<{ ok: boolean; name?: string; shots?: string[]; error?: string }> {
+  const safeExt = /^[a-z0-9]{2,5}$/i.test(ext) ? ext.toLowerCase() : 'png'
+  const mdir = path.join(dir, MEDIA)
+  await fs.mkdir(mdir, { recursive: true })
+  const name = `${id}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 5)}.${safeExt}`
+  await fs.writeFile(path.join(mdir, name), data)
+  const cur = (await readIndex(dir)).find((m) => m.id === id)
+  const shots = [...(cur?.shots ?? []), name]
+  const r = await patchSticky(dir, id, { shots })
+  if (!r) return { ok: false, error: '这张便签已经不在了' }
+  return { ok: true, name, shots }
+}
+
+export async function removeShot(dir: string, id: string, name: string): Promise<string[]> {
+  // 只认这张纸自己目录下的文件名，别让一条构造出来的路径删到别处去
+  if (!name.startsWith(`${id}-`) || name.includes('/') || name.includes('\\')) {
+    return (await readIndex(dir)).find((m) => m.id === id)?.shots ?? []
+  }
+  await fs.rm(shotPath(dir, name), { force: true })
+  const cur = (await readIndex(dir)).find((m) => m.id === id)
+  const shots = (cur?.shots ?? []).filter((n) => n !== name)
+  await patchSticky(dir, id, { shots })
+  return shots
+}
+
+/** 回收站里的便签在页面上要能看出是便签；恢复后列表也要立刻反映 */
+export function isStickyTrashKey(key: string): boolean {
+  return key.startsWith('sticky:')
+}
+
 /**
  * 把标签写成 frontmatter 顶到正文前面。用户自己已经写了 frontmatter
  * （便签里手打 `---` 块）就不碰它——两段 frontmatter 会让解析器只认第一段，
@@ -543,12 +750,14 @@ export async function saveToVault(
   opts: { archive?: boolean } = {},
 ): Promise<{ ok: boolean; rel?: string; error?: string; archived?: boolean }> {
   const text = await readSticky(dir, id)
-  if (!text.trim()) return { ok: false, error: '这张便签还是空的' }
+  const meta = (await readIndex(dir)).find((m) => m.id === id)
+  const shots = meta?.shots ?? []
+  // 只贴了图、一个字没写，也是一张有内容的纸
+  if (!text.trim() && !shots.length) return { ok: false, error: '这张便签还是空的' }
 
   /* 便签自己打的标签跟着搬进库里。便签是速记的纸，笔记才是长期存放的地方；
      标记在搬家这一步丢掉的话，用户在列表里做的那点分类就白做了。 */
-  const tags = (await readIndex(dir)).find((m) => m.id === id)?.tags ?? []
-  const body = withTags(text, tags)
+  const tags = meta?.tags ?? []
 
   const targetDir = path.join(vaultRoot, '便签')
   try {
@@ -559,6 +768,43 @@ export async function saveToVault(
 
   const firstLine = text.split(/\r?\n/).find((l) => l.trim()) ?? '便签'
   const base = safeName(firstLine)
+
+  /* 图片跟着搬进库的 attachments/。
+     便签目录里的那份图笔记引用不了（不在库里、路径也不算相对），所以复制一份；
+     是复制不是搬走 —— 这张纸如果留着继续写，底下那条托盘不该当场裂掉。 */
+  let imgMd = ''
+  if (shots.length) {
+    const adir = path.join(vaultRoot, 'attachments')
+    try {
+      await fs.mkdir(adir, { recursive: true })
+    } catch (e) {
+      return { ok: false, error: `建不了 attachments 目录：${String(e)}` }
+    }
+    const lines: string[] = []
+    for (let i = 0; i < shots.length; i++) {
+      const src = shotPath(dir, shots[i])
+      const ext = (path.extname(shots[i]) || '.png').toLowerCase()
+      let dstName = `${base}-图${i + 1}${ext}`
+      for (let n = 2; n < 100; n++) {
+        try {
+          await fs.copyFile(src, path.join(adir, dstName), fs.constants.COPYFILE_EXCL)
+          break
+        } catch (e) {
+          const code = (e as NodeJS.ErrnoException).code
+          if (code !== 'EEXIST') {
+            /* 图没了（用户手动清过 media 目录）就跳过它，别让整次存为笔记失败 */
+            dstName = ''
+            break
+          }
+          dstName = `${base}-图${i + 1}-${n}${ext}`
+        }
+      }
+      if (dstName) lines.push(`![](attachments/${dstName})`)
+    }
+    if (lines.length) imgMd = `\n\n${lines.join('\n')}`
+  }
+
+  const body = withTags(text, tags) + imgMd
   let name = `${base}.md`
   for (let n = 2; n < 100; n++) {
     try {

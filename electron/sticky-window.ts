@@ -282,7 +282,7 @@ async function finishSticky(id: string): Promise<void> {
 }
 
 /**
- * 开一张新的。这是快捷键 Ctrl+Alt+N 的落点，会连按连开。
+ * 开一张新的。这是快捷键 Alt+N 的落点，会连按连开。
  *
  * 位置从上一张的右下角接过来，这样连按几次看到的是阶梯，
  * 而不是一摞完全重合的纸。
@@ -327,7 +327,7 @@ export async function openSticky(id: string): Promise<boolean> {
   return !!(await mount({ ...meta, closedAt: undefined }, text))
 }
 
-/** 收起全部（Ctrl+Alt+Shift+N）。逐张关，空白的那些会自己消失 */
+/** 收起全部（Alt+Shift+N）。逐张关，空白的那些会自己消失 */
 export async function closeAllStickies(): Promise<number> {
   const ids = [...live.keys()]
   await Promise.all(ids.map((id) => destroyAndWait(id)))
@@ -372,6 +372,19 @@ export async function setStickyPinned(id: string, pinned: boolean): Promise<bool
  * 换纸色。窗口底色也要跟着换 —— 只改 CSS 的话，窗口缩放时露出的
  * 那一窄条仍然是旧色，看着像个错位。
  */
+/**
+ * 从列表里改了纸色：窗口正开着就跟一下。
+ *
+ * 只写盘的话，那张纸要等下次打开才变色 —— 用户看到的是「右键点了颜色，
+ * 屏幕上一点反应都没有」，很容易以为没生效，于是再点一次别的颜色。
+ */
+export function pushStickyColor(id: string, color: string): void {
+  const entry = live.get(id)
+  if (!entry || entry.win.isDestroyed()) return
+  entry.win.setBackgroundColor(paperOf({ color }))
+  entry.win.webContents.send('sticky:color', color)
+}
+
 export async function setStickyColor(id: string, color: string): Promise<boolean> {
   const entry = live.get(id)
   if (!entry || entry.win.isDestroyed()) return false

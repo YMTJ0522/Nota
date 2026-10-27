@@ -352,7 +352,7 @@ export const commands: Command[] = [
   {
     id: 'sticky.new',
     title: '新建便签',
-    hint: 'Ctrl+Alt+N',
+    hint: 'Alt+N',
     group: '便签',
     icon: StickyNote,
     keys: ['sticky', 'new', 'bianqian', 'xinjian'],

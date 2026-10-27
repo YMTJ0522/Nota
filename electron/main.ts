@@ -30,21 +30,29 @@ import {
   openNewSticky,
   openSticky,
   openStickyCount,
+  pushStickyColor,
   requestCloseSticky,
   saveStickyText,
   setStickyColor,
   setStickyPinned,
 } from './sticky-window'
 import {
+  addShot,
   batchPatch as batchPatchStickies,
+  emptyStickyTrash,
   listStickies,
+  listStickyTrash,
   patchSticky,
+  purgeStickyTrash,
   readSticky,
   reconcileOnBoot,
-  removeStickies,
+  removeShot,
   removeSticky,
   renameSticky,
+  restoreSticky,
   saveToVault as saveStickyToVault,
+  shotPath,
+  trashSticky,
 } from './stickies'
 
 // Vite 注入：开发环境指向 dev server，生产环境加载打包后的 dist
@@ -214,10 +222,21 @@ const LOCAL_APP_DATA =
     ? path.join(process.env.USERPROFILE ?? '', 'AppData', 'Local')
     : app.getPath('appData'))
 
-/** 快捷键。用户可以整组关掉（设置里），但键位不给改：能改的话
-    设置页要做键位录制控件，还得处理各种非法组合，收益不抵成本 */
-const HOTKEY_NEW = 'CommandOrControl+Alt+N'
-const HOTKEY_CLOSE_ALL = 'CommandOrControl+Alt+Shift+N'
+/**
+ * 快捷键。用户可以整组关掉（设置里），但键位不给改：能改的话
+ * 设置页要做键位录制控件，还得处理各种非法组合，收益不抵成本。
+ *
+ * 从 Ctrl+Alt+N 收到 Alt+N：三个键按不出肌肉记忆，而这种「随手记一笔」
+ * 的动作本来就该是一个手势。
+ *
+ * 为什么不是 Ctrl+1：**全局快捷键会抢占系统范围内所有程序的这个键**，
+ * 不只是 Nota 自己的。Ctrl+1 在 Edge / Chrome 里是「切到第一个标签」、
+ * 在 VS Code 里是「切到第一组分栏」—— 注册上去以后，用户在别的窗口里
+ * 按 Ctrl+1 只会弹出一张便签，浏览器那个功能等于被我们吃掉了。
+ * Alt+N 这两处都是空的，代价小得多。
+ */
+const HOTKEY_NEW = 'Alt+N'
+const HOTKEY_CLOSE_ALL = 'Alt+Shift+N'
 
 /** 快捷键没注册上的原因。界面问的时候要能说清楚，而不是静默失效 */
 let hotkeyError = ''
@@ -316,7 +335,7 @@ function buildTray(): void {
     return
   }
   tray = new Tray(img)
-  tray.setToolTip('Nota · 按 Ctrl+Alt+N 记一张便签')
+  tray.setToolTip('Nota · 按 Alt+N 记一张便签')
   tray.on('click', () => showMain())
   void refreshTrayMenu()
 }
@@ -418,6 +437,7 @@ ipcMain.handle('sticky:load', async (_e, id: string) => {
     color: m.color ?? 'amber',
     savedTo: m.savedTo,
     tags: m.tags ?? [],
+    shots: m.shots ?? [],
   }
 })
 
@@ -459,8 +479,15 @@ ipcMain.handle('sticky:closeAll', async () => {
   return n
 })
 ipcMain.handle('sticky:count', () => openStickyCount())
+/* 删除 = 先进回收站，不物理删。
+   和笔记那边一个语义：确认过的删除也不该是不可逆的，用户反悔的窗口
+   就在回收站里。真正抹掉要再走一次「彻底删除」。
+   顺序是先关窗口再挪文件：窗口关掉时会把正文落一次盘，反过来做的话
+   它会在文件已经被挪走之后又写一份出来，回收站里多出一个空条目。 */
 ipcMain.handle('sticky:delete', async (_e, id: string) => {
-  await removeSticky(stickyDirOf(), id)
+  await requestCloseSticky(id)
+  await trashSticky(stickyDirOf(), id)
+  await refreshTrayMenu()
   return true
 })
 
@@ -483,11 +510,16 @@ type StickyPatchIn = {
   tags?: string[]
   icon?: { kind: 'brand' | 'emoji'; id: string } | null
   closedAt?: number | null
+  /* 换纸色。从列表右键改色走这条，不必先把窗口打开 */
+  color?: string
 }
 
-ipcMain.handle('sticky:patch', async (_e, id: string, patch: StickyPatchIn) =>
-  !!(await patchSticky(stickyDirOf(), id, patch)),
-)
+ipcMain.handle('sticky:patch', async (_e, id: string, patch: StickyPatchIn) => {
+  const ok = !!(await patchSticky(stickyDirOf(), id, patch))
+  /* 列表里换的纸色要立刻反映到那张开着的纸上，否则看起来像没生效 */
+  if (ok && patch.color) pushStickyColor(id, patch.color)
+  return ok
+})
 
 /* 一批的同一个改动。多选之后「收起 / 打标签」用它，一次写盘 */
 ipcMain.handle('sticky:batchPatch', async (_e, ids: string[], patch: StickyPatchIn) => {
@@ -505,10 +537,44 @@ ipcMain.handle('sticky:closeOne', async (_e, id: string) => {
 })
 
 ipcMain.handle('sticky:deleteMany', async (_e, ids: string[]) => {
-  const n = await removeStickies(stickyDirOf(), ids)
+  let n = 0
+  for (const id of ids) {
+    await requestCloseSticky(id)
+    if (await trashSticky(stickyDirOf(), id)) n++
+  }
   await refreshTrayMenu()
   return n
 })
+
+/* ── 便签的回收站 ──
+   便签和库是解耦的，垃圾桶就放在便签目录自己下面（见 stickies.ts 文件头），
+   但页面上它和笔记的条目并在一起显示，所以这里的四个口子名字都带 trash。 */
+ipcMain.handle('sticky:trashList', () => listStickyTrash(stickyDirOf()))
+ipcMain.handle('sticky:trashRestore', async (_e, key: string) => {
+  await restoreSticky(stickyDirOf(), key)
+  await refreshTrayMenu()
+  return true
+})
+ipcMain.handle('sticky:trashPurge', (_e, key: string) => purgeStickyTrash(stickyDirOf(), key))
+ipcMain.handle('sticky:trashEmpty', async () => {
+  await emptyStickyTrash(stickyDirOf())
+  return true
+})
+
+/* ── 便签里贴的图片 ──
+   图放在便签目录的 media/ 下，用同一个 nota-media:// 协议读出来，
+   渲染层不需要知道磁盘在哪。 */
+ipcMain.handle('sticky:addShot', async (_e, id: string, data: Uint8Array, ext: string) => {
+  const r = await addShot(stickyDirOf(), id, data, ext)
+  return r
+})
+ipcMain.handle('sticky:removeShot', (_e, id: string, name: string) =>
+  removeShot(stickyDirOf(), id, name),
+)
+/** 一张纸上的图 → 可直接给 <img src> 的地址 */
+ipcMain.handle('sticky:shotUrl', (_e, name: string) =>
+  mediaUrl(shotPath(stickyDirOf(), name)),
+)
 
 /* 便签窗口把正文里扫出来的 `#标签` 挂到这张纸上。
    走「只加不减」：窗口可能停在那儿开着很久，期间用户从列表里给它补过标签，

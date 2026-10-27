@@ -20,6 +20,7 @@ import { Check, Plus, StickyNote } from 'lucide-vue-next'
 import { store, touchStickies } from '@/store'
 import { dropFromStickies, stickyStore } from '@/store/stickies'
 import BrandGlyph from '@/components/BrandGlyph.vue'
+import ConfirmDialog from '@/components/ConfirmDialog.vue'
 import WindowControls from '@/components/WindowControls.vue'
 import PromptDialog from '@/components/PromptDialog.vue'
 import StickyContextMenu from '@/components/StickyContextMenu.vue'
@@ -34,7 +35,13 @@ const loading = computed(() => stickyStore.loading)
 /** 桌面上（开着）的几张往往就是当下要处理的，历史不该一上来占满整面墙 */
 const onlyOpen = ref(false)
 
-const menu = ref<{ x: number; y: number; id: string; saved: boolean } | null>(null)
+const menu = ref<{
+  x: number
+  y: number
+  id: string
+  saved: boolean
+  color?: string
+} | null>(null)
 const actId = ref('')
 const renameOpen = ref(false)
 const markOpen = ref(false)
@@ -44,6 +51,8 @@ const shown = computed(() =>
 )
 const openCount = computed(() => items.value.filter((s) => !s.closedAt).length)
 const actItem = computed(() => items.value.find((s) => s.id === actId.value))
+/** 等着确认删除的那一张。null = 弹窗关着 */
+const delTarget = ref<StickyItem | null>(null)
 const knownTags = computed(() => {
   const n = new Map<string, number>()
   for (const s of items.value) for (const t of s.tags ?? []) n.set(t, (n.get(t) ?? 0) + 1)
@@ -75,7 +84,7 @@ async function open(s: StickyItem) {
 /* ── 右键菜单：和左边那一列是同一个组件、同一套动作 ── */
 function onMenu(e: MouseEvent, s: StickyItem) {
   e.preventDefault()
-  menu.value = { x: e.clientX, y: e.clientY, id: s.id, saved: !!s.savedTo }
+  menu.value = { x: e.clientX, y: e.clientY, id: s.id, saved: !!s.savedTo, color: s.color }
 }
 
 /* 菜单动作带 id 进来（见 StickyContextMenu 顶上的注释）：
@@ -143,16 +152,30 @@ async function onMenuReveal(id: string) {
 }
 
 /**
- * 墙上的删除不做两段式：先要右键、再点一次「删除」，路径已经比列表里
- * 那个一碰就中的红叉长得多，再加一道确认就是啰嗦。
+ * 删除一律先问一句：删掉的东西去哪了、能不能回，只有弹窗说得清。
+ * 两个地方（列表的叉、墙上的右键）走同一个弹窗，说法也一样。
  */
-async function onMenuRemove(id: string) {
+function onMenuRemove(id: string) {
   if (!id) return
   menu.value = null
-  await window.api.stickyDelete(id)
-  dropFromStickies([id])
+  delTarget.value = items.value.find((s) => s.id === id) ?? null
+}
+
+async function commitRemove() {
+  const s = delTarget.value
+  delTarget.value = null
+  if (!s) return
+  await window.api.stickyDelete(s.id)
+  dropFromStickies([s.id])
   touchStickies()
-  toast('便签已删除')
+  toast('便签已移入回收站')
+}
+
+/** 右键换纸色 */
+async function onMenuColor(id: string, key: string) {
+  menu.value = null
+  await window.api.stickyPatch(id, { color: key })
+  touchStickies()
 }
 
 async function commitRename(v: string) {
@@ -237,7 +260,7 @@ function hoverStyle(s: StickyItem) {
           v-for="s in shown"
           :key="s.id"
           class="sb-card"
-          :class="{ archived: !!s.closedAt }"
+          :class="{ archived: !!s.closedAt, menu: menu?.id === s.id }"
           :style="cardStyle(s)"
           @click="open(s)"
           @contextmenu.prevent="onMenu($event, s)"
@@ -279,7 +302,7 @@ function hoverStyle(s: StickyItem) {
         <template v-else>
           <p>这里会摊开你所有的便签</p>
           <p class="sb-sub">
-            任何时候按 <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>N</kbd> 记一张，纸片就贴到这儿
+            任何时候按 <kbd>Alt</kbd>+<kbd>N</kbd> 记一张，纸片就贴到这儿
           </p>
           <button class="sb-empty-btn" @click="create">
             <Plus :size="12" :stroke-width="2.4" />
@@ -300,6 +323,7 @@ function hoverStyle(s: StickyItem) {
       @save="onMenuSave"
       @reveal="onMenuReveal"
       @remove="onMenuRemove"
+      @color="onMenuColor"
     />
 
     <PromptDialog
@@ -322,6 +346,16 @@ function hoverStyle(s: StickyItem) {
       @close="markOpen = false"
       @pick-icon="pickIcon"
       @set-tags="setTags"
+    />
+
+    <ConfirmDialog
+      :open="!!delTarget"
+      title="删除这张便签？"
+      :message="`《${delTarget?.title || delTarget?.preview || '这张便签'}》会被移入回收站，之后还能恢复。`"
+      confirm-text="确认删除"
+      danger
+      @confirm="commitRemove"
+      @cancel="delTarget = null"
     />
   </div>
 </template>
@@ -508,6 +542,14 @@ function hoverStyle(s: StickyItem) {
 }
 .sb-card.archived:hover {
   opacity: 1;
+}
+/* 右键点开菜单的那一张。纸本身有颜色，不能再叠色块（会变脏），
+   用一圈 accent 描边 + 抬起来：一眼就知道菜单在操作它 */
+.sb-card.menu {
+  transform: translateY(-2px);
+  box-shadow:
+    0 0 0 2px var(--n-accent),
+    0 6px 16px rgba(0, 0, 0, 0.16) !important;
 }
 
 .sb-top {

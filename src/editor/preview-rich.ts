@@ -449,10 +449,19 @@ function protectCode(html: string, fn: (s: string) => string): string {
   return parts.map((p, i) => (i % 2 === 1 ? p : fn(p))).join('')
 }
 
-/** 高亮：`==文字==`（marked 不认这个写法，会原样输出） */
+/** 高亮：`==文字==`（marked 不认这个写法，会原样输出）。
+    前面可以跟一个颜色标签：`=={green}文字==`，不写就是默认的黄笔。
+    颜色名用 data-c 带出去而不是写成内联色——同一份文档在明暗两套主题里
+    要各配一支笔（见 markdown.css 的 .pv-mark[data-c]）。 */
+const HL_RE = /==(?:\{([a-z]+)\})?([^=\n]+)==/g
+
 function transformMark(src: string): string {
   return protectCode(src, (s) =>
-    s.replace(/==([^=\n]+)==/g, (_w, text: string) => `<mark class="pv-mark">${text}</mark>`),
+    s.replace(
+      HL_RE,
+      (_w, color: string | undefined, text: string) =>
+        `<mark class="pv-mark"${color ? ` data-c="${color}"` : ''}>${text}</mark>`,
+    ),
   )
 }
 

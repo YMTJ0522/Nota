@@ -225,6 +225,7 @@ contextBridge.exposeInMainWorld('api', {
       tags?: string[]
       icon?: { kind: 'brand' | 'emoji'; id: string } | null
       closedAt?: number | null
+      color?: string
     },
   ): Promise<boolean> => ipcRenderer.invoke('sticky:patch', id, patch),
   /** 一批一起改。多选以后「收起 / 加标签」走这条，只写一次盘 */
@@ -234,8 +235,17 @@ contextBridge.exposeInMainWorld('api', {
       tags?: string[]
       icon?: { kind: 'brand' | 'emoji'; id: string } | null
       closedAt?: number | null
+      color?: string
     },
   ): Promise<number> => ipcRenderer.invoke('sticky:batchPatch', ids, patch),
+  /** 回收站里的便签条目。和笔记的回收站同一屏，靠 key 前缀区分 */
+  stickyTrashList: (): Promise<
+    { key: string; name: string; deletedAt: number; size: number; isSticky: true }[]
+  > => ipcRenderer.invoke('sticky:trashList'),
+  stickyTrashRestore: (key: string): Promise<boolean> =>
+    ipcRenderer.invoke('sticky:trashRestore', key),
+  stickyTrashPurge: (key: string): Promise<boolean> => ipcRenderer.invoke('sticky:trashPurge', key),
+  stickyTrashEmpty: (): Promise<boolean> => ipcRenderer.invoke('sticky:trashEmpty'),
   /** 关掉一张便签窗口（收起）。没开着的话什么也不做 */
   stickyCloseOne: (id: string): Promise<boolean> => ipcRenderer.invoke('sticky:closeOne', id),
   stickyDeleteMany: (ids: string[]): Promise<number> =>

@@ -207,7 +207,7 @@ async function doCloseAllSticky() {
         <button
           class="col-act"
           data-role="new-sticky"
-          title="新建便签 (Ctrl+Alt+N)"
+          title="新建便签 (Alt+N)"
           @click="doNewSticky"
         >
           <!-- 自绘：一张纸 + 中间一个加号。

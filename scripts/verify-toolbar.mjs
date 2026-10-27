@@ -135,15 +135,21 @@ await new Promise((r) => setTimeout(r, 900))
 await evaluate("(() => { const el = document.querySelector('.tree .row'); if (el) el.click(); return !!el; })()")
 await new Promise((r) => setTimeout(r, 1200))
 
-/* ── 收集所有下拉：按钮 + 是否有 caret ── */
+/* ── 收集所有下拉：按钮 + 是否有 caret ──
+   btnCount 是给「下拉被拆成几颗按钮」这类退化用的：一组里出现两颗 .tb-btn，
+   视觉上就会变成两个断开的小块，和旁边一体的下拉对不上（高亮那一组踩过）。 */
 out.dropdowns = await evaluate(
   "(() => [...document.querySelectorAll('.tb-menu-wrap')].map((w, i) => {" +
     " const btn = w.querySelector('.tb-btn');" +
     " const caret = w.querySelector('.caret');" +
     " return { i, title: btn ? (btn.getAttribute('title') || btn.innerText.trim()) : '?'," +
-    "   hasCaret: !!caret, btnTag: btn ? btn.tagName : '-' };" +
+    "   hasCaret: !!caret, btnTag: btn ? btn.tagName : '-'," +
+    "   btnCount: w.querySelectorAll('.tb-btn').length };" +
     "}))()",
 )
+
+/** 一组里多于一颗按钮的，直接点名，不用肉眼翻上面那一大坨 */
+out.splitGroups = out.dropdowns.filter((d) => d.btnCount !== 1).map((d) => d.title)
 
 /** 点按钮主体（不点 caret），看菜单是否打开 */
 async function probeMainClick(idx) {

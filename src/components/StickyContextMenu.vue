@@ -28,16 +28,19 @@ import {
 import ContextMenu from '@/components/ContextMenu.vue'
 import ContextMenuItem from '@/components/ContextMenuItem.vue'
 import ContextMenuSeparator from '@/components/ContextMenuSeparator.vue'
+import { PAPERS } from '@/sticky/colors'
 
 const props = defineProps<{
   /** null = 不显示。x/y 是鼠标落点 */
-  target: { x: number; y: number; id: string; saved: boolean } | null
+  target: { x: number; y: number; id: string; saved: boolean; color?: string } | null
 }>()
 
 const emit = defineEmits<{
   (e: 'close'): void
   /** 动作名 + 目标 id。写成联合签名，`act()` 里才能直接把变量传进来 */
   (e: 'open' | 'rename' | 'mark' | 'select' | 'copy' | 'save' | 'reveal' | 'remove', id: string): void
+  /** 换纸色：第二个参数是色号 */
+  (e: 'color', id: string, key: string): void
 }>()
 
 type Action = 'open' | 'rename' | 'mark' | 'select' | 'copy' | 'save' | 'reveal' | 'remove'
@@ -47,6 +50,12 @@ function act(name: Action) {
   const id = props.target?.id ?? ''
   if (!id) return
   emit(name, id)
+}
+
+function pickColor(key: string) {
+  const id = props.target?.id ?? ''
+  if (!id) return
+  emit('color', id, key)
 }
 </script>
 
@@ -64,6 +73,22 @@ function act(name: Action) {
 
     <ContextMenuItem :icon="PencilLine" label="重命名" @select="act('rename')" />
     <ContextMenuItem :icon="Shapes" label="标记…" @select="act('mark')" />
+
+    <!-- 换纸色直接摊在菜单里，不再套一层子菜单：一共六个色，
+         摊开一眼就挑完，钻进子菜单反而多一次悬停 -->
+    <div class="cm-colors">
+      <span class="cm-colors-t">纸色</span>
+      <button
+        v-for="p in PAPERS"
+        :key="p.key"
+        class="cm-dot"
+        :class="{ on: p.key === (target?.color ?? 'amber') }"
+        :style="{ background: p.bg }"
+        :title="p.name"
+        @click.stop="pickColor(p.key)"
+      />
+    </div>
+
     <!-- 批量选择从这一条进：底栏那颗按钮是「从零开始选」，从某一张进的时候
          多半是「从这张往下都要」，所以带上它一起选中 -->
     <ContextMenuItem :icon="SquareCheck" label="选择这张…" @select="act('select')" />
@@ -83,3 +108,39 @@ function act(name: Action) {
     <ContextMenuItem :icon="Trash2" label="删除" danger @select="act('remove')" />
   </ContextMenu>
 </template>
+
+<style scoped>
+/* 纸色那一排。宽度对齐菜单项的内容区（菜单项有自己的左右内边距），
+   六个点一次排开，不折行 */
+.cm-colors {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 5px 10px 7px;
+}
+
+.cm-colors-t {
+  flex: none;
+  font-size: 11px;
+  color: var(--n-fg-faint);
+  letter-spacing: 0.02em;
+}
+
+.cm-dot {
+  flex: none;
+  width: 15px;
+  height: 15px;
+  border-radius: 50%;
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.18);
+  transition: transform 120ms ease;
+}
+.cm-dot:hover {
+  transform: scale(1.18);
+}
+/* 当前那张纸的颜色套一圈外环。加粗描边会把色块挤小，六个并排就看不齐了 */
+.cm-dot.on {
+  box-shadow:
+    inset 0 0 0 1px rgba(0, 0, 0, 0.16),
+    0 0 0 2px var(--n-accent);
+}
+</style>

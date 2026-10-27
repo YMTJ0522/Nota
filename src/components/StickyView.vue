@@ -39,6 +39,7 @@ import {
 import { store, touchStickies } from '@/store'
 import { dropFromStickies, stickyStore } from '@/store/stickies'
 import BrandGlyph from '@/components/BrandGlyph.vue'
+import ConfirmDialog from '@/components/ConfirmDialog.vue'
 import PromptDialog from '@/components/PromptDialog.vue'
 import StickyContextMenu from '@/components/StickyContextMenu.vue'
 import StickyMarkDialog from '@/components/StickyMarkDialog.vue'
@@ -51,16 +52,23 @@ const items = computed(() => stickyStore.items)
 const loading = computed(() => stickyStore.loading)
 /** 已归档的默认收起来：桌面上真正在用的一般就那么几张，历史不该占满一屏 */
 const showArchived = ref(false)
-/** 正在等着二次确认的那一条 */
-const confirming = ref<string | null>(null)
-let confirmTimer = 0
+/** 待确认删除的那一张。null = 弹窗关着 */
+const delTarget = ref<StickyItem | null>(null)
+/** 一次问一批时挂在这里（批量删除和单张共用同一个弹窗） */
+const delBatch = ref<StickyItem[]>([])
 
 /** 筛选词。便签的正文不长，全在内存里筛，不额外读盘 */
 const q = ref('')
 /** 点标签筛。null = 不筛 */
 const tagFilter = ref<string | null>(null)
 
-const menu = ref<{ x: number; y: number; id: string; saved: boolean } | null>(null)
+const menu = ref<{
+  x: number
+  y: number
+  id: string
+  saved: boolean
+  color?: string
+} | null>(null)
 const actId = ref('')
 const renameOpen = ref(false)
 const markOpen = ref(false)
@@ -76,7 +84,6 @@ const selected = ref<string[]>([])
 /** Shift 连选的头。在勾选状态之间划一段用 */
 const anchor = ref<string | null>(null)
 /** 批量删除的二次确认（一次问一批，不是逐条问） */
-const confirmBatch = ref(false)
 
 const openList = computed(() => items.value.filter((s) => !s.closedAt))
 const archivedList = computed(() => items.value.filter((s) => s.closedAt))
@@ -179,9 +186,6 @@ watch(
   },
 )
 
-watch(selected, () => {
-  confirmBatch.value = false
-})
 
 /* 右边那面墙上的「选择这张…」要把用户送回这一列来勾选，
    两条路由同一个事件接上，比把选择状态提到 store 里轻 */
@@ -199,8 +203,6 @@ onMounted(() => {
 onBeforeUnmount(() => {
   window.removeEventListener('nota:sticky-select', onSelectReq)
   window.removeEventListener('resize', checkTagsMore)
-  if (confirmTimer) window.clearTimeout(confirmTimer)
-  if (batchTimer) window.clearTimeout(batchTimer)
 })
 
 /** 时间只做粗粒度：便签没人关心「3 分钟前」还是「4 分钟前」 */
@@ -226,23 +228,55 @@ async function open(s: StickyItem) {
 }
 
 /**
- * 删除是两段式的：点一下变红、再点才真删。
- * 用确认弹窗太重（在这个窄栏里会盖住整屏），而单点就删又太容易手滑 ——
- * 便签恰恰是那种「不小心按到就没了」最疼的东西。
+ * 删除走和笔记一样的一道确认窗口。
+ *
+ * 原来是「点一下变红、再点才真删」，理由是这个窄栏里弹窗太重。但两段式
+ * 只防手滑、不解释后果：删完之后这张纸去哪了、能不能回，用户是不知道的。
+ * 笔记那边一直是弹窗 + 回收站，同一件事在两个地方长得不一样，学两遍。
  */
-async function remove(s: StickyItem) {
-  if (confirming.value !== s.id) {
-    confirming.value = s.id
-    if (confirmTimer) window.clearTimeout(confirmTimer)
-    confirmTimer = window.setTimeout(() => (confirming.value = null), 3000)
-    return
-  }
-  confirming.value = null
-  if (confirmTimer) window.clearTimeout(confirmTimer)
-  await window.api.stickyDelete(s.id)
-  dropFromStickies([s.id])
-  toast('便签已删除')
+function remove(s: StickyItem) {
+  delBatch.value = []
+  delTarget.value = s
 }
+
+/** 批量删除也走同一个弹窗，一次问一批 */
+function batchDelete() {
+  const ids = selItems.value.map((s) => s.id)
+  if (!ids.length) return
+  delTarget.value = null
+  delBatch.value = selItems.value.slice()
+  void ids
+}
+
+async function commitRemove() {
+  const batch = delBatch.value
+  const one = delTarget.value
+  delTarget.value = null
+  delBatch.value = []
+  if (!batch.length && !one) return
+
+  const ids = batch.length ? batch.map((s) => s.id) : [one!.id]
+  if (batch.length) {
+    await window.api.stickyDeleteMany(ids)
+    exitSelect()
+  } else {
+    await window.api.stickyDelete(one!.id)
+  }
+  dropFromStickies(ids)
+  touchStickies()
+  toast(ids.length > 1 ? `已把 ${ids.length} 张便签移入回收站` : '便签已移入回收站')
+}
+
+/** 弹窗标题与正文：单张说名字，多张说数量 */
+const delTitle = computed(() =>
+  delBatch.value.length > 1 ? `删除这 ${delBatch.value.length} 张便签？` : '删除这张便签？',
+)
+const delMessage = computed(() => {
+  if (delBatch.value.length > 1) return '它们会被移入回收站，之后还能恢复。'
+  const s = delTarget.value
+  const name = s ? s.title || s.preview || '这张便签' : ''
+  return `《${name}》会被移入回收站，之后还能恢复。`
+})
 
 async function reveal(id?: string) {
   // 没给 id 就是「打开便签文件夹」；给了就是定位那一个文件
@@ -265,7 +299,6 @@ function exitSelect() {
   selecting.value = false
   selected.value = []
   anchor.value = null
-  confirmBatch.value = false
 }
 
 function isSel(id: string) {
@@ -303,8 +336,6 @@ function toggleAll() {
 }
 
 /* ── 批量动作 ── */
-/** 批量删除的确认按钮倒计时，换个手滑的人也别让他一直点着 */
-let batchTimer = 0
 
 async function batchSave() {
   const ids = selItems.value.map((s) => s.id)
@@ -355,24 +386,7 @@ async function batchArchive() {
   toast(`已收起 ${ids.length} 张`)
 }
 
-function batchDelete() {
-  if (!confirmBatch.value) {
-    confirmBatch.value = true
-    if (batchTimer) window.clearTimeout(batchTimer)
-    batchTimer = window.setTimeout(() => (confirmBatch.value = false), 3200)
-    return
-  }
-  const ids = selItems.value.map((s) => s.id)
-  if (!ids.length) return
-  confirmBatch.value = false
-  if (batchTimer) window.clearTimeout(batchTimer)
-  void (async () => {
-    await window.api.stickyDeleteMany(ids)
-    exitSelect()
-    touchStickies()
-    toast(`已删除 ${ids.length} 张`)
-  })()
-}
+
 
 function openBatchTag() {
   if (!selItems.value.length) return
@@ -383,11 +397,18 @@ function openBatchTag() {
 /* ── 右键菜单 ── */
 function onMenu(e: MouseEvent, s: StickyItem) {
   e.preventDefault()
-  menu.value = { x: e.clientX, y: e.clientY, id: s.id, saved: !!s.savedTo }
+  menu.value = { x: e.clientX, y: e.clientY, id: s.id, saved: !!s.savedTo, color: s.color }
 }
 
 function closeMenu() {
   menu.value = null
+}
+
+/** 右键换纸色。窗口正开着也没关系：主进程会顺手把新纸色推给那张纸 */
+async function onMenuColor(id: string, key: string) {
+  menu.value = null
+  await window.api.stickyPatch(id, { color: key })
+  touchStickies()
 }
 
 /**
@@ -576,7 +597,7 @@ const batchTags = computed(() => {
           v-for="s in g.items"
           :key="s.id"
           class="sv-item"
-          :class="{ sel: isSel(s.id), picking: selecting }"
+          :class="{ sel: isSel(s.id), picking: selecting, menu: menu?.id === s.id }"
           role="button"
           tabindex="0"
           :title="s.preview || s.title"
@@ -620,13 +641,7 @@ const batchTags = computed(() => {
             </span>
           </span>
 
-          <span
-            v-if="!selecting"
-            class="sv-del"
-            :class="{ confirm: confirming === s.id }"
-            :title="confirming === s.id ? '再点一次就删掉' : '删除'"
-            @click.stop="remove(s)"
-          >
+          <span v-if="!selecting" class="sv-del" title="删除" @click.stop="remove(s)">
             <Trash2 :size="12" :stroke-width="2" />
           </span>
         </div>
@@ -649,7 +664,7 @@ const batchTags = computed(() => {
         <template v-else>
           <p>还没有便签</p>
           <p class="sub">
-            任何时候按 <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>N</kbd> 记一张，写完可以一键存成笔记
+            任何时候按 <kbd>Alt</kbd>+<kbd>N</kbd> 记一张，写完可以一键存成笔记
           </p>
         </template>
       </div>
@@ -726,9 +741,8 @@ const batchTags = computed(() => {
       </button>
       <button
         class="sv-icon-btn danger"
-        :class="{ confirm: confirmBatch }"
         :disabled="!selected.length"
-        :title="confirmBatch ? '再点一次就全删掉' : '删除'"
+        title="删除"
         @click="batchDelete"
       >
         <Trash2 :size="13" :stroke-width="1.9" />
@@ -748,6 +762,7 @@ const batchTags = computed(() => {
       @save="onMenuSave"
       @reveal="onMenuReveal"
       @remove="onMenuRemove"
+      @color="onMenuColor"
     />
 
     <PromptDialog
@@ -771,6 +786,17 @@ const batchTags = computed(() => {
       @close="markOpen = false"
       @pick-icon="pickIcon"
       @set-tags="setTags"
+    />
+
+    <!-- 和笔记页同一个弹窗、同一句说法：删除是「移入回收站」，不是抹掉 -->
+    <ConfirmDialog
+      :open="!!delTarget || delBatch.length > 0"
+      :title="delTitle"
+      :message="delMessage"
+      confirm-text="确认删除"
+      danger
+      @confirm="commitRemove"
+      @cancel="((delTarget = null), (delBatch = []))"
     />
   </section>
 </template>
@@ -941,6 +967,12 @@ const batchTags = computed(() => {
 }
 .sv-item.sel:hover {
   background: color-mix(in oklab, var(--n-accent) 18%, transparent);
+}
+/* 右键点开菜单的那一条：整条描一圈 + 底色，让人知道菜单是在操作谁。
+   以前右键下去菜单弹出来了，列表里毫无变化，鼠标一移就分不清是哪一张。 */
+.sv-item.menu {
+  background: color-mix(in oklab, var(--n-accent) 15%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--n-accent) 55%, transparent);
 }
 
 /* 抽屉展开后的分段标题：只在「桌面上的」和「已收起的」同时存在时才出现，

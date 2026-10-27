@@ -146,6 +146,14 @@ interface NoteApi {
   onStickyCount(cb: (n: number) => void): void
   onStickyError(cb: (msg: string) => void): void
 
+  /* 便签的回收站。和笔记的回收站同一屏，靠 key 的 `sticky:` 前缀分流 */
+  stickyTrashList(): Promise<
+    { key: string; name: string; deletedAt: number; size: number; isSticky: true }[]
+  >
+  stickyTrashRestore(key: string): Promise<boolean>
+  stickyTrashPurge(key: string): Promise<boolean>
+  stickyTrashEmpty(): Promise<boolean>
+
   /* 桌面整合：开机自启、全局快捷键 */
   desktopPrefs(): Promise<DesktopPrefsInfo>
   setHotkey(on: boolean): Promise<{ ok: boolean; error: string }>
@@ -183,7 +191,14 @@ interface StickyApi {
   load(
     id: string,
   ): Promise<
-    { text: string; pinned: boolean; color: string; savedTo?: string; tags?: string[] } | null
+    {
+      text: string
+      pinned: boolean
+      color: string
+      savedTo?: string
+      tags?: string[]
+      shots?: string[]
+    } | null
   >
   write(id: string, text: string): Promise<void>
   close(id: string): Promise<void>
@@ -193,7 +208,18 @@ interface StickyApi {
   addTags(id: string, names: string[]): Promise<string[]>
   saveToVault(id: string): Promise<{ ok: boolean; rel?: string; error?: string }>
   remove(id: string): Promise<boolean>
+  /** 贴进来的图：存进这张纸的 media/，返回新的全量文件名列表 */
+  addShot(
+    id: string,
+    data: Uint8Array,
+    ext: string,
+  ): Promise<{ ok: boolean; name?: string; shots?: string[]; error?: string }>
+  removeShot(id: string, name: string): Promise<string[]>
+  /** 文件名 → nota-media:// 地址，直接给 <img src> */
+  shotUrl(name: string): Promise<string>
   onFocus(cb: () => void): void
+  /** 列表里右键换了纸色 */
+  onColor(cb: (color: string) => void): void
 }
 
 declare global {
@@ -236,6 +262,8 @@ declare global {
     icon?: { kind: 'brand' | 'emoji'; id: string } | null
     /** 数字＝收起来，null＝撤回收起（存为笔记之后后悔了） */
     closedAt?: number | null
+    /** 纸色 key。右键菜单里换色走这条 */
+    color?: string
   }
 
   /** 桌面级偏好。存在 %LOCALAPPDATA%\Nota\prefs.json，由主进程管 */

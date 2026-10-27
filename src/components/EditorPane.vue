@@ -47,6 +47,7 @@ import {
   findTaskLine,
 } from '@/editor/preview-rich'
 import type { HeadingItem } from '@/editor/preview-rich'
+import { frontMatterHtml } from '@/editor/front-matter'
 import { getMarked, highlightFences } from '@/editor/markdown'
 import Toolbar from '@/components/Toolbar.vue'
 import NotePickerDialog, { type PickMode } from '@/components/NotePickerDialog.vue'
@@ -419,7 +420,11 @@ const saveLabel = computed(() => {
 /** 预览（阅读模式） */
 async function render() {
   const { marked } = await getMarked()
-  const raw = marked.parse(prepareMarkdown(state.draft), { async: false }) as string
+  /* frontmatter 先换成中文属性卡再进 marked。
+     顺序不能反：prepareMarkdown 里那一步会把它整段剥掉，剥完就没得显示了。
+     卡片是块级 HTML，marked 原样透传，不会参与标题/段落的判定。 */
+  const fm = frontMatterHtml(state.draft)
+  const raw = marked.parse(fm + prepareMarkdown(state.draft), { async: false }) as string
   // 先补高亮与媒体路径，再做富块增强——顺序有讲究：
   // 富块会重新包裹 HTML 结构，先高亮能保证代码块（含 mermaid）已被标记成 language-*。
   const lit = await highlightFences(raw)

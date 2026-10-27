@@ -247,6 +247,68 @@ export function toggleInlineFormat(
   return toggleWrap(doc, selection, INLINE_MARKS[format]);
 }
 
+/** 五支荧光笔。yellow 是默认那支，源码里不写颜色标签。 */
+export const HIGHLIGHT_COLORS = ["yellow", "green", "blue", "rose", "purple"] as const;
+export type HighlightColor = (typeof HIGHLIGHT_COLORS)[number];
+
+/** 颜色写在高亮标记里面：`=={green}文字==`。这样一对 `==` 依旧是全文唯一的分隔符，
+    不用另造一个 `:::` 之类的块语法，也不会和正文里的花括号打架。 */
+function highlightOpen(color: HighlightColor): string {
+  return color === "yellow" ? "==" : `=={${color}}`;
+}
+
+/** 整段就是一对高亮（含标记） */
+const HL_WHOLE = /^==(?:\{([a-z]+)\})?([\s\S]*?)==$/;
+/** 光标/选区左边这一截正好是一个高亮的开头 */
+const HL_OPEN_TAIL = /==(?:\{([a-z]+)\})?$/;
+
+/**
+ * 换一支笔。
+ *
+ * 三种情况必须分开，否则「再点一次换颜色」会变成「套第二层高亮」：
+ *  1. 选区把整对 `==…==` 都包住了 → 换开头那个标记；
+ *  2. 标记正好夹在选区两侧           → 只换开头那个标记（这是最常见的用法：
+ *     点一下文字选中，再去点色点）；
+ *  3. 完全没有高亮                   → 现套一对。
+ */
+export function setHighlightColor(
+  doc: string,
+  selection: { from: number; to: number },
+  color: HighlightColor,
+): MarkdownCommandResult {
+  const open = highlightOpen(color);
+  const expanded = expandWordSelection(doc, selection.from, selection.to);
+  const whole = doc.slice(expanded.from, expanded.to);
+  const contained = HL_WHOLE.exec(whole);
+  if (contained && contained[0].length === whole.length) {
+    const inner = contained[2];
+    const insert = `${open}${inner}==`;
+    return {
+      change: { from: expanded.from, to: expanded.to, insert },
+      selection: {
+        anchor: expanded.from + open.length,
+        head: expanded.from + open.length + inner.length,
+      },
+    };
+  }
+
+  const beforeFrom = expanded.from;
+  const before = HL_OPEN_TAIL.exec(doc.slice(Math.max(0, beforeFrom - 24), beforeFrom));
+  const after = doc.slice(expanded.to, expanded.to + 2);
+  if (before && after === "==") {
+    const start = beforeFrom - before[0].length;
+    return {
+      change: { from: start, to: beforeFrom, insert: open },
+      selection: {
+        anchor: start + open.length,
+        head: start + open.length + (expanded.to - beforeFrom),
+      },
+    };
+  }
+
+  return toggleWrap(doc, expanded, open, "==");
+}
+
 /**
  * Toggles an inline code span with inkstone semantics: contained spans are
  * unwrapped (padding spaces stripped), surrounding equal backtick runs are

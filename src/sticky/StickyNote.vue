@@ -30,6 +30,13 @@ const ready = ref(false)
 const picker = ref(false)
 const hint = ref('')
 
+/* ── 贴在纸底下的图 ──
+   正文是纯文本，底下还压着一层靠逐行对齐的镜像：图要是插进正文里，
+   那层对齐就废了。所以图单独挂在底部的托盘上，正文一个字不提。 */
+const shots = ref<string[]>([])
+const shotSrc = ref<Record<string, string>>({})
+const viewing = ref('')
+
 const ta = ref<HTMLTextAreaElement | null>(null)
 const mirrorEl = ref<HTMLElement | null>(null)
 const paper = computed(() => paperOf(colorKey.value))
@@ -159,6 +166,75 @@ function syncScroll() {
   if (mirrorEl.value && ta.value) mirrorEl.value.scrollTop = ta.value.scrollTop
 }
 
+/* ── 贴图 ──
+   走托盘而不是往正文里插 Markdown：正文是纯文本 + 逐行对齐的镜像层，
+   任何一张图都会把那层对齐撑歪。托盘在最低下一行，挤掉的是正文高度，
+   不是对齐关系。 */
+
+async function loadShots(names: string[]) {
+  shots.value = names
+  const add: Record<string, string> = {}
+  await Promise.all(
+    names.map(async (n) => {
+      if (shotSrc.value[n]) return
+      try {
+        add[n] = await window.sticky.shotUrl(n)
+      } catch {
+        /* 读不出来就这张不显示，不至于把整条托盘弄没 */
+      }
+    }),
+  )
+  if (Object.keys(add).length) shotSrc.value = { ...shotSrc.value, ...add }
+}
+
+/** 剪贴板 / 拖进来的图 → 存进这张纸的 media/ */
+async function absorb(files: File[]) {
+  const imgs = files.filter((f) => f.type.startsWith('image/'))
+  if (!imgs.length) return
+  let names = shots.value
+  for (const f of imgs) {
+    const buf = new Uint8Array(await f.arrayBuffer())
+    const ext = (f.type.split('/')[1] || 'png').replace(/[^a-z0-9]/gi, '').slice(0, 5)
+    const r = await window.sticky.addShot(id, buf, ext || 'png')
+    if (r.ok && r.shots) names = r.shots
+    else if (r.error) {
+      hint.value = r.error
+      window.setTimeout(() => (hint.value = ''), 3000)
+    }
+  }
+  await loadShots(names)
+  ta.value?.focus()
+}
+
+/** 只接管「剪贴板里就是图」这一种情况；带文字的照样让它正常粘贴 */
+function onPaste(e: ClipboardEvent) {
+  const dt = e.clipboardData
+  if (!dt) return
+  const files = Array.from(dt.files ?? []).filter((f) => f.type.startsWith('image/'))
+  if (!files.length) return
+  e.preventDefault()
+  void absorb(files)
+}
+
+function onDrop(e: DragEvent) {
+  const files = Array.from(e.dataTransfer?.files ?? [])
+  if (!files.some((f) => f.type.startsWith('image/'))) return
+  e.preventDefault()
+  void absorb(files)
+}
+
+/** 只对「拖的是文件」放行，否则会连文字拖拽也一并接管 */
+function onDragOver(e: DragEvent) {
+  if (Array.from(e.dataTransfer?.types ?? []).includes('Files')) e.preventDefault()
+}
+
+async function dropShot(name: string) {
+  const names = await window.sticky.removeShot(id, name)
+  shots.value = names
+  if (viewing.value === name) viewing.value = ''
+  ta.value?.focus()
+}
+
 /**
  * Esc 关掉。
  * isComposing 必须挡：中文输入法里按 Esc 是「取消这串候选词」，
@@ -168,6 +244,11 @@ async function onKey(e: KeyboardEvent) {
   if (e.isComposing || e.keyCode === 229) return
   if (e.key === 'Escape') {
     e.preventDefault()
+    if (viewing.value) {
+      viewing.value = ''
+      ta.value?.focus()
+      return
+    }
     if (picker.value) {
       picker.value = false
       return
@@ -190,6 +271,7 @@ onMounted(async () => {
   colorKey.value = data.color
   savedTo.value = data.savedTo ?? ''
   tags.value = data.tags ?? []
+  await loadShots(data.shots ?? [])
   ready.value = true
   await nextTick()
   ta.value?.focus()
@@ -198,6 +280,10 @@ onMounted(async () => {
   ta.value?.setSelectionRange(n, n)
 
   window.sticky.onFocus(() => ta.value?.focus())
+  // 列表里右键换了纸色：这张纸正开着，得跟着换
+  window.sticky.onColor((k) => {
+    colorKey.value = k
+  })
   window.addEventListener('beforeunload', onUnload)
 })
 
@@ -234,7 +320,7 @@ watch(
 </script>
 
 <template>
-  <div class="note" :style="style">
+  <div class="note" :style="style" @dragover="onDragOver" @drop="onDrop">
     <header class="bar">
       <div class="grip" />
       <div class="acts">
@@ -298,15 +384,34 @@ watch(
         v-model="text"
         class="body"
         spellcheck="false"
-        placeholder="想到什么就写…"
+        placeholder="想到什么就写…（截图可以直接 Ctrl+V 贴进来）"
         @input="onInput"
         @keydown="onKey"
         @scroll="syncScroll"
+        @paste="onPaste"
       />
+    </div>
+
+    <!-- 图挂在纸底下这一条托盘里。正文里一个字不提 —— 图进正文就会把
+         镜像层的逐行对齐撑歪，那层一歪，打字时字就叠成鬼影。 -->
+    <div v-if="shots.length" class="tray">
+      <div v-for="n in shots" :key="n" class="shot">
+        <img :src="shotSrc[n]" :alt="''" draggable="false" @click="viewing = n" />
+        <button class="del" title="去掉这张图" @click.stop="dropShot(n)">
+          <X :size="10" :stroke-width="2.6" />
+        </button>
+      </div>
     </div>
 
     <Transition name="fade">
       <p v-if="hint" class="hint">{{ hint }}</p>
+    </Transition>
+
+    <!-- 点开看大图。便签窗口本身很小，缩略图只够认出是哪张 -->
+    <Transition name="fade">
+      <div v-if="viewing" class="zoom" @click="viewing = ''">
+        <img :src="shotSrc[viewing]" :alt="''" />
+      </div>
     </Transition>
   </div>
 </template>
@@ -532,6 +637,82 @@ watch(
   border-right: 1.6px solid #fff;
   border-bottom: 1.6px solid #fff;
   border-radius: 1px;
+}
+
+/* 图托盘：横着排，超出就横向滚。高度写死 56px —— 托盘一变高，
+   正文可视区就跟着变，写着写着纸面会跳一下。 */
+.tray {
+  flex: none;
+  display: flex;
+  gap: 6px;
+  height: 56px;
+  padding: 6px 12px 6px 15px;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+.tray::-webkit-scrollbar {
+  height: 5px;
+}
+.tray::-webkit-scrollbar-thumb {
+  background: color-mix(in oklab, var(--p-dim) 40%, transparent);
+  border-radius: 3px;
+}
+.tray::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.shot {
+  position: relative;
+  flex: none;
+  height: 44px;
+  border-radius: 5px;
+  overflow: hidden;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.12);
+  cursor: zoom-in;
+}
+.shot img {
+  display: block;
+  height: 100%;
+  width: auto;
+  max-width: 130px;
+  object-fit: cover;
+}
+
+/* 删除键只在悬停时出现：托盘是随手放图的地方，平时不该有一排叉号 */
+.shot .del {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  width: 15px;
+  height: 15px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.52);
+  color: #fff;
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+.shot:hover .del {
+  opacity: 1;
+}
+
+/* 看大图。铺满整张纸，点任意处退出 */
+.zoom {
+  position: absolute;
+  inset: 0;
+  z-index: 20;
+  display: grid;
+  place-items: center;
+  padding: 10px;
+  background: rgba(0, 0, 0, 0.74);
+  cursor: zoom-out;
+}
+.zoom img {
+  max-width: 100%;
+  max-height: 100%;
+  border-radius: 6px;
+  object-fit: contain;
 }
 
 /* 提示条压在底部，不占正文高度：存完跳一行字出来，不该把正在写的东西往上顶 */

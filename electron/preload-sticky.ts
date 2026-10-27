@@ -10,7 +10,14 @@ contextBridge.exposeInMainWorld('sticky', {
   load: (
     id: string,
   ): Promise<
-    { text: string; pinned: boolean; color: string; savedTo?: string; tags?: string[] } | null
+    {
+      text: string
+      pinned: boolean
+      color: string
+      savedTo?: string
+      tags?: string[]
+      shots?: string[]
+    } | null
   > => ipcRenderer.invoke('sticky:load', id),
 
   /** 自动保存：每敲一会儿上报一次，主进程同步写盘 */
@@ -43,9 +50,32 @@ contextBridge.exposeInMainWorld('sticky', {
   /** 彻底删掉这张纸（列表里那次删除） */
   remove: (id: string): Promise<boolean> => ipcRenderer.invoke('sticky:remove', id),
 
+  /**
+   * 贴一张图上来。图不写进正文（那层镜像靠逐行对齐，插图就全歪了），
+   * 而是挂在纸底部的托盘上，正文里一个字不提；存为笔记时才转成链接。
+   */
+  addShot: (
+    id: string,
+    data: Uint8Array,
+    ext: string,
+  ): Promise<{ ok: boolean; name?: string; shots?: string[]; error?: string }> =>
+    ipcRenderer.invoke('sticky:addShot', id, data, ext),
+
+  removeShot: (id: string, name: string): Promise<string[]> =>
+    ipcRenderer.invoke('sticky:removeShot', id, name),
+
+  /** 文件名 → nota-media:// 地址，直接给 <img src> 用 */
+  shotUrl: (name: string): Promise<string> => ipcRenderer.invoke('sticky:shotUrl', name),
+
   /** 新窗口建好后主进程叫一声，把光标送进正文 */
   onFocus: (cb: () => void): void => {
     ipcRenderer.removeAllListeners('sticky:focus')
     ipcRenderer.on('sticky:focus', () => cb())
+  },
+
+  /** 从列表里右键换了纸色：这边跟着换，不然纸上还是旧的 */
+  onColor: (cb: (color: string) => void): void => {
+    ipcRenderer.removeAllListeners('sticky:color')
+    ipcRenderer.on('sticky:color', (_e, color: string) => cb(color))
   },
 })

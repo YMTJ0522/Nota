@@ -17,9 +17,10 @@ import {
   ListChecks,
   RotateCcw,
   Square,
+  StickyNote,
   Trash2,
 } from 'lucide-vue-next'
-import { store } from '@/store'
+import { store, touchStickies } from '@/store'
 import ConfirmDialog from '@/components/ConfirmDialog.vue'
 import LibContextMenu, { type LibMenuItem } from '@/components/LibContextMenu.vue'
 
@@ -30,6 +31,8 @@ interface TrashItem {
   deletedAt: number
   size: number
   isDir?: boolean
+  /** 便签的条目。它和工作区无关（便签本来就独立于库），按 key 前缀分流 */
+  isSticky?: boolean
 }
 
 const items = ref<TrashItem[]>([])
@@ -37,14 +40,30 @@ const loading = ref(false)
 
 const root = computed(() => store.state.root ?? '')
 
+/**
+ * 两处来源并在一张表里：笔记的（工作区 .nota/trash）和便签的（便签目录下）。
+ *
+ * 便签跟笔记库是解耦的 —— 没建库也能记便签，所以它们的删除跟 root 无关。
+ * 之前这一屏在没库时整片空着，便签删了以后就再也捞不回来了。
+ */
 async function load() {
-  if (!root.value) {
-    items.value = []
-    return
-  }
   loading.value = true
   try {
-    items.value = await window.api.trashList(root.value)
+    const notes: TrashItem[] = root.value
+      ? await window.api.trashList(root.value).catch(() => [])
+      : []
+    const st = await window.api.stickyTrashList().catch(() => [])
+    items.value = [
+      ...st.map((e) => ({
+        key: e.key,
+        rel: '便签',
+        name: e.name,
+        deletedAt: e.deletedAt,
+        size: e.size,
+        isSticky: true,
+      })),
+      ...notes,
+    ].sort((a, b) => b.deletedAt - a.deletedAt)
   } catch {
     items.value = []
   } finally {
@@ -54,9 +73,8 @@ async function load() {
 
 watch(
   () => [root.value, store.state.columnView] as const,
-  ([r, view]) => {
-    if (r && view === 'trash') void load()
-    else if (!r) items.value = []
+  ([, view]) => {
+    if (view === 'trash') void load()
   },
   { immediate: true },
 )
@@ -77,12 +95,21 @@ function announce() {
   window.dispatchEvent(new CustomEvent('nota:library-changed'))
 }
 
+async function restoreOne(t: TrashItem) {
+  if (t.isSticky) {
+    await window.api.stickyTrashRestore(t.key)
+    touchStickies()
+  } else {
+    await window.api.trashRestore(root.value, t.key)
+    await store.refreshTree()
+  }
+}
+
 async function restore(t: TrashItem) {
-  await window.api.trashRestore(root.value, t.key)
+  await restoreOne(t)
   items.value = items.value.filter((x) => x.key !== t.key)
   sel.value = sel.value.filter((k) => k !== t.key)
-  await store.refreshTree()
-  toast(`已恢复到 ${t.rel}`)
+  toast(t.isSticky ? '便签已恢复到列表（收在抽屉里）' : `已恢复到 ${t.rel}`)
   announce()
 }
 
@@ -134,11 +161,10 @@ const selectedItems = computed(() => items.value.filter((t) => isSel(t.key)))
 
 async function restoreMany(list: TrashItem[]) {
   if (list.length === 0) return
-  for (const t of list) await window.api.trashRestore(root.value, t.key)
+  for (const t of list) await restoreOne(t)
   const gone = new Set(list.map((t) => t.key))
   items.value = items.value.filter((x) => !gone.has(x.key))
   sel.value = sel.value.filter((k) => !gone.has(k))
-  await store.refreshTree()
   toast(`已恢复 ${list.length} 项`)
   announce()
 }
@@ -211,7 +237,7 @@ const confirmTitle = computed(() => {
   if (!p) return ''
   if (p.kind === 'all') return '清空回收站？'
   if (p.kind === 'many') return '彻底删除这几项？'
-  return '彻底删除这篇笔记？'
+  return p.item.isSticky ? '彻底删除这张便签？' : '彻底删除这篇笔记？'
 })
 const confirmMessage = computed(() => {
   const p = pending.value
@@ -221,7 +247,9 @@ const confirmMessage = computed(() => {
     const n = p.list.length
     return `${n} 项会被永久删除，无法恢复${p.list.some((t) => t.isDir) ? '（含文件夹里的笔记）' : ''}。`
   }
-  return `「${p.item.name}」会被永久删除，无法恢复。`
+  return `「${p.item.name}」会被永久删除，无法恢复${
+    p.item.isSticky ? '（这张纸和它贴过的图都会一起清掉）' : ''
+  }。`
 })
 
 async function doConfirm() {
@@ -233,8 +261,13 @@ async function doConfirm() {
   else await emptyAll()
 }
 
+async function purgeOne(t: TrashItem) {
+  if (t.isSticky) await window.api.stickyTrashPurge(t.key)
+  else await window.api.trashPurge(root.value, t.key)
+}
+
 async function purge(t: TrashItem) {
-  await window.api.trashPurge(root.value, t.key)
+  await purgeOne(t)
   items.value = items.value.filter((x) => x.key !== t.key)
   sel.value = sel.value.filter((k) => k !== t.key)
   toast(`已彻底删除 ${t.name}`)
@@ -242,7 +275,7 @@ async function purge(t: TrashItem) {
 }
 
 async function purgeMany(list: TrashItem[]) {
-  for (const t of list) await window.api.trashPurge(root.value, t.key)
+  for (const t of list) await purgeOne(t)
   const gone = new Set(list.map((t) => t.key))
   items.value = items.value.filter((x) => !gone.has(x.key))
   sel.value = sel.value.filter((k) => !gone.has(k))
@@ -252,7 +285,9 @@ async function purgeMany(list: TrashItem[]) {
 
 async function emptyAll() {
   if (items.value.length === 0) return
-  await window.api.trashEmpty(root.value)
+  // 两边的垃圾桶各清各的：便签那份在便签目录下面，跟工作区无关
+  if (root.value) await window.api.trashEmpty(root.value)
+  await window.api.stickyTrashEmpty()
   items.value = []
   toast('回收站已清空')
   announce()
@@ -278,11 +313,7 @@ function timeText(ms: number) {
       <span class="pn-title">回收站</span>
       <span class="pn-sub">
         {{
-          root
-            ? sel.length
-              ? `已选 ${sel.length} / ${items.length}`
-              : `${items.length} 项被删的内容`
-            : ''
+          sel.length ? `已选 ${sel.length} / ${items.length}` : `${items.length} 项被删的内容`
         }}
       </span>
       <button
@@ -297,10 +328,9 @@ function timeText(ms: number) {
     </header>
 
     <div class="pn-body">
-      <div v-if="!root" class="pn-empty">先打开一个笔记目录</div>
-      <div v-else-if="loading" class="pn-empty">读取中…</div>
+      <div v-if="loading" class="pn-empty">读取中…</div>
       <div v-else-if="items.length === 0" class="pn-empty">
-        回收站是空的。删掉的笔记会先来这里，随时能捞回去。
+        回收站是空的。删掉的笔记和便签会先来这里，随时能捞回去。
       </div>
       <template v-else>
         <!-- 多选工具条：批量动作从这里发起。
@@ -355,6 +385,12 @@ function timeText(ms: number) {
               <Check v-if="isSel(t.key)" :size="11" :stroke-width="3" />
             </button>
             <Folder v-if="t.isDir" class="pn-row-ico" :size="14" :stroke-width="1.8" />
+            <StickyNote
+              v-else-if="t.isSticky"
+              class="pn-row-ico tv-sticky"
+              :size="14"
+              :stroke-width="1.8"
+            />
             <FileText v-else class="pn-row-ico" :size="14" :stroke-width="1.8" />
             <span class="pn-row-main">
               <span class="pn-row-name">

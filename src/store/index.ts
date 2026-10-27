@@ -1287,6 +1287,11 @@ a[href] { word-break: break-word; }
 strong { font-weight: 700; }
 del { color: var(--fg-faint); }
 mark { background: #f6e3a8; color: inherit; padding: 0 2px; border-radius: 3px; }
+/* 换过颜色的荧光笔：data-c 是预览层与这段 CSS 之间的唯一约定 */
+mark[data-c="green"] { background: #d5ecc2; }
+mark[data-c="blue"] { background: #cfe2f7; }
+mark[data-c="rose"] { background: #f8d5db; }
+mark[data-c="purple"] { background: #e2d8f6; }
 hr { border: none; border-top: 1px solid var(--line); margin: 2em 0; }
 /* ── 代码 ── */
 code {
@@ -2089,7 +2094,16 @@ export function inlineWordStyles(root: HTMLElement) {
   each('code', 'font-family:Consolas,"Courier New",monospace;font-size:9.5pt;background:#f4f2ec;',
     '.wc-code')
   each('a', 'color:#2f6f52;text-decoration:underline;')
-  each('mark', 'background:#f6e3a8;')
+  /* 高亮：Word 里没有 mark 这个语义，只能靠内联底色模拟。
+     颜色跟着 data-c 走，没写颜色就是默认那支黄笔 —— 否则在预览里挑了
+     绿笔的人，导出后会发现全变成黄的。 */
+  const MARK_BG: Record<string, string> = {
+    green: '#d5ecc2', blue: '#cfe2f7', rose: '#f8d5db', purple: '#e2d8f6',
+  }
+  for (const el of Array.from(root.querySelectorAll('mark'))) {
+    const bg = MARK_BG[el.getAttribute('data-c') ?? ''] ?? '#f6e3a8'
+    stamp(el, `background:${bg};`)
+  }
   each('s', 'color:#8a867c;text-decoration:line-through;')
   // 图片：居中 + 不超页宽
   each('img', 'border:0;display:block;margin:8pt auto;')
