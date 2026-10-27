@@ -176,6 +176,28 @@ const order = await evaluate(`(() => {
 })()`)
 ok('关闭之前先写了一次盘', order.lastWrite >= 0 && order.lastWrite < order.closeAt, JSON.stringify(order))
 
+/* ── 纸不许被 body 里多出来的东西推下去 ──
+   真机上报过「内容同时出现在顶部和正文里」：body 里多了一个行盒（一段裸文字），
+   纸按 height:100% 顺着流排，就被顶下去 20 多像素，那行字还明晃晃露在标题栏上方。
+   钉成 position:fixed 之后，多什么都不该动位置、也不该露出来。 */
+await evaluate(`(() => {
+  const n = document.createTextNode('55555');
+  document.body.insertBefore(n, document.body.firstChild);
+})()`)
+await sleep(150)
+const guard = await evaluate(`(() => {
+  const bar = document.querySelector('.bar').getBoundingClientRect();
+  const note = document.querySelector('.note').getBoundingClientRect();
+  const hit = document.elementFromPoint(4, 6);
+  return {
+    barTop: bar.top,
+    noteTop: note.top,
+    hitInsideNote: !!(hit && hit.closest && hit.closest('.note')),
+  };
+})()`)
+ok('body 里多出一行裸文字，纸的位置不动', guard.noteTop === 0 && guard.barTop === 0, JSON.stringify(guard))
+ok('那行裸文字被纸盖住（点上去命中的是纸）', guard.hitInsideNote, JSON.stringify(guard))
+
 /* ── 控制台不能有报错 ── */
 const errs = await evaluate(`(window.__errs || []).length`)
 ok('没有脚本报错', !errs, String(errs))
