@@ -275,6 +275,141 @@ try {
   eq('删除后列表少一张', (await S.listStickies(dir)).length, before - 1)
   ok('文件也删掉了', !(await fs.readdir(dir)).includes(`${b.id}.md`))
 
+  /* ── 回收站 ──
+     和笔记那边同一套语义：删掉不是消失，是先挪到一边。这里出错的方式
+     都不响：删除把记录一起抹了、恢复回来纸色标签掉回默认、恢复两次冒出
+     两条重复记录 —— 用户当时看不到，等想找回某张纸时才发现只剩半张。 */
+  const tk1 = await S.createSticky(dir, { x: 40, y: 50, w: 300, h: 220 })
+  await S.writeSticky(dir, tk1.id, '要删掉的便签\n第二行内容')
+  await S.patchSticky(dir, tk1.id, { color: 'mint', tags: ['临时'] })
+  const nBeforeTrash = (await S.listStickies(dir)).length
+  ok('删除把便签挪进回收站', (await S.trashSticky(dir, tk1.id)) === true)
+  eq('删除后列表里少一张', (await S.listStickies(dir)).length, nBeforeTrash - 1)
+  ok('原目录里那张 .md 已经移走', !(await fs.readdir(dir)).includes(`${tk1.id}.md`))
+
+  const trashList = await S.listStickyTrash(dir)
+  const tk1Entry = trashList.find((e) => e.key === `sticky:${tk1.id}`)
+  ok('回收站里能看到这张', !!tk1Entry, JSON.stringify(trashList.map((e) => e.key)))
+  eq('回收站条目名用便签首行', tk1Entry?.name, '要删掉的便签')
+  ok('回收站条目带得出大小', (tk1Entry?.size ?? 0) > 0, String(tk1Entry?.size))
+  ok('回收站条目标了 isSticky（页面靠它和笔记分流）', tk1Entry?.isSticky === true)
+  ok('key 带 sticky: 前缀，和笔记的 base64 key 不会撞', S.isStickyTrashKey(tk1Entry?.key ?? ''))
+
+  /* 没写过字的纸也能删、也能看出来 —— 它有记录但没有 .md */
+  const tkBlank = await S.createSticky(dir)
+  await S.trashSticky(dir, tkBlank.id)
+  const blankEntry = (await S.listStickyTrash(dir)).find((e) => e.key === `sticky:${tkBlank.id}`)
+  ok('空便签进回收站也留一条（不会被静默丢弃）', !!blankEntry, JSON.stringify(blankEntry))
+  eq('空便签没有大小', blankEntry?.size, 0)
+  eq('空便签的显示名兜底', blankEntry?.name, '空白便签')
+
+  /* 恢复：内容、纸色、标签、位置都得回来。只捞 .md 的话就是「恢复了一半」 */
+  await S.restoreSticky(dir, `sticky:${tk1.id}`)
+  const tk1Back = (await S.listStickies(dir)).find((m) => m.id === tk1.id)
+  ok('恢复后回到列表', !!tk1Back, '没回来')
+  ok('恢复后正文一个字没丢', (await S.readSticky(dir, tk1.id)).includes('第二行内容'))
+  eq('恢复后纸色还在', tk1Back?.color, 'mint')
+  eq('恢复后标签还在', tk1Back?.tags, ['临时'])
+  eq('恢复后位置尺寸还在', [tk1Back?.x, tk1Back?.y, tk1Back?.w, tk1Back?.h], [40, 50, 300, 220])
+  ok(
+    '恢复后回收站里那条清掉了',
+    !(await S.listStickyTrash(dir)).some((e) => e.key === `sticky:${tk1.id}`),
+  )
+
+  /* 连点两下恢复（或者恢复完又点了另一条）不该长出第二张纸 */
+  await S.restoreSticky(dir, `sticky:${tk1.id}`)
+  eq(
+    '重复恢复不会冒出重复记录',
+    (await S.listStickies(dir)).filter((m) => m.id === tk1.id).length,
+    1,
+  )
+
+  const tk2 = await S.createSticky(dir)
+  await S.writeSticky(dir, tk2.id, '彻底删掉这张')
+  await S.trashSticky(dir, tk2.id)
+  await S.purgeStickyTrash(dir, `sticky:${tk2.id}`)
+  ok('彻底删除后回收站里没有', !(await S.listStickyTrash(dir)).some((e) => e.key === `sticky:${tk2.id}`))
+  ok('彻底删除后列表里也没有', !(await S.listStickies(dir)).some((m) => m.id === tk2.id))
+  ok('彻底删除后文件也没了', !(await fs.readdir(dir)).includes(`${tk2.id}.md`))
+
+  const tk3 = await S.createSticky(dir)
+  await S.writeSticky(dir, tk3.id, '清空回收站之前')
+  await S.trashSticky(dir, tk3.id)
+  const aliveBefore = (await S.listStickies(dir)).length
+  await S.emptyStickyTrash(dir)
+  eq('清空回收站后一条不剩', (await S.listStickyTrash(dir)).length, 0)
+  ok('清空把 .trash 目录整个删掉', !(await fs.readdir(dir)).includes('.trash'))
+  eq('清空不该动还活着的便签', (await S.listStickies(dir)).length, aliveBefore)
+
+  /* ── 贴进来的图片 ──
+     图单独放、不塞正文（正文底下压着一层要逐行对齐的镜像）。
+     这里最险的一条是 removeShot 的路径校验：便签 id 和文件名都来自渲染层，
+     不校验的话一条 `../../index.json` 就能删到别处去。 */
+  const shotter = await S.createSticky(dir)
+  const PNG = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
+  const s1 = await S.addShot(dir, shotter.id, PNG, 'png')
+  ok('贴图返回文件名', s1.ok === true && /^.+\.png$/.test(s1.name ?? ''), JSON.stringify(s1))
+  ok('图落在 media 目录里', await fs.stat(S.shotPath(dir, s1.name)).then(() => true, () => false))
+  eq('记录上挂住了这张图', s1.shots, [s1.name])
+  ok(
+    '图片文件名带便签 id 前缀（回收站靠它清图）',
+    (s1.name ?? '').startsWith(`${shotter.id}-`),
+    s1.name,
+  )
+
+  const s2 = await S.addShot(dir, shotter.id, PNG, 'jpg')
+  eq('第二张追加在后面，不覆盖前一张', s2.shots?.length, 2)
+  ok('扩展名按传进来的走', (s2.name ?? '').endsWith('.jpg'), s2.name)
+
+  const evil = await S.removeShot(dir, shotter.id, '../../index.json')
+  ok(
+    '构造出来的路径删不到别处（index.json 还在）',
+    await fs.stat(path.join(dir, 'index.json')).then(() => true, () => false),
+  )
+  eq('非法文件名被拒时原样退回现有列表', evil, s2.shots)
+
+  const afterRemove = await S.removeShot(dir, shotter.id, s1.name)
+  eq('删掉指定的那一张', afterRemove, [s2.name])
+  ok('文件也真的删了', !(await fs.stat(S.shotPath(dir, s1.name)).then(() => true, () => false)))
+
+  const weird = await S.addShot(dir, shotter.id, PNG, '../../evil')
+  ok('扩展名不合法时退回 png（不会拼出古怪路径）', /\.png$/.test(weird.name ?? ''), weird.name)
+
+  /* 存为笔记：图要复制进库里的 attachments/，正文末尾补 Markdown 链接。
+     是复制不是搬走 —— 这张纸如果留着继续写，底下那条托盘不该当场裂开 */
+  const withImg = await S.saveToVault(dir, shotter.id, vault)
+  ok('带图的便签能存进库', withImg.ok === true, withImg.error)
+  const imgMdText = await fs.readFile(path.join(vault, withImg.rel ?? 'x'), 'utf8')
+  ok('正文末尾补上了图片链接', /!\[\]\(attachments\/.+\.(jpg|png)\)/.test(imgMdText), imgMdText.slice(-60))
+  const attFiles = await fs.readdir(path.join(vault, 'attachments')).catch(() => [])
+  ok('图复制进了 attachments', attFiles.length >= 1, attFiles.join(','))
+  ok('便签自己那份没被搬走', await fs.stat(S.shotPath(dir, weird.name)).then(() => true, () => false))
+
+  /* 只贴了图、一个字没写，也算有内容 —— 以前会被判成空便签存不出去 */
+  const onlyShot = await S.createSticky(dir)
+  await S.addShot(dir, onlyShot.id, PNG, 'png')
+  const onlyShotSaved = await S.saveToVault(dir, onlyShot.id, vault)
+  ok('只有图没写字的便签也能存', onlyShotSaved.ok === true, onlyShotSaved.error)
+
+  /* 彻底删掉一张贴过图的纸，图要跟着走（不然删十次攒下几十兆垃圾） */
+  const imgTrash = await S.createSticky(dir)
+  const gone = await S.addShot(dir, imgTrash.id, PNG, 'png')
+  await S.writeSticky(dir, imgTrash.id, '带图的便签')
+  await S.trashSticky(dir, imgTrash.id)
+  await S.purgeStickyTrash(dir, `sticky:${imgTrash.id}`)
+  ok(
+    '彻底删除时连它的图一起清掉',
+    !(await fs.stat(S.shotPath(dir, gone.name)).then(() => true, () => false)),
+  )
+
+  /* 纸色改动能存住。渲染层要靠它，主进程只负责记 */
+  await S.patchSticky(dir, tk1.id, { color: 'lilac' })
+  eq(
+    '纸色改动存得住',
+    (await S.listStickies(dir)).find((m) => m.id === tk1.id)?.color,
+    'lilac',
+  )
+
   /* ── 坏数据 ── */
   await fs.writeFile(path.join(dir, 'index.json'), '{ 这不是 json', 'utf8')
   const survived = await S.listStickies(dir)

@@ -73,6 +73,30 @@ contextBridge.exposeInMainWorld('sticky', {
     ipcRenderer.on('sticky:focus', () => cb())
   },
 
+  /**
+   * 开场要的那一份数据。
+   *
+   * 以前是窗口自己从地址栏的 `?id=` 里读，再拿去 invoke('load')。改成由主进程
+   * 直接给，是为了让「预热池」那条路走得通：池里的窗口是没有 id 的（谁知道
+   * 用户下次要点哪张纸），被认领时改地址栏就得重新加载整个页面，那 200 多
+   * 毫秒又还回去了。改成一次性把数据推过来，窗口不用重载。
+   */
+  init: (): Promise<{
+    id: string
+    text: string
+    pinned: boolean
+    color: string
+    savedTo?: string
+    tags?: string[]
+    shots?: string[]
+  } | null> => ipcRenderer.invoke('sticky:init'),
+
+  /** 正在跑着的池窗口被认领：整份新数据推过来，界面照它全量覆盖 */
+  onBind: (cb: (d: unknown) => void): void => {
+    ipcRenderer.removeAllListeners('sticky:bind')
+    ipcRenderer.on('sticky:bind', (_e, d: unknown) => cb(d))
+  },
+
   /** 从列表里右键换了纸色：这边跟着换，不然纸上还是旧的 */
   onColor: (cb: (color: string) => void): void => {
     ipcRenderer.removeAllListeners('sticky:color')

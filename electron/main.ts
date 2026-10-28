@@ -24,6 +24,7 @@ import { checkUpdate } from './update'
 import { lockZoom } from './lock-zoom'
 import { readPrefs, writePrefs } from './prefs'
 import {
+  bindOf,
   closeAllStickies,
   flushAll as flushStickies,
   initStickyWindows,
@@ -472,6 +473,10 @@ ipcMain.handle('sticky:remove', async (_e, id: string) => {
 /* 主窗口这一侧：列表、开一张、开一张已有的、当前工作区、桌面偏好 */
 ipcMain.handle('sticky:list', () => listStickies(stickyDirOf()))
 ipcMain.handle('sticky:new', () => openNewSticky())
+/* 便签窗口自己来问「我是哪张纸」。按 webContents 认人 —— 池里那个窗口
+   在没被认领之前 id 是空的，但它同样得有一份答案回去，不然界面会以为
+   这张纸已经不在了 */
+ipcMain.handle('sticky:init', (e) => bindOf(e.sender.id))
 ipcMain.handle('sticky:open', (_e, id: string) => openSticky(id))
 ipcMain.handle('sticky:closeAll', async () => {
   const n = await closeAllStickies()

@@ -19,7 +19,9 @@ import { Check, NotebookPen, Palette, Pin, PinOff, X } from 'lucide-vue-next'
 import { PAPERS, paperOf } from './colors'
 import { mirrorHtml, tagsInText, toggleBox } from './rich'
 
-const id = new URLSearchParams(location.search).get('id') ?? ''
+/* id 现在由主进程在开窗时给（见 apply()），不再是地址栏里那个。
+   窗口本身可以被复用（预热池），所以它必须是个可变的 let，不能是 const。 */
+let id = ''
 
 const text = ref('')
 const pinned = ref(true)
@@ -260,24 +262,47 @@ async function onKey(e: KeyboardEvent) {
   }
 }
 
-onMounted(async () => {
-  const data = await window.sticky.load(id)
-  if (!data) {
-    hint.value = '这张便签已经不在了'
-    return
-  }
-  text.value = data.text
-  pinned.value = data.pinned
-  colorKey.value = data.color
-  savedTo.value = data.savedTo ?? ''
-  tags.value = data.tags ?? []
-  await loadShots(data.shots ?? [])
+/**
+ * 把一份数据整个铺到界面上。
+ *
+ * 「整个」是重点：这个窗口可能上一秒还是一张写着「买牛奶」的纸，下一秒被
+ * 认领成了另一张空纸。正文、图、纸色、图钉、提示、色板、大图，漏掉任何一项
+ * 都是上一张纸留下的残影 —— 而残影比慢更难受（用户会以为自己写的东西串了）。
+ */
+async function apply(d: StickyBind) {
+  if (timer) clearTimeout(timer)
+  id = d.id
+  text.value = d.text ?? ''
+  pinned.value = d.pinned !== false
+  colorKey.value = d.color || 'amber'
+  savedTo.value = d.savedTo ?? ''
+  tags.value = d.tags ?? []
+  hint.value = ''
+  viewing.value = ''
+  picker.value = false
+  shots.value = []
+  shotSrc.value = {}
+  await loadShots(d.shots ?? [])
   ready.value = true
   await nextTick()
   ta.value?.focus()
   // 光标放末尾，接着上次继续写
   const n = text.value.length
   ta.value?.setSelectionRange(n, n)
+}
+
+onMounted(async () => {
+  /* 先挂监听再问数据：池窗口被认领时主进程是「推」过来的，
+     如果晚一步挂，那一次推送就丢了，窗口会停在一张空白纸上 */
+  window.sticky.onBind((d) => void apply(d))
+  const data = await window.sticky.init()
+  if (!data) {
+    hint.value = '这张便签已经不在了'
+    return
+  }
+  /* 池里那个还没被认领的窗口拿到的是空 id —— 它这时候不显示，
+     不必铺内容；等认领时上面那个 onBind 会来一次真正的 apply */
+  if (data.id) await apply(data)
 
   window.sticky.onFocus(() => ta.value?.focus())
   // 列表里右键换了纸色：这张纸正开着，得跟着换

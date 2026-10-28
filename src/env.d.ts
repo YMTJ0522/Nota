@@ -187,6 +187,9 @@ interface TreeNode {
  * 和主界面的 window.api 是两个完全独立的暴露面 —— 便签窗口拿不到笔记、
  * 工作区、AI、云同步的任何方法。
  */
+/**
+ * 一张便签的开场数据（定义在下面的 declare global 里，便签界面要用）。
+ */
 interface StickyApi {
   load(
     id: string,
@@ -200,6 +203,10 @@ interface StickyApi {
       shots?: string[]
     } | null
   >
+  /** 窗口一打开就要的那份数据。池里那个还没绑定的窗口返回 id 为空的一份 */
+  init(): Promise<StickyBind | null>
+  /** 已经被打开的窗口被认领：主进程把新那张纸的数据整份推过来 */
+  onBind(cb: (d: StickyBind) => void): void
   write(id: string, text: string): Promise<void>
   close(id: string): Promise<void>
   pin(id: string, pinned: boolean): Promise<boolean>
@@ -225,6 +232,24 @@ interface StickyApi {
 declare global {
   /** 由 vite.config.ts 的 define 注入，值取自 package.json */
   const __APP_VERSION__: string
+
+  /**
+   * 一张便签的开场数据。
+   *
+   * 便签窗口有两种出生方式：冷启动现建一个，或者从「预热池」里认领一个
+   * 已经跑起来的空窗口（2.7.20 加的那条路 —— Chromium 建一个渲染进程
+   * 要 200ms 出头，提前建好就不必让用户等）。两条路喂给界面的东西一样，
+   * 所以界面上只有 apply(data) 一个入口。
+   */
+  interface StickyBind {
+    id: string
+    text: string
+    pinned: boolean
+    color: string
+    savedTo?: string
+    tags?: string[]
+    shots?: string[]
+  }
 
   interface Window {
     api: NoteApi
