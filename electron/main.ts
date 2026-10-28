@@ -213,15 +213,48 @@ ipcMain.handle('window:close', () => win?.close())
  */
 
 /**
+ * 数据根覆盖：只给验证用，普通使用不会设它。
+ *
+ * 为什么非要有这个开关：这个软件的数据散在两个地方 ——
+ *   ① userData（localStorage 里的「上次打开的目录」、AI 会话、引导标记）
+ *   ② %LOCALAPPDATA%\Nota（vault.json 指针、prefs、便签目录）
+ * 而 ① 在外部改不动：实测 `--user-data-dir`、覆盖 APPDATA、覆盖 USERPROFILE
+ * 三种办法都只能挪走 Chromium 的缓存目录，localStorage 照样读真实那一份
+ * （SHGetKnownFolderPath 读注册表，不看环境变量）。结果是打包版验证一直在
+ * 读开发者自己的工作区，「全新安装」那条路一次都没走过，而且每次跑还会往
+ * 用户的真实 userData 里写键。
+ *
+ * 设了 NOTA_HOME 之后三样一起挪：userData / LOCAL_APP_DATA / 首次建库的
+ * 「文档」目录。少挪一样就是半隔离 —— 库是空的、界面却还停在旧工作区。
+ *
+ * userData 必须在 app ready 之前改（session 按它建），也不能放在 setPath
+ * 之后又去读旧值，所以这段得挨着 import 下面、顶层执行。
+ */
+const DATA_HOME = (process.env.NOTA_HOME ?? '').trim()
+if (DATA_HOME) {
+  app.setPath('userData', path.join(DATA_HOME, 'userData'))
+  /* 单例锁也落在 userData 下。改了路径之后，验证跑的实例和用户自己开着的
+     那个互不干扰，不会出现「第二个进程把请求转给已有窗口」的假象 */
+  console.log(`[nota] 数据根已改到 ${DATA_HOME}`)
+}
+
+/**
  * 安装时选的笔记目录、界面状态、便签，全都拼在 %LOCALAPPDATA%\Nota\ 下面。
  * 不用 app.getPath('userData')：那个在免安装版里可能被重定向到临时解压目录，
  * 同一个用户装两次会算成两个位置。
  */
-const LOCAL_APP_DATA =
-  process.env.LOCALAPPDATA ||
-  (process.platform === 'win32'
-    ? path.join(process.env.USERPROFILE ?? '', 'AppData', 'Local')
-    : app.getPath('appData'))
+const LOCAL_APP_DATA = DATA_HOME
+  ? path.join(DATA_HOME, 'local')
+  : process.env.LOCALAPPDATA ||
+    (process.platform === 'win32'
+      ? path.join(process.env.USERPROFILE ?? '', 'AppData', 'Local')
+      : app.getPath('appData'))
+
+/** 首次建库落在哪。默认「文档」，跟 LOCAL_APP_DATA 一样能被 NOTA_HOME 带走。
+ *  写成函数是因为 app.getPath('documents') 走系统已知文件夹，等真正用到时再问，
+ *  免得顶层求值碰上 ready 之前的那点边角情况 */
+const defaultVaultDir = (): string =>
+  DATA_HOME ? path.join(DATA_HOME, 'documents') : app.getPath('documents')
 
 /**
  * 快捷键。用户可以整组关掉（设置里），但键位不给改：能改的话
@@ -1129,11 +1162,9 @@ ipcMain.handle('vault:ensure', async () => {
      安装程序写、这里读 —— 这样「装的时候挑了 D:\我的笔记」,
      第一次打开就落在 D:\我的笔记，而不是又跑回「文档\Nota」。
      读不到（没选过 / 文件坏了 / 盘拔了）就退回原来的默认行为。 */
-  const localAppData =
-    process.env.LOCALAPPDATA || path.join(app.getPath('home'), 'AppData', 'Local')
-  const chosen = await readVaultPointer(localAppData)
+  const chosen = await readVaultPointer(LOCAL_APP_DATA)
   if (chosen) return ensureVaultAt(chosen)
-  return ensureVault(app.getPath('documents'))
+  return ensureVault(defaultVaultDir())
 })
 
 // 递归读取目录树（只读 .md，跳过隐藏目录）
@@ -2020,8 +2051,7 @@ function mediaUrl(abs: string) {
  * 本来就没有「安装」这一步，数据留着才对。
  */
 async function consumeFreshInstall() {
-  const localAppData = process.env.LOCALAPPDATA || path.join(app.getPath('home'), 'AppData', 'Local')
-  const flag = await takeFreshFlag(localAppData)
+  const flag = await takeFreshFlag(LOCAL_APP_DATA)
   if (!flag) return
   try {
     await session.defaultSession.clearStorageData({
