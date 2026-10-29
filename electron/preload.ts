@@ -100,7 +100,16 @@ contextBridge.exposeInMainWorld('api', {
   /* AI：请求在主进程发出，绕开渲染进程的 CORS 限制。
      回答是流式的：onAiDelta 收增量，aiChat 的 Promise 在流结束时才 resolve。 */
   aiChat: (
-    cfg: { baseUrl: string; model: string; apiKey: string; system: string; temperature: number },
+    cfg: {
+      baseUrl: string
+      model: string
+      apiKey: string
+      system: string
+      temperature: number
+      /** 内部小请求（判断要不要联网）用：不推流、限制长度 */
+      silent?: boolean
+      maxTokens?: number
+    },
     messages: { role: string; content: string }[],
   ): Promise<{ ok: boolean; text?: string; reasoning?: string; error?: string }> =>
     ipcRenderer.invoke('ai:chat', cfg, messages),
@@ -288,6 +297,31 @@ contextBridge.exposeInMainWorld('api', {
   setActiveRoot: (root: string | null): Promise<boolean> =>
     ipcRenderer.invoke('desktop:activeRoot', root),
   revealStickies: (): Promise<string> => ipcRenderer.invoke('desktop:revealStickies'),
+  /** 数据存放位置：笔记库、库内 .nota、机器级登记目录 */
+  dataLocation: (): Promise<{ vault: string; nota: string; machine: string }> =>
+    ipcRenderer.invoke('desktop:dataLocation'),
+  /** 开窗前主进程读好的主题。读不到是空串，渲染层退回系统偏好 */
+  bootTheme: ((): 'light' | 'dark' | null => {
+    const arg = process.argv.find((a) => a.startsWith('--nota-theme='))
+    const v = arg ? arg.slice('--nota-theme='.length) : ''
+    return v === 'light' || v === 'dark' ? v : null
+  })(),
+  /** 首屏设置已经应用完了：主进程据此把窗口露出来（免得先闪一下系统配色） */
+  uiReady: (): void => ipcRenderer.send('ui:ready'),
+  revealPath: (p: string): Promise<boolean> => ipcRenderer.invoke('desktop:revealPath', p),
+
+  /* 设置：一个库一份，落在 <库>/.nota/ 下。name 为 'chat' 时读写 chat.json，
+     默认 settings.json。root 传 null 表示「还没有库」，这时读写机器级那份。 */
+  settingsRead: (
+    root: string | null,
+    name?: 'settings' | 'chat',
+  ): Promise<{ data: Record<string, unknown>; path: string; migratedFrom?: string }> =>
+    ipcRenderer.invoke('settings:read', root, name),
+  settingsPatch: (
+    root: string | null,
+    patch: Record<string, unknown>,
+    name?: 'settings' | 'chat',
+  ): Promise<void> => ipcRenderer.invoke('settings:patch', root, patch, name),
 
   /* 窗口控制（自绘标题栏用） */
   minimize: (): Promise<void> => ipcRenderer.invoke('window:minimize'),

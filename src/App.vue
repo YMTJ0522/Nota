@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { onMounted, onBeforeUnmount, ref, computed, watch } from 'vue'
 import { store } from '@/store'
+import { setting, remember } from '@/store/settings'
 import SidePanel from '@/components/SidePanel.vue'
 import SideColumn from '@/components/SideColumn.vue'
 import SplitHandle from '@/components/SplitHandle.vue'
@@ -47,10 +48,9 @@ const cmdk = ref(false)
  * 新手引导。两条路进来：
  *   · 第一次打开工作区时自动放一遍（放完记一笔，之后不再打扰）；
  *   · 侧栏底栏那枚问号，随时重看。
- * 记在 localStorage 而不是工作区里：换一个目录不该再被引导一遍，
- * 人已经知道界面长什么样了。
+ * 记在库里那份 settings.json（和主题、强调色同一处）——
+ * 偏好就该只有一份出处，别再让 localStorage 和库各存一半。
  */
-const TOUR_KEY = 'nota-tour-seen'
 const tourOpen = ref(false)
 
 function openTour() {
@@ -59,11 +59,7 @@ function openTour() {
 
 function closeTour() {
   tourOpen.value = false
-  try {
-    localStorage.setItem(TOUR_KEY, '1')
-  } catch {
-    /* 隐私模式下写不进去也无所谓，顶多下次再看一遍 */
-  }
+  remember('nota-tour-seen', '1')
 }
 
 function onTour() {
@@ -174,23 +170,27 @@ function onPalette(e: Event) {
 
 onMounted(async () => {
   store.initTheme()
-  store.initPrefs()
+  /* 设置是异步的（存在库里的 .nota/settings.json），所以这里要等。
+     initTheme 先跑是为了第一帧就用对配色，别闪一下白。 */
+  await store.initPrefs()
   // 回到上次那个工作区（与上次在看的那篇）。失败就退回欢迎页，不弹错误 ——
   // 「盘不在了」这种事用户自己一看就明白，弹窗反而是打扰。
   // 一次都没打开过的工作区，则直接建一个带欢迎文档的库，不让新用户在
   // 「先选个文件夹」这一步就走掉。
   const restored = await store.restoreLastWorkspace()
+  /* 刚恢复出来的库有自己的那份设置（主题、AI 配置、便签、对话记录都在里面），
+     换过来。initPrefs 那时还不知道是哪个库，读的是机器级那份。 */
+  if (restored) await store.reloadSettings(store.state.root)
   if (!restored) {
     // 这一轮不叠高亮引导：欢迎文档本身就是介绍，两个一起盖上来，
     // 第一屏既看不清正文也看不清按钮。引导随时能从菜单调出来。
     seeding = true
     const ok = await store.bootFirstRun()
     if (ok) {
-      try {
-        localStorage.setItem(TOUR_KEY, '1')
-      } catch {
-        /* 写不进去就下次再弹一次，不影响使用 */
-      }
+      /* 刚建的库：把机器级那份设置搬进去，再把界面按库那份刷一遍 ——
+         不刷的话「还没建库时改的主题」会跟界面上的显示对不上。 */
+      await store.reloadSettings(store.state.root)
+      remember('nota-tour-seen', '1')
     } else {
       seeding = false // 没建起来就还停在欢迎页，之后手动开目录时照常引导
     }
@@ -198,8 +198,13 @@ onMounted(async () => {
   window.addEventListener('keydown', onKey)
   window.addEventListener('nota:palette', onPalette)
   window.addEventListener('nota:library', onLibrary)
+  /* 到这一步主题、宽度、上次那篇笔记都按库里的设置了，可以让主进程
+     把窗口露出来 —— 早于这里显示的话，深色用户会先看到一帧浅色。 */
+  window.api?.uiReady?.()
   window.addEventListener('nota:tour', onTour)
   document.addEventListener('click', onLinkClick)
+  /* 设置与对话是攒一批再写盘，关窗前催一次，别让最后那点改动跟着进程走 */
+  window.addEventListener('beforeunload', store.flushAllOnExit)
 
   /* 便签张数：主进程推、这里存一份，侧栏角标和便签列表都读它。
      只有一个监听点，所以 preload 那边用 removeAllListeners 覆盖式注册
@@ -254,11 +259,7 @@ watch(
   (root) => {
     if (!root) return
     if (seeding) return
-    try {
-      if (localStorage.getItem(TOUR_KEY)) return
-    } catch {
-      return // 读不到就不自动放，别为了引导把启动搞挂
-    }
+    if (setting<string>('nota-tour-seen', '')) return
     window.clearTimeout(tourTimer)
     tourTimer = window.setTimeout(openTour, 800)
   },
@@ -272,6 +273,7 @@ watch(
 
 onBeforeUnmount(() => {
   window.clearTimeout(tourTimer)
+  window.removeEventListener('beforeunload', store.flushAllOnExit)
   window.removeEventListener('keydown', onKey)
   window.removeEventListener('nota:palette', onPalette)
   window.removeEventListener('nota:library', onLibrary)

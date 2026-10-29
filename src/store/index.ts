@@ -7,6 +7,9 @@ import {
   enhancePreview,
 } from '@/editor/preview-rich'
 import { getMarked, highlightFences } from '@/editor/markdown'
+import { loadSettings, remember, setting, flushSettings } from './settings'
+import { loadChat, saveChat, flushChat } from './chatFile'
+import { looksUnsure, parseJudge, skipModelJudge } from './searchIntent'
 
 /* ─────────────────────────────────────────────
    数据模型：字段名自己定，与任何外部项目无关
@@ -251,8 +254,6 @@ interface State {
   aiStage: string
   /** AI 这一轮在改哪一篇。null = 跟着当前打开的那篇走 */
   aiNote: string | null
-  /** 联网检索：开着时每轮提问先去查资料，再把摘要一起交给模型 */
-  aiWeb: boolean
   /** 节点图标：相对路径 → `brand:python` / `emoji:📌`。随工作区走 */
   icons: Record<string, string>
   /** 标签 → 归属图标，跟 icons 同一套素材库、同一个 `kind:id` 值格式 */
@@ -264,7 +265,7 @@ interface State {
   headings: HeadingItem[]
   /** 当前读到哪一节。滚动由编辑区量，大纲那一侧只负责高亮这一条 */
   activeHeading: string | null
-  /** 云同步（WebDAV）。config 持久化在 localStorage，状态是这一屏的 */
+  /** 云同步（WebDAV）。config 跟着库落在 .nota/settings.json，状态是这一屏的 */
   sync: SyncUi
 }
 
@@ -373,7 +374,6 @@ const state = reactive<State>({
   aiBusy: false,
   aiStage: '',
   aiNote: null,
-  aiWeb: false,
   aiWithNote: true,
   icons: {},
   tagIcons: {},
@@ -566,6 +566,10 @@ async function bootFirstRun(): Promise<boolean> {
    选择框最外层的盘符开始点。常常在用的其实就那么两三个目录，
    现在它们排在列表里，点一下就过去了。 */
 
+/* 最近打开的库列表。**故意留在 localStorage**：它记的是本机路径，
+   跟具体某个库无关，拷到另一台电脑上那些路径根本不存在。
+   同理还有 nota-last-root（上次开的是哪个库）—— 它必须在「知道库在哪」
+   之前就能读到，放进库里就成了先有鸡还是先有蛋。 */
 const ROOTS_KEY = 'nota-roots'
 const ROOTS_MAX = 8
 
@@ -614,6 +618,8 @@ function rememberLast(dir: string) {
 }
 
 async function restoreLastWorkspace(): Promise<boolean> {
+  /* 这个指针只能留在 localStorage：它得在「知道是哪个库」之前就读到，
+     放进库里就成了先有鸡还是先有蛋 */
   const dir = localStorage.getItem(LAST_ROOT_KEY)
   if (!dir) return false
   try {
@@ -623,8 +629,10 @@ async function restoreLastWorkspace(): Promise<boolean> {
     rememberRoot(dir)
     rememberLast(dir)
     await loadIcons()
+    /* 库定下来了，设置才能读对地方 —— 「上次看的是哪一篇」就存在库里的设置里 */
+    await loadSettings(dir)
     // 连上次在看的那篇一起回去：只回到目录、还得再找一遍笔记，等于只做了一半
-    const note = localStorage.getItem(LAST_NOTE_KEY)
+    const note = setting<string>(LAST_NOTE_KEY, '')
     if (note && note.startsWith(dir)) {
       const hit = flattenFiles(tree).find((f) => f.path === note)
       if (hit) await openNote(note)
@@ -674,11 +682,14 @@ async function switchWorkspace(dir: string): Promise<boolean> {
   state.savedDraft = ''
   state.activeTag = null
   state.expanded = {}
-  setAiNote(null)
   state.root = dir
   state.tree = tree
   state.icons = {}
   state.tagIcons = {}
+  /* 设置整份换成这个库的：主题、AI 配置、同步账户、对话记录都跟着库走。
+     AI 那边「这一轮改哪一篇」也在设置里，applySettings 会按新库的值覆盖 ——
+     不必手动清，清了反而会把新库记着的那一篇抹掉。 */
+  await reloadSettings(dir)
   state.loading = false
   rememberRoot(dir)
   rememberLast(dir)
@@ -860,11 +871,7 @@ async function openNote(path: string) {
     state.draft = raw
     state.savedDraft = raw
     // 记下「上次在看哪一篇」，下次启动时直接回到它（见 restoreLastWorkspace）
-    try {
-      localStorage.setItem(LAST_NOTE_KEY, path)
-    } catch {
-      /* 落盘失败不影响这次打开 */
-    }
+    remember(LAST_NOTE_KEY, path)
   } finally {
     opening = false
   }
@@ -2733,7 +2740,7 @@ async function importNotes(): Promise<{ name: string; path: string }[]> {
 /** 侧栏显隐 */
 function toggleSidebar() {
   state.sidebar = !state.sidebar
-  localStorage.setItem('nota-sidebar', state.sidebar ? '1' : '0')
+  remember('nota-sidebar', state.sidebar)
 }
 
 /* ── 中间那一列：一个栏放四件事 ──
@@ -2763,7 +2770,6 @@ const COLUMN_KEY = 'nota-column'
 const COLUMN_AUTO_KEY = 'nota-column-auto'
 const AI_NOTE_KEY = 'nota-ai-note'
 const AI_WITH_NOTE_KEY = 'nota-ai-withnote'
-const AI_WEB_KEY = 'nota-ai-web'
 
 /**
  * 关系图的开关。
@@ -2782,7 +2788,7 @@ function setColumnView(v: ColumnView) {
   /* 关系图铺在主区。切到便签 / 附件 / 回收站的时候主区已经换人了，
      图要跟着收起来 —— 不然会出现「我明明切到便签了，屏幕上还是一张图」。 */
   if (v !== 'notes' && v !== 'ai') state.graphOpen = false
-  localStorage.setItem(COLUMN_KEY, v)
+  remember(COLUMN_KEY, v)
 }
 
 /**
@@ -2862,10 +2868,10 @@ function setWidth(key: WidthKey, v: number) {
     state.columnWidth = next
     // 人自己拖过，就别再拿自适应覆盖他的选择（这个决定要跟着人走，重启也别偷偷改回来）
     state.columnAuto = false
-    localStorage.setItem(COLUMN_AUTO_KEY, '0')
+    remember(COLUMN_AUTO_KEY, false)
   } else state.outlineWidth = next
   if (key === 'sidebar') state.sidebarWidth = next
-  localStorage.setItem(`nota-w-${key}`, String(next))
+  remember(`nota-w-${key}`, next)
   return next
 }
 
@@ -2909,15 +2915,15 @@ function resetColumnWidth() {
   const next = autoColumnWidth(window.innerWidth, state.columnView)
   state.columnWidth = next
   state.columnAuto = true
-  localStorage.setItem('nota-w-column', String(next))
-  localStorage.setItem(COLUMN_AUTO_KEY, '1')
+  remember('nota-w-column', next)
+  remember(COLUMN_AUTO_KEY, true)
   return next
 }
 
 /** 编辑区视图模式 */
 function setViewMode(m: ViewMode) {
   state.viewMode = m
-  localStorage.setItem('nota-view', m)
+  remember('nota-view', m)
 }
 
 /** 侧栏导航项：切到「所有笔记」以外的视图时清掉标签筛选，两个筛选不该叠加 */
@@ -2935,32 +2941,38 @@ function setSearchQuery(q: string) {
 
 function toggleOutline() {
   state.outline = !state.outline
-  localStorage.setItem('nota-outline', state.outline ? '1' : '0')
+  remember('nota-outline', state.outline)
 }
 
 /** 自动保存开关 */
 function setAutoSave(v: boolean) {
   state.autoSave = v
-  localStorage.setItem('nota-autosave', v ? '1' : '0')
+  remember('nota-autosave', v)
 }
 
-function initPrefs() {
-  state.autoSave = localStorage.getItem('nota-autosave') !== '0'
-  state.sidebar = localStorage.getItem('nota-sidebar') !== '0'
-  state.outline = localStorage.getItem('nota-outline') !== '0'
+/**
+ * 把这些设置应用到界面上。
+ *
+ * 跟「读」分开是为了切库：打开另一个库时，设置整份换成那个库的，
+ * 但界面已经起来了，不能重新走一遍初始化（监听会挂两遍）。所以读归读、
+ * 应用归应用，切库时再跑一次这个函数就够。
+ */
+function applySettings() {
+  state.autoSave = setting('nota-autosave', true)
+  state.sidebar = setting('nota-sidebar', true)
+  state.outline = setting('nota-outline', true)
   // 注意这里**不读** `nota-column-open`：资料栏已经改成常驻，没有收起一说。
   // 留着那个键不读也不删 —— 万一哪天又想让它可收，旧用户的上次选择还在。
-  const cv = localStorage.getItem(COLUMN_KEY)
-  if (cv && (COLUMN_VIEWS as string[]).includes(cv)) {
+  const cv = setting<string>(COLUMN_KEY, 'notes')
+  if ((COLUMN_VIEWS as string[]).includes(cv)) {
     state.columnView = cv as ColumnView
     state.mainView = cv === 'ai' ? 'ai' : 'note'
   }
-  const an = localStorage.getItem(AI_NOTE_KEY)
+  const an = setting<string>(AI_NOTE_KEY, '')
   state.aiNote = an && an.length ? an : null
-  state.aiWithNote = localStorage.getItem(AI_WITH_NOTE_KEY) !== '0'
-  state.aiWeb = localStorage.getItem(AI_WEB_KEY) === '1'
+  state.aiWithNote = setting(AI_WITH_NOTE_KEY, true)
   for (const key of ['sidebar', 'column', 'outline'] as WidthKey[]) {
-    const raw = Number(localStorage.getItem(`nota-w-${key}`))
+    const raw = setting(`nota-w-${key}`, 0)
     if (raw > 0) {
       const next = clampWidth(key, raw)
       if (key === 'sidebar') state.sidebarWidth = next
@@ -2970,15 +2982,54 @@ function initPrefs() {
   }
   // 「自适应」是个独立的开关：只要人没拖过分隔线，重启后仍然是自适应，
   // 哪怕磁盘上还留着上次量出来的宽度（它只是下次手拖的起点）。
-  state.columnAuto = localStorage.getItem(COLUMN_AUTO_KEY) !== '0'
-  const v = localStorage.getItem('nota-view')
+  state.columnAuto = setting(COLUMN_AUTO_KEY, true)
+  const v = setting<string>('nota-view', 'split')
   if (v === 'write' || v === 'split' || v === 'read') state.viewMode = v
   loadRoots()
+  /* 主题也在这份设置里。切库时要跟着换 —— 否则在新库改过的主题，
+     回到旧库还停在那边的那一套。没有这个键就不动，沿用开机那份。 */
+  const th = setting<string>('nota-theme', '')
+  if (th === 'light' || th === 'dark') {
+    state.theme = th
+    document.documentElement.setAttribute('data-theme', th)
+  }
   initAccent()
   initAi()
   initPrefs2()
-  initSessions()
+}
+
+async function initPrefs() {
+  /* 这时还不知道当前是哪个库（restoreLastWorkspace 要等下面才跑），
+     所以先读机器级那份。确定库之后 reloadSettings 会再按库那份覆盖一次。 */
+  await loadSettings(state.root)
+  applySettings()
+  await initSessions()
   initSync()
+}
+
+/**
+ * 打开/切换了一个库：设置和对话记录整份换成那个库的。
+ *
+ * 只在**已经有界面**的时候用。第一次开机走的还是 initPrefs —— 那里连
+ * 监听一起挂上，重复调用会把监听挂两遍。
+ */
+async function reloadSettings(root: string | null): Promise<void> {
+  await loadSettings(root)
+  applySettings()
+  await initSessions()
+  initSync()
+}
+
+/**
+ * 关窗前把攒着还没落盘的东西发出去。
+ *
+ * 设置和对话都是攒一批再写（见 settings.ts / chatFile.ts），关窗时那一批
+ * 可能还在 200ms 的定时器里。这里手动催一次 —— IPC 是异步的，只能尽力，
+ * 但比「刚改完主题就关窗、下次启动又变回去」要好。
+ */
+function flushAllOnExit(): void {
+  void flushSettings()
+  flushChat()
 }
 
 /**
@@ -2988,70 +3039,71 @@ function initPrefs() {
 function setAccent(a: AccentName) {
   state.accent = a
   document.documentElement.setAttribute('data-accent', a)
-  localStorage.setItem('nota-accent', a)
+  remember('nota-accent', a)
 }
 
 function initAccent() {
-  const saved = localStorage.getItem('nota-accent')
+  const saved = setting<string>('nota-accent', '')
   setAccent(ACCENTS.some((a) => a.id === saved) ? (saved as AccentName) : 'celadon')
 }
 
 function setTheme(t: 'light' | 'dark') {
   state.theme = t
   document.documentElement.setAttribute('data-theme', t)
-  localStorage.setItem('nota-theme', t)
+  remember('nota-theme', t)
 }
 
-/** 改一项 AI 配置并落盘。密钥也存 localStorage——这是本机应用，
-    跟系统钥匙串集成的收益远小于它带来的复杂度。 */
+/** 改一项 AI 配置并落盘。密钥也跟着库走 —— 它写在本机的 .nota/settings.json 里，
+    比 localStorage 强的地方是能看见、能备份、换电脑拷库就跟着走。 */
 function setAiConfig(patch: Partial<AiConfig>) {
   state.ai = { ...state.ai, ...patch }
-  try {
-    localStorage.setItem('nota-ai', JSON.stringify(state.ai))
-  } catch {
-    /* 存不下就算了，本次会话内仍然有效 */
-  }
+  remember('nota-ai', state.ai)
 }
 
 function initAi() {
-  try {
-    const raw = localStorage.getItem('nota-ai')
-    if (!raw) return
-    const saved = JSON.parse(raw) as Partial<AiConfig>
-    state.ai = { ...AI_DEFAULTS, ...saved }
-  } catch {
-    state.ai = { ...AI_DEFAULTS }
-  }
+  const saved = setting<Partial<AiConfig> | null>('nota-ai', null)
+  state.ai = saved ? { ...AI_DEFAULTS, ...saved } : { ...AI_DEFAULTS }
 }
 
+/**
+ * 开机时先把主题定下来。
+ *
+ * 这时设置文件还没读（那是异步的），但配色必须马上生效，否则第一帧是白的、
+ * 一百多毫秒后再变成深色 —— 每次启动闪一下。
+ *
+ * 以前这里读 localStorage 里的一份副本垫着，代价是主题成了两处数据：两个库
+ * 主题不同时，缓存和真值会打架。现在改由主进程在开窗前同步读一次，经启动
+ * 参数交给 preload（`api.bootTheme`）。副本没了，第一帧照样是对的。
+ */
 function initTheme() {
-  const saved = localStorage.getItem('nota-theme') as 'light' | 'dark' | null
-  const t = saved ?? (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light')
-  setTheme(t)
+  const t =
+    window.api?.bootTheme ??
+    (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light')
+  state.theme = t
+  document.documentElement.setAttribute('data-theme', t)
 }
 
 /* ── 云同步（WebDAV）── */
 
 function setSyncConfig(patch: Partial<SyncUi['config']>) {
   state.sync.config = { ...state.sync.config, ...patch }
-  try {
-    localStorage.setItem('nota-sync', JSON.stringify(state.sync.config))
-  } catch {
-    /* 存不下就算了 */
-  }
+  remember('nota-sync', state.sync.config)
 }
 
+/** 自动同步的定时器。切库会再调一次 initSync，不去重就会越挂越多 */
+let syncTimer: ReturnType<typeof setInterval> | null = null
+
 function initSync() {
-  try {
-    const raw = localStorage.getItem('nota-sync')
-    if (raw) state.sync.config = { ...state.sync.config, ...JSON.parse(raw) }
-  } catch {
-    /* 坏了就当没配过 */
+  const saved = setting<Partial<SyncUi['config']> | null>('nota-sync', null)
+  if (saved) state.sync.config = { ...state.sync.config, ...saved }
+  if (syncTimer !== null) {
+    clearInterval(syncTimer)
+    syncTimer = null
   }
   if (state.sync.config.url) {
     void runSync(true)
     // 静默自动同步：每 10 分钟一轮，只有开着「自动」才跑
-    setInterval(() => {
+    syncTimer = setInterval(() => {
       if (state.sync.config.auto && state.sync.config.url && state.root) void runSync(true)
     }, 10 * 60 * 1000)
   }
@@ -3130,31 +3182,20 @@ function applyPrefs() {
 function setPrefs(patch: Partial<Pick<State, PrefKey>>) {
   Object.assign(state, patch)
   applyPrefs()
-  try {
-    localStorage.setItem(
-      'nota-prefs',
-      JSON.stringify({
-        bg: state.bg,
-        density: state.density,
-        fontSize: state.fontSize,
-        lineHeight: state.lineHeight,
-        measure: state.measure,
-        lineWrap: state.lineWrap,
-        lineNumbers: state.lineNumbers,
-      }),
-    )
-  } catch {
-    /* 存不下就只在本次会话生效 */
-  }
+  remember('nota-prefs', {
+    bg: state.bg,
+    density: state.density,
+    fontSize: state.fontSize,
+    lineHeight: state.lineHeight,
+    measure: state.measure,
+    lineWrap: state.lineWrap,
+    lineNumbers: state.lineNumbers,
+  })
 }
 
 function initPrefs2() {
-  try {
-    const raw = localStorage.getItem('nota-prefs')
-    if (raw) Object.assign(state, JSON.parse(raw) as object)
-  } catch {
-    /* 坏数据就当没有 */
-  }
+  const saved = setting<Record<string, unknown> | null>('nota-prefs', null)
+  if (saved) Object.assign(state, saved)
   applyPrefs()
 }
 
@@ -3162,11 +3203,7 @@ function initPrefs2() {
 function resetPrefs() {
   Object.assign(state, PREF_DEFAULTS)
   applyPrefs()
-  try {
-    localStorage.removeItem('nota-prefs')
-  } catch {
-    /* 忽略 */
-  }
+  remember('nota-prefs', null)
 }
 
 /* ── AI 编写：对话页 ── */
@@ -3278,49 +3315,67 @@ function pushChat(role: 'user' | 'assistant', content: string, error?: string) {
 
 /* ── 落盘 ──
    对话是用户自己敲出来的东西，重启就没了会很恼人。
-   但 localStorage 只有几 MB，所以两头都设上限：会话数、单会话消息数。 */
+   存在 <库>/.nota/chat.json。仍然两头都设上限：会话数、单会话消息数 ——
+   不是为了省空间，是一屏历史里塞三百个会话谁也没法找。 */
 function saveSessions() {
-  try {
-    localStorage.setItem(
-      CHAT_STORE_KEY,
-      JSON.stringify({
-        active: state.activeSessionId,
-        sessions: state.sessions.slice(0, SESSION_LIMIT).map((s) => ({
-          id: s.id,
-          title: s.title,
-          updatedAt: s.updatedAt,
-          messages: s.messages.slice(-MESSAGE_LIMIT),
-        })),
-      }),
-    )
-  } catch {
-    /* 配额满了就算了，对话留在内存里照常用 */
-  }
+  /* 对话记录跟库走，落在 <库>/.nota/chat.json（见 store/chatFile.ts）。
+     写盘是攒 800ms 一次 —— 流式回答期间不会反复落盘。 */
+  saveChat({
+    active: state.activeSessionId,
+    sessions: state.sessions.slice(0, SESSION_LIMIT).map((s) => ({
+      id: s.id,
+      title: s.title,
+      updatedAt: s.updatedAt,
+      messages: s.messages.slice(-MESSAGE_LIMIT),
+    })),
+  })
 }
 
-function initSessions() {
-  try {
+/**
+ * 读回对话记录。
+ *
+ * 老版本存在 localStorage 里，这里做一次迁移：文件里没有、localStorage 里有，
+ * 就把老的写进文件。搬完不删 localStorage —— 装回旧版本时那边还是完整一份。
+ */
+async function initSessions() {
+  let saved = await loadChat(state.root)
+  /* 这一轮的历史是从 localStorage 里捡回来的 —— 那就顺手把库里的文件写出来，
+     下次启动直接读文件。不写的话每次启动都要再捡一次，而且用户在库里把会话
+     删空之后，下次启动又会被旧那份顶回来 */
+  let adopted = false
+
+  if (!saved || !Array.isArray(saved.sessions) || !saved.sessions.length) {
     const raw = localStorage.getItem(CHAT_STORE_KEY)
     if (raw) {
-      const data = JSON.parse(raw) as { active?: number; sessions?: ChatSession[] }
-      const list = Array.isArray(data.sessions) ? data.sessions : []
-      const valid = list.filter((s) => s && typeof s.id === 'number' && Array.isArray(s.messages))
-      if (valid.length) {
-        state.sessions = valid.map((s) => ({
-          id: s.id,
-          title: s.title || '新对话',
-          updatedAt: s.updatedAt || Date.now(),
-          messages: s.messages.filter((m) => m && typeof m.id === 'number'),
-        }))
-        sessionSeq = Math.max(...valid.map((s) => s.id))
-        chatSeq = Math.max(0, ...valid.flatMap((s) => s.messages.map((m) => m.id)))
-        const active = valid.some((s) => s.id === data.active) ? (data.active as number) : valid[0].id
-        activateSession(active)
-        return
+      try {
+        const legacy = JSON.parse(raw) as { active?: number; sessions?: ChatSession[] }
+        if (Array.isArray(legacy.sessions) && legacy.sessions.length) {
+          saved = legacy
+          adopted = true
+        }
+      } catch {
+        /* 老的坏了，当作没有 */
       }
     }
-  } catch {
-    /* 存档坏了就当没有，下面会建一个新的 */
+  }
+
+  const list = Array.isArray(saved?.sessions) ? (saved.sessions as ChatSession[]) : []
+  const valid = list.filter((s) => s && typeof s.id === 'number' && Array.isArray(s.messages))
+  if (valid.length) {
+    state.sessions = valid.map((s) => ({
+      id: s.id,
+      title: s.title || '新对话',
+      updatedAt: s.updatedAt || Date.now(),
+      messages: s.messages.filter((m) => m && typeof m.id === 'number'),
+    }))
+    sessionSeq = Math.max(...valid.map((s) => s.id))
+    chatSeq = Math.max(0, ...valid.flatMap((s) => s.messages.map((m) => m.id)))
+    const active = valid.some((s) => s.id === saved?.active)
+      ? (saved?.active as number)
+      : valid[0].id
+    activateSession(active)
+    if (adopted) saveSessions()
+    return
   }
   newChat()
 }
@@ -3479,11 +3534,12 @@ async function sendChat(text: string, opts: { withNote?: boolean } = {}) {
 
     // ②·b 联网检索。放在组织上下文之后：先知道笔记要说什么，才知道该怎么查
     let webBlock = ''
-    if (state.aiWeb) {
-      const hw = rec.begin('联网检索', q.length > 24 ? `${q.slice(0, 24)}…` : q)
+    const term = await decideSearch(q)
+    if (term) {
+      const hw = rec.begin('联网检索', term.length > 24 ? `${term.slice(0, 24)}…` : term)
       state.aiStage = '正在联网检索…'
       try {
-        const r = await window.api.aiWebSearch(q, 5)
+        const r = await window.api.aiWebSearch(term, 5)
         if (r.ok && r.hits?.length) {
           webBlock = webContextBlock(r.hits)
           msg.sources = r.hits.map((h) => ({ title: h.title, url: h.url }))
@@ -3523,6 +3579,53 @@ async function sendChat(text: string, opts: { withNote?: boolean } = {}) {
       if (!msg.thinking && r.reasoning) msg.thinking = r.reasoning
       const h4 = rec.begin('收到回答')
       rec.end(h4, `${msg.content.length} 字${msg.thinking ? '，另带一段推理' : ''}`)
+
+      /* 「答不出来就去网上找」。
+       *
+       * 前置判断是猜的：它说不用查，结果问的偏偏是件新鲜事，模型就会老实
+       * 交代自己查不到、知识只到某个时间点、让用户自己去搜。这句话不该
+       * 原样当答案交给用户 —— 它把「我不知道」包装成了回答。
+       *
+       * 所以在这里补一次：拿原问题当检索词，把资料塞回去让它重答一遍。
+       * 只补一次。查完还说查不到，那就是真没有，再问也是烧钱。 */
+      if (!webBlock && looksUnsure(msg.content)) {
+        const h5 = rec.begin('回答里说查不到', '补一次联网检索')
+        state.aiStage = '先查一下…'
+        try {
+          const term2 = q.replace(/[。？?！!]+$/g, '').slice(0, 60)
+          const sr = await window.api.aiWebSearch(term2, 5)
+          if (sr.ok && sr.hits?.length) {
+            const block = webContextBlock(sr.hits)
+            const rr = await window.api.aiChat(
+              { ...state.ai, system: `${systemText}\n\n${block}` },
+              [
+                ...messages.slice(1),
+                { role: 'assistant', content: msg.content },
+                {
+                  role: 'user',
+                  content:
+                    '你上一段里说查不到。这是刚检索到的资料，请据此重答；' +
+                    '句末用 [序号] 标出依据，资料里没有的直接说没查到，不要另外补。',
+                },
+              ],
+            )
+            if (rr.ok && rr.text?.trim()) {
+              msg.content = rr.text.trim()
+              msg.sources = sr.hits.map((h) => ({ title: h.title, url: h.url }))
+              if (rr.reasoning) msg.thinking = rr.reasoning
+              rec.end(h5, `补查 ${sr.hits.length} 条来源，已重答`)
+            } else {
+              // 重答失败就保留原来那段：它至少诚实地说过自己不知道
+              rec.end(h5, rr.error ?? '重答没返回内容，保留原回答', 'fail')
+            }
+          } else {
+            rec.end(h5, sr.error ?? '也没检索到结果，保留原回答')
+          }
+        } catch (e) {
+          rec.end(h5, String(e), 'fail')
+        }
+        state.aiStage = ''
+      }
     } else {
       rec.end(h3, r.error ?? '请求失败', 'fail')
       msg.error = r.error ?? '请求失败'
@@ -3557,8 +3660,7 @@ async function retryChat() {
 /** AI 这一轮改哪一篇。传 null 表示跟着当前打开的那篇走 */
 function setAiNote(path: string | null) {
   state.aiNote = path
-  if (path) localStorage.setItem(AI_NOTE_KEY, path)
-  else localStorage.removeItem(AI_NOTE_KEY)
+  remember(AI_NOTE_KEY, path ?? null)
 }
 
 /**
@@ -3572,19 +3674,67 @@ function setAiNote(path: string | null) {
 function setAiWithNote(v: boolean) {
   state.aiWithNote = v
   if (v && !state.aiNote && state.activePath) setAiNote(state.activePath)
-  localStorage.setItem(AI_WITH_NOTE_KEY, v ? '1' : '0')
+  remember(AI_WITH_NOTE_KEY, v)
 }
 
-/**
- * 联网检索开关。
+/* 联网检索没有开关了。
  *
- * 默认关：多数提问不需要联网，而每一轮都先去抓一次网页会白白多等几秒。
- * 开着时会在执行过程里多出一步「联网检索」，查到几条、用的哪个引擎
- * 都写在那一行的结果里 —— agent 做的事得看得见。
+ * 以前是用户自己按一下「联网」，默认关着 —— 等于要求人在提问之前先判断
+ * 「这个问题模型自己知不知道」，而这件事本来就是软件该替他做的判断。
+ * 更常见的结局是没人按，遇到问价格、问版本、问最近发生什么的时候，
+ * 模型一本正经地编一个过时的答案。
+ *
+ * 现在每一轮由 sendChat 自己决定查不查（见 shouldSearch）：明显是在处理
+ * 手头这段文字的任务直接答，看着像事实性问题的先去查一趟。 */
+
+/* ── 这一轮要不要联网：自己判断，不再让用户按开关 ──
+ *
+ * 以前面板上有个「联网」按钮，默认关。等于要求人在提问之前先回答
+ * 「这个问题模型自己知不知道」——那本来就是软件该替他判断的事，而且
+ * 常态是没人按：问到价格、版本、最近发生了什么，模型一本正经地编。
+ *
+ * 现在每一轮自己决定：先过一道很便宜的本地筛（纯文字加工直接答），
+ * 剩下的交给模型判一句。规则本身在 searchIntent.ts，那里能单独验。 */
+
+const JUDGE_SYSTEM = `你在判断一个问题要不要联网查资料才能可靠地回答。
+
+只输出一行，两种格式之一：
+- 需要查：SEARCH: <检索词>
+- 不需要：SKIP
+
+判为 SKIP 的：改写、润色、翻译、总结用户给你的文字、写作建议、纯推理、闲聊、让 AI 扮演角色。
+判为 SEARCH 的：具体事实（价格、版本、日期、人物、产品参数、新闻、法规、赛事）、
+时效性内容、以及你自己拿不准、答错代价大的技术细节。
+
+检索词用最短的关键词，像人在搜索框里会打的，不要整句，不超过 30 字。`
+
+/** 判断请求最多等这么久。它只是「顺手问一句」，卡住就该放弃，不能拖住正题 */
+const JUDGE_TIMEOUT_MS = 7000
+
+/**
+ * 返回要检索的词；返回 null 表示这一轮不联网。
+ *
+ * 任何一步出问题（没配模型、超时、模型不按格式回）都退化成「不查」——
+ * 宁可少查一次，也不能因为一次判断失败让整轮提问卡在那里。
  */
-function setAiWeb(v: boolean) {
-  state.aiWeb = v
-  localStorage.setItem(AI_WEB_KEY, v ? '1' : '0')
+async function decideSearch(q: string): Promise<string | null> {
+  const text = q.trim()
+  if (!text) return null
+  if (skipModelJudge(text)) return null
+
+  try {
+    const r = await Promise.race([
+      window.api.aiChat(
+        { ...state.ai, system: JUDGE_SYSTEM, temperature: 0, silent: true, maxTokens: 48 },
+        [{ role: 'user', content: text.slice(0, 500) }],
+      ),
+      new Promise<null>((res) => setTimeout(() => res(null), JUDGE_TIMEOUT_MS)),
+    ])
+    if (!r || !r.ok || !r.text) return null
+    return parseJudge(r.text)
+  } catch {
+    return null
+  }
 }
 
 /** 把检索结果压成一段模型能直接用的参考资料 */
@@ -3677,6 +3827,8 @@ export const store = {
   toggleOutline,
   setAutoSave,
   initPrefs,
+  reloadSettings,
+  flushAllOnExit,
   /* 外观偏好 */
   setPrefs,
   resetPrefs,
@@ -3686,7 +3838,6 @@ export const store = {
   aiTargetPath,
   setAiNote,
   setAiWithNote,
-  setAiWeb,
   sendChat,
   retryChat,
   clearChat,

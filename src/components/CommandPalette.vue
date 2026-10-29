@@ -17,6 +17,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { CornerDownLeft, FileText, Search, SquareTerminal, X } from 'lucide-vue-next'
 import { store } from '@/store'
 import { cmdEnabled, matchCommands, type Command } from '@/commands'
+import { remember as persist, setting } from '@/store/settings'
 
 const props = defineProps<{ open: boolean }>()
 const emit = defineEmits<{ close: [] }>()
@@ -26,21 +27,15 @@ const { state } = store
 const RECENT_KEY = 'nota.cmdk.recent'
 const RECENT_MAX = 6
 
+/* 「最近用过的命令」跟库走：它记的是命令 id，不是本机路径，
+   换台电脑打开同一个库也该还是那几条顺手的位置 */
 function loadRecent(): string[] {
-  try {
-    const raw = JSON.parse(localStorage.getItem(RECENT_KEY) ?? '[]')
-    return Array.isArray(raw) ? raw.filter((x) => typeof x === 'string').slice(0, RECENT_MAX) : []
-  } catch {
-    return []
-  }
+  const raw = setting<unknown>(RECENT_KEY, [])
+  return Array.isArray(raw) ? raw.filter((x) => typeof x === 'string').slice(0, RECENT_MAX) : []
 }
 
 function saveRecent(ids: string[]) {
-  try {
-    localStorage.setItem(RECENT_KEY, JSON.stringify(ids))
-  } catch {
-    /* 存不进去就只是丢个「最近」，不影响用 */
-  }
+  persist(RECENT_KEY, ids)
 }
 
 const q = ref('')

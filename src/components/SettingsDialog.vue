@@ -217,6 +217,9 @@ const VIEWS: { id: ViewMode; label: string; icon: unknown }[] = [
 /* ── 关于页的运行环境 ──
    版本号只在主进程拿得到，等对话框真的打开时再取一次，取不到就留空。 */
 const env = ref({ electron: '', chrome: '', node: '', platform: '', arch: '' })
+/** 数据存放位置。这一版把设置/便签/对话全收进了库目录，
+    关于页得如实写出来 —— 用户最常问的就是「我的东西到底在哪」 */
+const dataLoc = ref({ vault: '', nota: '', machine: '' })
 const PLATFORM_TEXT: Record<string, string> = {
   win32: 'Windows',
   darwin: 'macOS',
@@ -226,6 +229,11 @@ const envText = computed(() => {
   const p = PLATFORM_TEXT[env.value.platform] ?? env.value.platform
   return env.value.arch ? `${p} · ${env.value.arch}` : p || '—'
 })
+
+/** 在资源管理器里打开一个目录。路径为空时按钮不渲染，这里只是兜底 */
+function reveal(p: string) {
+  if (p) void window.api.revealPath(p)
+}
 
 /** 关于页的四张特性卡。只写真有的东西 —— 这一页是「这软件能干什么」的清单，
     写上去的每一条都得是在这个版本里点得到的。 */
@@ -254,6 +262,12 @@ watch(
       env.value = await window.api.appInfo()
     } catch {
       /* 拿不到就显示占位，不影响设置页其它部分 */
+    }
+    /* 每次打开都重取：可能刚切过库 */
+    try {
+      dataLoc.value = await window.api.dataLocation()
+    } catch {
+      /* 拿不到就不显示路径，不影响别处 */
     }
   },
   { immediate: true },
@@ -1257,6 +1271,37 @@ async function changeWorkspace() {
                   </div>
                 </div>
 
+                <div class="st-h4">数据存放</div>
+                <!-- 一个库装完全部：笔记、附件、历史、图标、便签、设置、AI 配置、
+                     对话记录。这里如实写出来，是因为「我的东西到底在哪」
+                     是用户问得最多的那句，而对得上号的答案应该是一个能点开的路径。 -->
+                <div class="ab-store">
+                  <div class="ab-store-row">
+                    <span class="ab-store-k">笔记库</span>
+                    <span class="ab-store-v" :title="dataLoc.vault">
+                      {{ dataLoc.vault || '还没有打开库' }}
+                    </span>
+                    <button
+                      v-if="dataLoc.vault"
+                      type="button"
+                      class="ab-store-btn"
+                      @click="reveal(dataLoc.vault)"
+                    >
+                      打开
+                    </button>
+                  </div>
+                  <div class="ab-store-row">
+                    <span class="ab-store-k">设置与便签</span>
+                    <span class="ab-store-v" :title="dataLoc.nota">{{ dataLoc.nota }}</span>
+                    <button type="button" class="ab-store-btn" @click="reveal(dataLoc.nota)">
+                      打开
+                    </button>
+                  </div>
+                  <p class="ab-store-note">
+                    拷走上面这个库文件夹，笔记、附件、便签、设置、AI 配置和对话记录就全在里面了。
+                  </p>
+                </div>
+
                 <div class="st-h4">运行环境</div>
                 <div class="ab-env">
                   <div class="ab-env-cell">
@@ -1943,6 +1988,61 @@ async function changeWorkspace() {
 }
 
 /* ══ 关于 ══ */
+/* 数据存放：两行路径 + 一个「打开」。
+   路径一定比栏宽，所以值那一格必须 min-width:0，否则 flex 子项按内容撑开，
+   整块会被顶出面板（这是这套面板里反复踩到的那条）。 */
+.ab-store {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: var(--n-surface);
+  border: 1px solid var(--n-line);
+}
+.ab-store-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.ab-store-k {
+  flex: none;
+  width: 5.2em;
+  font-size: 12px;
+  color: var(--n-fg-faint);
+}
+.ab-store-v {
+  flex: 1;
+  min-width: 0;
+  font-size: 12px;
+  font-family: var(--n-font-mono);
+  color: var(--n-fg-mute);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ab-store-btn {
+  flex: none;
+  padding: 2px 8px;
+  font-size: 11.5px;
+  border-radius: 6px;
+  border: 1px solid var(--n-line);
+  background: transparent;
+  color: var(--n-fg-mute);
+  cursor: pointer;
+}
+.ab-store-btn:hover {
+  color: var(--n-fg);
+  background: var(--n-hover);
+}
+.ab-store-note {
+  margin: 2px 0 0;
+  font-size: 11.5px;
+  line-height: 1.6;
+  color: var(--n-fg-faint);
+}
+
 /* 头图：一块带渐变与光晕的横幅，不再是「一行信息 + 一张清单」。
    内容是「这是什么 + 什么版本」，右下角那句话负责把定位说清楚。 */
 .ab-hero {

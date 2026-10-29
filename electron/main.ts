@@ -23,6 +23,7 @@ import { ensureVault, ensureVaultAt, readVaultPointer, takeFreshFlag } from './v
 import { checkUpdate } from './update'
 import { lockZoom } from './lock-zoom'
 import { readPrefs, writePrefs } from './prefs'
+import { bootThemeOf, migrateStickies, patchSettings, readSettings } from './settings'
 import {
   bindOf,
   closeAllStickies,
@@ -126,6 +127,14 @@ function resolveTrayIcon(): NativeImage | null {
 }
 
 function createWindow() {
+  /* 开窗前定下主题：渲染层读设置是异步的，等它回来第一帧已经画完了，
+     深色用户每次启动都要先闪一下浅色。这里同步读一次交给 preload，
+     第一帧就是对的（也免得再往 localStorage 里存一份主题副本）。 */
+  /* 开窗前先算一次主题，交给 preload 当第一帧的配色。
+     注意：只有安装器写过 vault.json 时这里才知道库在哪；正常启动时库是
+     渲染层报上来的（要等页面跑起来），所以这个值常常是 null —— 那种情况
+     由下面「等渲染层就绪再显示窗口」兜住，而不是退回 localStorage 存副本。 */
+  const boot = bootThemeOf(activeRoot, LOCAL_APP_DATA)
   win = new BrowserWindow({
     width: 1180,
     height: 760,
@@ -136,7 +145,7 @@ function createWindow() {
     minHeight: 480,
     show: false,
     autoHideMenuBar: true,
-    backgroundColor: '#fbfaf6',
+    backgroundColor: boot === 'dark' ? '#16161a' : '#fbfaf6',
     title: 'Nota',
     /* 标题栏与任务栏图标 */
     icon: resolveIcon(),
@@ -148,10 +157,38 @@ function createWindow() {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: false,
+      additionalArguments: boot ? [`--nota-theme=${boot}`] : [],
     },
   })
 
-  win.once('ready-to-show', () => win?.show())
+  /* 什么时候把窗口露出来。
+     只等 ready-to-show 的话，第一帧用的还是「系统偏好」那套配色 —— 设置
+     在 <库>/.nota/settings.json 里，渲染层要等一轮 IPC 才读到，深色用户
+     每次启动都能看见一下白闪。以前靠往 localStorage 再存一份主题副本兜住，
+     代价是主题成了两处数据。
+
+     现在改成等两个条件：画面画出来了（ready-to-show）、渲染层把设置也应用
+     完了（ui:ready）。都到了才显示，用户看到的第一眼就是对的。
+     1.2 秒的保底：渲染层要是因为什么原因没发出来，别让窗口一直不出现。 */
+  let painted = false
+  let settled = false
+  const reveal = () => {
+    if (!painted || !settled) return
+    if (win && !win.isDestroyed()) win.show()
+  }
+  win.once('ready-to-show', () => {
+    painted = true
+    reveal()
+  })
+  ipcMain.removeAllListeners('ui:ready')
+  ipcMain.once('ui:ready', () => {
+    settled = true
+    reveal()
+  })
+  setTimeout(() => {
+    settled = true
+    reveal()
+  }, 1200)
 
   /* 页面缩放必须关（Ctrl ±、触控板捏合都会把整屏放大再缩小，还会记住比例）。
      做法与理由见 electron/lock-zoom.ts */
@@ -255,6 +292,17 @@ const LOCAL_APP_DATA = DATA_HOME
  *  免得顶层求值碰上 ready 之前的那点边角情况 */
 const defaultVaultDir = (): string =>
   DATA_HOME ? path.join(DATA_HOME, 'documents') : app.getPath('documents')
+
+/**
+ * 工作区内的隐藏目录。
+ *
+ * **一个库里面装的是全部东西**：笔记、附件、历史、图标、便签、设置。
+ * 拷走库目录就等于把这台机器上的 Nota 整个搬走，不必再回想「设置在哪、
+ * 便签又在哪」。留在这个目录外面的只有两样，都是描述**这台机器**而不是
+ * 这个库的：vault.json（上次开的是哪个库，它必须在知道库在哪之前就能读）
+ * 和 prefs.json（开机自启、全局快捷键）。
+ */
+const NOTA_DIR = '.nota'
 
 /**
  * 快捷键。用户可以整组关掉（设置里），但键位不给改：能改的话
@@ -443,7 +491,18 @@ async function applyHotkeys(): Promise<void> {
    全部由主进程直接读写磁盘，不经过主窗口：便签窗口和主窗口之间没有依赖，
    主窗收在托盘里甚至从没建过的时候，便签照样能存。 */
 
-const stickyDirOf = () => path.join(LOCAL_APP_DATA, 'Nota', 'stickies')
+/** 机器级的便签目录：还没建库、或者库没打开的时候用它 */
+const machineStickyDir = () => path.join(LOCAL_APP_DATA, 'Nota', 'stickies')
+
+/**
+ * 便签放哪。
+ *
+ * 有库就跟库走：便签是用户写下的东西，应该跟笔记一起被备份、被搬走，
+ * 而不是孤零零留在 %LOCALAPPDATA% 里 —— 换台电脑只拷了库，便签全丢。
+ * 没库才退回机器级：便签刻意和库解耦，一个库都没建的时候也该能按 Alt+N 记一句。
+ */
+const stickyDirOf = () =>
+  activeRoot ? path.join(activeRoot, NOTA_DIR, 'stickies') : machineStickyDir()
 
 /**
  * 便签「存为笔记」的落点。
@@ -660,10 +719,32 @@ ipcMain.handle('desktop:setHotkey', async (_e, on: boolean) => {
 ipcMain.handle('desktop:setAutoStart', async (_e, on: boolean) => setAutoStart(on))
 
 /** 渲染层每打开一个工作区就报一次，便签存笔记时有地方可去 */
-ipcMain.handle('desktop:activeRoot', (_e, root: string | null) => {
+ipcMain.handle('desktop:activeRoot', async (_e, root: string | null) => {
   activeRoot = root
+  /* 打开一个库时顺手把机器级的便签搬进来。
+     只在库里还没有便签目录时搬（见 migrateStickies），重复打开不会叠加。 */
+  if (root) await migrateStickies(root, LOCAL_APP_DATA).catch(() => null)
   return true
 })
+
+/* ── 设置 ──
+   一个库一份，落在 <库>/.nota/settings.json。root 传 null 表示「还没有库」，
+   这时候写机器级那份（%LOCALAPPDATA%\Nota\settings.json），建库后整份搬进去。 */
+ipcMain.handle(
+  'settings:read',
+  (_e, root: string | null, name?: 'settings' | 'chat') =>
+    readSettings(root ?? activeRoot, LOCAL_APP_DATA, name === 'chat' ? 'chat' : 'settings'),
+)
+ipcMain.handle(
+  'settings:patch',
+  (_e, root: string | null, patch: Record<string, unknown>, name?: 'settings' | 'chat') =>
+    patchSettings(
+      root ?? activeRoot,
+      LOCAL_APP_DATA,
+      patch ?? {},
+      name === 'chat' ? 'chat' : 'settings',
+    ),
+)
 
 /** 设置里「打开便签文件夹」 */
 ipcMain.handle('desktop:revealStickies', async () => {
@@ -671,6 +752,33 @@ ipcMain.handle('desktop:revealStickies', async () => {
   await fs.mkdir(d, { recursive: true }).catch(() => {})
   void shell.openPath(d)
   return d
+})
+
+/**
+ * 数据到底存在哪。
+ *
+ * 关于页如实写出来 —— 用户问「我的东西在哪」时，答案应该是能直接看到的
+ * 一个路径，而不是「大概在 AppData 里某个地方」。这也是这一版把设置、
+ * 便签、对话记录全收进库目录的意义：一个文件夹装完全部。
+ */
+ipcMain.handle('desktop:dataLocation', async () => {
+  const vault = activeRoot ?? (await readVaultPointer(LOCAL_APP_DATA)) ?? ''
+  return {
+    /** 笔记库 */
+    vault,
+    /** 设置、便签、对话记录都在这里 */
+    nota: vault ? path.join(vault, NOTA_DIR) : path.join(LOCAL_APP_DATA, 'Nota'),
+    /** 机器级的一点点登记信息（上次开哪个库、开机自启开关） */
+    machine: path.join(LOCAL_APP_DATA, 'Nota'),
+  }
+})
+
+/** 在资源管理器里打开某个目录（关于页那两个按钮用） */
+ipcMain.handle('desktop:revealPath', async (_e, p: string) => {
+  if (!p) return false
+  await fs.mkdir(p, { recursive: true }).catch(() => {})
+  void shell.openPath(p)
+  return true
 })
 
 /* ── AI ──
@@ -684,6 +792,11 @@ interface AiRequest {
   apiKey: string
   system: string
   temperature: number
+  /** 只收取结果、不往界面上推流。给「先判断要不要联网」那种内部小请求用 ——
+      那些字不该出现在用户正在看的回答里 */
+  silent?: boolean
+  /** 限制输出长度。判断类请求只该回一行，不限制的话有的模型能写满一屏 */
+  maxTokens?: number
 }
 type ChatMessage = { role: string; content: string }
 
@@ -782,6 +895,7 @@ ipcMain.handle(
     const controller = new AbortController()
     const timer = setTimeout(() => controller.abort(), AI_TIMEOUT_MS)
     const push = (p: AiPiece) => {
+      if (cfg.silent) return
       if (!e.sender.isDestroyed()) e.sender.send('ai:delta', p)
     }
     try {
@@ -793,6 +907,7 @@ ipcMain.handle(
         messages: body,
         temperature: cfg.temperature,
         stream: true,
+        ...(cfg.maxTokens && cfg.maxTokens > 0 ? { max_tokens: cfg.maxTokens } : {}),
       })
       /* 同一份请求按候选地址依次发：localhost / 127.0.0.1 哪一个通就用哪个。
          只对「连不上」重试——服务器已经回话了（哪怕回的是 4xx）就不再换地址，
@@ -1113,10 +1228,7 @@ onSyncProgress((text) => {
 
 /* ── IPC：文件系统操作，全部在主进程执行，渲染进程只能通过白名单调用 ── */
 
-/* ── 工作区内的隐藏目录 ──
-   .nota 放应用自己产生的东西（回收站、索引等），和笔记混在一起会污染目录树，
-   所以单独藏起来；名字带点前缀，文件管理器里也不显眼。 */
-const NOTA_DIR = '.nota'
+/* 库内隐藏目录下的几个子目录（NOTA_DIR 见文件顶部） */
 const TRASH_DIR = 'trash'
 const ATTACH_DIR = 'attachments'
 
@@ -2094,11 +2206,24 @@ async function boot(): Promise<void> {
   await consumeFreshInstall()
 
   initStickyWindows({
-    localAppData: LOCAL_APP_DATA,
+    /* 便签目录的唯一出处。这里给的是函数而不是路径：窗口随时会开，
+       那时候打开的库可能已经换了（用户切了工作区） */
+    dir: stickyDirOf,
     preload: path.join(__dirname, 'preload-sticky.cjs'),
     rendererDist: RENDERER_DIST,
     devUrl: VITE_DEV_SERVER_URL,
   })
+
+  /* 便签目录现在跟着库走，而库在哪只有 vault.json 知道（渲染层要等窗口
+     加载完才会报上来）。所以这里先把根定下来，否则下面对账会对错目录：
+     库里明明有纸，去机器级目录一数却是空的。顺手把老用户散在机器级的
+     便签搬进库，搬完留着旧那份给「装回旧版本」兜底。 */
+  try {
+    activeRoot = await readVaultPointer(LOCAL_APP_DATA)
+    if (activeRoot) await migrateStickies(activeRoot, LOCAL_APP_DATA)
+  } catch {
+    /* 指针坏了就当没有库，走机器级目录 */
+  }
 
   /* 上一次多半是被强杀 / 断电 / 任务管理器结束掉的：开着的便签没来得及
      走收尾，记录里还写着「开着」，可桌面上什么都没有。开窗前先对一遍账，

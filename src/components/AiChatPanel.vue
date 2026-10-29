@@ -685,7 +685,7 @@ const thinkingLive = computed(
             <FileText :size="11" :stroke-width="1.9" />
             <span class="ae-fact-v">{{ state.aiWithNote ? noteLabel : '不带笔记' }}</span>
           </span>
-          <span v-if="state.aiWeb" class="ae-fact on" title="回答前会先联网查资料">
+          <span class="ae-fact on" title="需要时会自己去查资料，不用手动开">
             <Globe :size="11" :stroke-width="1.9" />
             <span class="ae-fact-v">联网</span>
           </span>
@@ -870,17 +870,13 @@ const thinkingLive = computed(
           </div>
         </div>
 
-        <!-- 联网检索：开着时这一轮会先去查资料再回答。
-             放在模型左边而不是塞进菜单里，因为它是一个要随时看得见的状态。 -->
-        <button
-          class="web-toggle"
-          :class="{ on: state.aiWeb }"
-          :title="state.aiWeb ? '联网检索：开（回答前先查资料）' : '联网检索：关（只用模型自己的知识）'"
-          :aria-pressed="state.aiWeb"
-          @click="store.setAiWeb(!state.aiWeb)"
-        >
+        <!-- 联网不再是开关：每一轮自己判断要不要查。
+             这里只留一枚静态标示，告诉人「它是能上网的」，不需要他去按。
+             所以它不该长得像按钮 —— 没有底色、没有 hover、光标是箭头，
+             按不动的东西别给按得动的反馈。 -->
+        <span class="web-ind" title="需要时会自动联网查资料，不用手动开">
           <Globe :size="13" :stroke-width="1.9" />
-        </button>
+        </span>
 
         <button class="send" :class="{ off: !canSend }" :disabled="!canSend" title="发送 (Enter)" @click="send">
           <ArrowUp :size="15" :stroke-width="2.2" />
@@ -1852,37 +1848,28 @@ const thinkingLive = computed(
   opacity: 0.34;
 }
 
-/* 联网开关：关着时是一枚普通灰图标，开着时是强调色的实心胶囊
-   —— 这一轮会不会出去查资料，扫一眼就知道，不用去读 tooltip。 */
-.web-toggle {
-  padding: 0;
+/* 联网标示：一枚不能按的图标。
+   它只是「这台机器上的 AI 能出去查」的一个事实陈述，按不动就不能有按得动
+   的样子 —— 没有底、没有 hover、光标保持箭头。真正会不会查由每一轮自己
+   判断，查到了会在回答下面列出「联网来源 N 条」。 */
+.web-ind {
   flex: none;
-  width: 26px;
-  height: 26px;
+  /* 把「联网标示 + 发送」当成一组钉到右下角：模型名长短不一（gpt-4o 与
+     本地那一长串），按钮跟在它后面跑的话，每换一次模型就横跳一次 ——
+     这个面板里唯一该固定住的就是「发送在右下角」。 */
+  margin-left: auto;
+  width: 20px;
+  height: 20px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  border: 1px solid transparent;
-  border-radius: var(--n-r-md);
-  color: var(--n-fg-faint);
-  transition: background var(--n-dur) var(--n-ease), color var(--n-dur) var(--n-ease),
-    border-color var(--n-dur) var(--n-ease);
+  color: color-mix(in srgb, var(--n-accent) 62%, var(--n-fg-faint));
+  cursor: default;
 }
 
-.web-toggle svg {
+.web-ind svg {
   fill: none;
   stroke: currentColor;
-}
-
-.web-toggle:hover {
-  background: var(--n-raised);
-  color: var(--n-fg-dim);
-}
-
-.web-toggle.on {
-  color: var(--n-accent);
-  border-color: color-mix(in srgb, var(--n-accent) 40%, transparent);
-  background: color-mix(in srgb, var(--n-accent) 12%, transparent);
 }
 
 .ag-model {

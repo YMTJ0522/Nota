@@ -103,10 +103,23 @@ ok('池里那张空纸没被算进「开着 N 张」', (await evalOn(main, 'wind
 const baseline = await evalOn(main, 'window.api.stickyList()')
 const baseIds = new Set((baseline || []).map((s) => s.id))
 
+/**
+ * 找「被认领的那张纸」。
+ *
+ * 池一被认领就会补一张新的空纸，所以页面上随时可能有两个 sticky.html：
+ * 一个是用户眼前这张，一个是后台备着的空窗口。它们的界面长得一模一样，
+ * 只有 init() 分得清 —— 认领过的那张拿得到 id，池里那张是 null。
+ * 顺手点开第一个的话，打字会打进那张看不见的空纸里，后面的断言全成假的。
+ */
 async function stickyClient() {
   for (let i = 0; i < 40; i++) {
-    const t = (await targets()).find((x) => x.type === 'page' && /sticky\.html/.test(x.url || ''))
-    if (t) return attach(t.webSocketDebuggerUrl)
+    const pages = (await targets()).filter((x) => x.type === 'page' && /sticky\.html/.test(x.url || ''))
+    for (const t of pages) {
+      const c = await attach(t.webSocketDebuggerUrl)
+      const id = await evalOn(c, 'window.sticky.init()').catch(() => null)
+      if (id && id.id) return c
+      c.ws.close()
+    }
     await sleep(150)
   }
   return null

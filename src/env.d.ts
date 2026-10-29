@@ -54,7 +54,16 @@ interface NoteApi {
     root: string,
   ): Promise<{ rel: string; name: string; size: number; mtime: number; isVideo: boolean }[]>
   aiChat(
-    cfg: { baseUrl: string; model: string; apiKey: string; system: string; temperature: number },
+    cfg: {
+      baseUrl: string
+      model: string
+      apiKey: string
+      system: string
+      temperature: number
+      /** 内部小请求（判断要不要联网）用：不推流、限制长度 */
+      silent?: boolean
+      maxTokens?: number
+    },
     messages: { role: string; content: string }[],
   ): Promise<{ ok: boolean; text?: string; reasoning?: string; error?: string }>
   /** 流式增量：回答和推理过程都是边生成边到 */
@@ -160,6 +169,24 @@ interface NoteApi {
   setAutoStart(on: boolean): Promise<boolean>
   setActiveRoot(root: string | null): Promise<boolean>
   revealStickies(): Promise<string>
+  /** 数据存放位置：笔记库、库内 .nota、机器级登记目录 */
+  dataLocation(): Promise<{ vault: string; nota: string; machine: string }>
+  /** 开窗前主进程读好的主题；读不到是 null */
+  bootTheme: 'light' | 'dark' | null
+  /** 首屏设置应用完了，通知主进程可以显示窗口 */
+  uiReady(): void
+  revealPath(p: string): Promise<boolean>
+
+  /* 设置：一个库一份，落在 <库>/.nota/ 下；root 为 null 时用机器级那份 */
+  settingsRead(
+    root: string | null,
+    name?: 'settings' | 'chat',
+  ): Promise<{ data: Record<string, unknown>; path: string; migratedFrom?: string }>
+  settingsPatch(
+    root: string | null,
+    patch: Record<string, unknown>,
+    name?: 'settings' | 'chat',
+  ): Promise<void>
 
   minimize(): Promise<void>
   toggleMaximize(): Promise<boolean>

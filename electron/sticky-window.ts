@@ -43,7 +43,16 @@ const PAPER: Record<string, string> = {
 }
 
 interface Deps {
-  localAppData: string
+  /**
+   * 便签存在哪 —— 由外面给，不在这里算。
+   *
+   * 便签本来在 %LOCALAPPDATA%\Nota 里，后来改成跟着库走（换台电脑只拷库，
+   * 便签不该全丢）。目录该跟着「当前打开的是哪个库」变，而库要等主进程
+   * 读完 vault.json 才知道。这里如果再自己拼一遍路径，两边就会各说各话：
+   * 窗口把字写进机器级目录，列表去库目录里找 —— 用户看到的是「便签存不住」。
+   * 所以只留一个出处，就是主进程那个 stickyDirOf。
+   */
+  dir: () => string
   preload: string
   rendererDist: string
   devUrl?: string
@@ -127,7 +136,7 @@ function payload(meta: Partial<StickyMeta>, text: string): Bind {
   }
 }
 
-const dir = () => path.join(deps.localAppData, 'Nota', 'stickies')
+const dir = () => deps.dir()
 
 /** 主进程手里有正文的那几张，界面显示「开着 N 张」用 */
 export function openStickyCount(): number {
