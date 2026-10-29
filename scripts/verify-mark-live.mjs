@@ -29,7 +29,10 @@ const TMP = path.join(ROOT, '.tmp-mark-live')
 const LOCAL = path.join(TMP, 'local')
 const VAULT = path.join(TMP, 'vault')
 const UD = path.join(TMP, 'ud')
-const STICKIES = path.join(LOCAL, 'Nota', 'stickies')
+/* 便签从 2.8.0 起跟着库走（`<库>/.nota/stickies`）。这里原来种在
+   `LOCALAPPDATA\Nota\stickies` —— 那是 2.8.0 之前的位置，种进去只会在启动时
+   被搬一次，之后读的、写的都是库里那份，于是「写盘了」这条永远是红的。 */
+const STICKIES = path.join(VAULT, '.nota', 'stickies')
 const PORT = 9455
 
 let pass = 0
@@ -50,6 +53,10 @@ fs.rmSync(TMP, { recursive: true, force: true })
 fs.mkdirSync(STICKIES, { recursive: true })
 fs.mkdirSync(VAULT, { recursive: true })
 fs.mkdirSync(UD, { recursive: true })
+/* vault.json 这个指针还在机器目录里（它记的是「上次开哪个库」，跟库无关） */
+fs.mkdirSync(path.join(LOCAL, 'Nota'), { recursive: true })
+/* vault.json 这个指针还在机器目录里（它记的是「上次开哪个库」，跟库无关） */
+fs.mkdirSync(path.join(LOCAL, 'Nota'), { recursive: true })
 fs.writeFileSync(
   path.join(LOCAL, 'Nota', 'vault.json'),
   `${JSON.stringify({ root: VAULT.replace(/\\/g, '/'), at: Date.now() }, null, 2)}\n`,
@@ -195,10 +202,17 @@ try {
   ok('便签墙上有两张', cards === 2, String(cards))
 
   /* 右键第一张 → 标记… */
+  /* 按标题找靶子那张，不认「第一张」：两张纸的 createdAt 一样，
+     排序是并列的，谁在前不算行为的一部分。 */
   const title = await evaluate(`document.querySelector('.sb-card .sb-ctitle')?.textContent`)
-  ok('第一张是靶子那张', title === '重构编辑器的滚动同步', String(title))
+  ok(
+    '墙上有靶子那张',
+    (await evaluate(`[...document.querySelectorAll('.sb-card .sb-ctitle')].some((t) => t.textContent === '重构编辑器的滚动同步')`)) === true,
+    String(title),
+  )
+  const CARD = `[...document.querySelectorAll('.sb-card')].find((c) => c.querySelector('.sb-ctitle')?.textContent === '重构编辑器的滚动同步')`
   await evaluate(`(() => {
-    const c = document.querySelector('.sb-card');
+    const c = ${CARD};
     const r = c.getBoundingClientRect();
     c.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: r.x + 40, clientY: r.y + 24 }));
   })()`)
@@ -226,11 +240,11 @@ try {
   ok('写盘了：这张纸上多了图标', !!after.mk1, JSON.stringify(after))
   ok('只改了被点的那一张', after.mk2 === '', JSON.stringify(after))
 
-  const wallIcon = await evaluate(`document.querySelector('.sb-card .sb-cico svg') !== null`)
-  ok('便签墙上的卡片立刻换成了图标（不等关弹窗）', wallIcon === true, await evaluate(`document.querySelector('.sb-card .sb-cico')?.innerHTML.slice(0, 60)`))
+  const wallIcon = await evaluate(`${CARD}.querySelector('.sb-cico svg') !== null`)
+  ok('便签墙上的卡片立刻换成了图标（不等关弹窗）', wallIcon === true, await evaluate(`${CARD}.querySelector('.sb-cico')?.innerHTML.slice(0, 60)`))
   ok('弹窗里那枚图标是高亮的', (await evaluate(`document.querySelectorAll('.ig-cell.cur').length`)) === 1)
 
-  const listIcon = await evaluate(`document.querySelector('.sv-item .sv-ico svg') !== null`)
+  const listIcon = await evaluate(`[...document.querySelectorAll('.sv-item')].some((it) => it.querySelector('.sv-ico svg'))`)
   ok(
     '左边列表那一条也跟着变了',
     listIcon === true,
@@ -251,11 +265,11 @@ try {
   })()`)
   await sleep(500)
   ok('弹窗关掉了', (await evaluate(`!!document.querySelector('.sm')`)) === false)
-  ok('关掉之后卡片上的图标还在', (await evaluate(`document.querySelector('.sb-card .sb-cico svg') !== null`)) === true)
+  ok('关掉之后卡片上的图标还在', (await evaluate(`${CARD}.querySelector('.sb-cico svg') !== null`)) === true)
 
   /* 去掉图标也得立刻回到圆点 */
   await evaluate(`(() => {
-    const c = document.querySelector('.sb-card');
+    const c = ${CARD};
     const r = c.getBoundingClientRect();
     c.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: r.x + 40, clientY: r.y + 24 }));
   })()`)
@@ -268,7 +282,7 @@ try {
   })()`)
   await sleep(800)
   ok('去掉图标也写盘了', readIcons().mk1 === '', JSON.stringify(readIcons()))
-  ok('去掉之后卡片回到纸色圆点', (await evaluate(`document.querySelector('.sb-card .sb-cico .sb-seal') !== null`)) === true)
+  ok('去掉之后卡片回到纸色圆点', (await evaluate(`${CARD}.querySelector('.sb-cico .sb-seal') !== null`)) === true)
 
   ok('没有脚本报错', errors.length === 0, JSON.stringify(errors).slice(0, 300))
   console.log(`\n${pass} 通过 / ${fail} 失败`)

@@ -842,25 +842,63 @@ function markTaskCheckboxes(src: string): string {
 const TASK_LINE_RE = /^([ \t]*(?:[-*+]|\d+[.)])[ \t]+)\[([ xX])\]/
 
 /**
- * 源码里第 index 个待办行在哪（返回待切换的那个字符的位置）。
+ * 源码里第 index 个待办行在哪（返回要切换的那个字符的位置）。
  *
- * 跳过的只有围栏代码块：里面的 `- [ ]` 只是示例文本，不是真待办。
- * 和 markTaskCheckboxes 用同一套「围栏之外才计数」的规则，序号才对得上。
+ * **「第几个」必须和预览里数的是同一批。** 预览那侧数的是 marked 真正渲染出来的
+ * 复选框（markTaskCheckboxes），所以这里也得先去掉那些 marked 看不到的东西，
+ * 或者它吃掉了行首标记的东西。少排除一样，序号就会往后错一位 —— 点第二条，
+ * 勾掉的是第三条。三条规则，各自对应 `prepareMarkdown` 里的一步：
+ *
+ *  · 围栏代码块里的 `- [ ]` 只是示例文本，不是待办；
+ *  · `%%…%%` 注释在进 marked 之前就被 stripComments 删了；
+ *  · 文首的 frontmatter 同样一行都进不去 marked。
+ *
+ * 反过来，引用块里的 `> - [ ]` marked 是**照常渲染**成待办的，所以行首的 `>`
+ * 要先剥掉再认，否则那里会漏数一条。
  */
 export function findTaskLine(md: string, index: number): { from: number; done: boolean } | null {
+  const lines = md.split('\n')
+
+  /* frontmatter：和 stripFrontMatter 一样，只在文件最开头、且真的能收尾时才剥 */
+  let start = 0
+  if (lines.length > 1 && /^\uFEFF?[ \t]*\\?---[ \t]*$/.test(lines[0])) {
+    for (let n = 1; n < lines.length; n += 1) {
+      if (/^[ \t]*\\?---[ \t]*$/.test(lines[n])) {
+        start = n + 1
+        break
+      }
+    }
+  }
+
   let at = 0
   let pos = 0
+  for (let n = 0; n < start; n += 1) pos += lines[n].length + 1
+
   let fenceChar = ''
-  for (const line of md.split('\n')) {
+  let inComment = false
+  for (let n = start; n < lines.length; n += 1) {
+    const line = lines[n]
     const fence = /^[ \t]*(`{3,}|~{3,})/.exec(line)
     if (fence) {
       if (!fenceChar) fenceChar = fence[1][0]
       else if (fence[1][0] === fenceChar) fenceChar = ''
     } else if (!fenceChar) {
-      const t = TASK_LINE_RE.exec(line)
-      if (t) {
-        if (at === index) return { from: pos + t[1].length + 1, done: t[2].toLowerCase() === 'x' }
-        at += 1
+      /* 行**开头**就在注释里 → 整行都被 stripComments 吃掉。
+         注释从行中间开始的不算：`- [ ] 买牛奶 %%备注%%` 那个待办还在。
+         围栏里不翻这个状态，和 protectFences 的口径一致。 */
+      const wasInComment = inComment
+      if (((line.match(/%%/g)?.length ?? 0) & 1) === 1) inComment = !inComment
+
+      if (!wasInComment) {
+        const q = /^[ \t]*(?:>[ \t]?)+/.exec(line)
+        const skip = q ? q[0].length : 0
+        const t = TASK_LINE_RE.exec(line.slice(skip))
+        if (t) {
+          if (at === index) {
+            return { from: pos + skip + t[1].length + 1, done: t[2].toLowerCase() === 'x' }
+          }
+          at += 1
+        }
       }
     }
     pos += line.length + 1

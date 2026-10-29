@@ -18,7 +18,7 @@
 import { computed, ref } from 'vue'
 import { Check, Plus, StickyNote } from 'lucide-vue-next'
 import { store, touchStickies } from '@/store'
-import { dropFromStickies, stickyStore } from '@/store/stickies'
+import { dropFromStickies, isPicked, stickyPick, stickyStore, togglePicked } from '@/store/stickies'
 import BrandGlyph from '@/components/BrandGlyph.vue'
 import ConfirmDialog from '@/components/ConfirmDialog.vue'
 import WindowControls from '@/components/WindowControls.vue'
@@ -207,11 +207,27 @@ async function setTags(tags: string[]) {
 /** 卡片的纸色。整张铺满而不是只染一条边：一面墙上各种颜色的纸，是这一屏的气质 */
 function cardStyle(s: StickyItem) {
   const p = paperOf(s.color)
+  /* 选中那几张在纸色外面再套一圈强调色。写在 boxShadow 里而不是 CSS 里 ——
+     纸色是内联样式，外面那条 ring 也得跟着内联，不然会被内联的那份盖掉。 */
+  const ring = stickyPick.on && isPicked(s.id) ? `, 0 0 0 2px var(--n-accent)` : ''
   return {
     background: p.bg,
     color: p.fg,
-    boxShadow: `0 0 0 1px ${p.dim}22, 0 1px 2px ${p.dim}33`,
+    boxShadow: `0 0 0 1px ${p.dim}22, 0 1px 2px ${p.dim}33${ring}`,
   }
+}
+
+/**
+ * 点一张纸：平常是「放到桌面上」；在选择模式里就是勾上它。
+ *
+ * 和左边那一列同一个语义 —— 一边勾、一边点，两边的手感不该是两套。
+ */
+function onCard(s: StickyItem) {
+  if (stickyPick.on) {
+    togglePicked(s.id)
+    return
+  }
+  void open(s)
 }
 
 function dimStyle(s: StickyItem) {
@@ -231,7 +247,10 @@ function hoverStyle(s: StickyItem) {
       <span class="sb-ic"><StickyNote :size="14" :stroke-width="1.9" /></span>
       <span class="sb-name">便签</span>
       <span class="sb-n">
-        {{ items.length }} 张<template v-if="openCount"> · {{ openCount }} 张在桌面上</template>
+        <template v-if="stickyPick.on">已选 {{ stickyPick.ids.length }} / {{ shown.length }}</template>
+        <template v-else>
+          {{ items.length }} 张<template v-if="openCount"> · {{ openCount }} 张在桌面上</template>
+        </template>
       </span>
 
       <button
@@ -260,9 +279,14 @@ function hoverStyle(s: StickyItem) {
           v-for="s in shown"
           :key="s.id"
           class="sb-card"
-          :class="{ archived: !!s.closedAt, menu: menu?.id === s.id }"
+          :class="{
+            archived: !!s.closedAt,
+            menu: menu?.id === s.id,
+            pick: stickyPick.on,
+            on: stickyPick.on && isPicked(s.id),
+          }"
           :style="cardStyle(s)"
-          @click="open(s)"
+          @click="onCard(s)"
           @contextmenu.prevent="onMenu($event, s)"
         >
           <div class="sb-top">
@@ -274,6 +298,11 @@ function hoverStyle(s: StickyItem) {
             <span class="sb-time" :style="dimStyle(s)">{{ relTime(s.updatedAt || s.createdAt) }}</span>
             <Check v-if="s.savedTo" class="sb-saved" :size="11" :stroke-width="2.8" />
           </div>
+
+          <!-- 选择模式里的勾选框。挑东西的时候时间不重要，那个位置让给它 -->
+          <span v-if="stickyPick.on" class="sb-pick" :class="{ on: isPicked(s.id) }">
+            <Check v-if="isPicked(s.id)" :size="11" :stroke-width="3.2" />
+          </span>
 
           <h3 class="sb-ctitle">{{ s.title }}</h3>
           <p v-if="s.preview" class="sb-cbody" :style="dimStyle(s)">{{ s.preview }}</p>
@@ -550,6 +579,47 @@ function hoverStyle(s: StickyItem) {
   box-shadow:
     0 0 0 2px var(--n-accent),
     0 6px 16px rgba(0, 0, 0, 0.16) !important;
+}
+
+/* ── 选择模式 ──
+   左边那一列在勾的时候，这边是同一批纸的另一面。以前挑完回头看墙上，
+   选中和没选中长得一模一样，还得回左边数第几条。现在每张纸角上多一枚勾，
+   挑中的那张在纸色外面再套一圈强调色（描边写在 cardStyle 里，见那边的注释）。 */
+.sb-card.pick {
+  cursor: pointer;
+}
+/* 挑东西的时候「刚刚」「已存档」都不重要，角上那个位置留给勾 */
+.sb-card.pick .sb-time,
+.sb-card.pick .sb-saved {
+  display: none;
+}
+.sb-pick {
+  position: absolute;
+  top: 8px;
+  right: 9px;
+  width: 15px;
+  height: 15px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  /* 纸是有颜色的，光靠一圈描边在浅纸上会淡成一道影子 —— 垫半格白底，
+     空的那枚也看得清「这里能勾」。描边写死深色而不是 currentColor：
+     下面那句 `color: #fff` 是为了勾，currentColor 会跟着变成白 —— 白描边
+     在浅纸上等于没有（踩过）。便签纸的色板全是浅色，深描边两套主题都成立。 */
+  border: 1.5px solid rgba(0, 0, 0, 0.3);
+  background: rgba(255, 255, 255, 0.5);
+  color: #fff;
+  transition:
+    background 0.12s ease,
+    border-color 0.12s ease;
+}
+.sb-pick.on {
+  border-color: var(--n-accent);
+  background: var(--n-accent);
+}
+.sb-pick svg {
+  fill: none;
+  stroke: currentColor;
 }
 
 .sb-top {

@@ -72,6 +72,43 @@ export function reloadStickies(): Promise<void> {
 export function dropFromStickies(ids: string[]) {
   const gone = new Set(ids)
   stickyStore.items = stickyStore.items.filter((s) => !gone.has(s.id))
+  /* 勾选里也可能有它（右键删一张正在挑选的纸）。不摘掉的话「已选 N」会比
+     实际多，下一轮「全选」还会把这个不存在的 id 一起带上。 */
+  if (stickyPick.ids.length) stickyPick.ids = stickyPick.ids.filter((id) => !gone.has(id))
+}
+
+/**
+ * 多选。
+ *
+ * 原来是便签列表自己的一份局部状态 —— 结果是同一批纸在右边那面墙上
+ * 完全看不出「哪几张已经挑中了」：左列一排绿勾，墙上十几张纸长得一模一样，
+ * 还得回左边数序号。所以提到这里，两个视角读同一份。
+ *
+ * 为什么不干脆在墙上也放一套批量按钮：那一屏是用来「看」的，动作都在左边
+ * 那一列（顶栏就那么大）。墙上只负责把挑中的那几张标出来，点一下能加选/取消。
+ */
+export const stickyPick = reactive({
+  /** 是不是在选择模式。关着的时候墙上不长勾选框 —— 常驻的勾选框会让纸不像纸 */
+  on: false,
+  ids: [] as string[],
+})
+
+export function enterPick(seed?: string) {
+  stickyPick.on = true
+  stickyPick.ids = seed ? [seed] : []
+}
+
+export function exitPick() {
+  stickyPick.on = false
+  stickyPick.ids = []
+}
+
+export function isPicked(id: string) {
+  return stickyPick.ids.includes(id)
+}
+
+export function togglePicked(id: string) {
+  stickyPick.ids = isPicked(id) ? stickyPick.ids.filter((x) => x !== id) : [...stickyPick.ids, id]
 }
 
 /* 唯一的订阅点。三种变化都只影响便签，而且都该重拉：

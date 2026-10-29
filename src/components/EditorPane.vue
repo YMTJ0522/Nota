@@ -436,6 +436,14 @@ async function render() {
      mermaid / 公式画完把高度撑起来之后还要再放一次，否则那一下还是会跳。 */
   const paneEl = previewRef.value
   const keepTop = paneEl?.scrollTop ?? 0
+  /* 上一次重排是被「自己勾待办」那一下跳过的：那份 DOM 是就地改的，`html.value`
+     还是改之前的样子 —— 两边已经不同步了。这次算出来的 HTML 若恰好又等于
+     `html.value`（最典型的是紧接着按 Ctrl+Z：该显示「没勾」，DOM 里却还留着
+     勾），Vue 会认为「没变化」而不重画，画面就停在那个半截状态里。手动换一次。 */
+  if (previewDomStale && paneEl && enhanced.html === html.value) {
+    paneEl.innerHTML = enhanced.html
+  }
+  previewDomStale = false
   html.value = enhanced.html
   // 预览换了一批 DOM，标题的纵向位置缓存作废
   marksDirty = true
@@ -1028,6 +1036,9 @@ function onTaskClick(el: HTMLElement) {
   // 否则点了要等零点几秒才有反应，手感像卡了。
   el.classList.toggle('on', done)
   el.setAttribute('aria-checked', done ? 'true' : 'false')
+  /* 记住这一下之后的正文。`draft` 追上来时认出是它，就别再整篇重排
+     （见下面 watch 里的说明）。 */
+  selfToggled = v.state.doc.toString()
 }
 
 /** 在预览里点双链 / 嵌入卡 → 打开那一篇 */
@@ -1700,10 +1711,27 @@ function flashPaneIn() {
    180ms 防抖——低于这个值每敲一个字都要重新解析整篇，
    长文里会明显掉帧；高于这个值又会觉得预览"跟不上手"。 */
 let previewTimer: ReturnType<typeof setTimeout> | null = null
+/** 刚在预览里勾掉待办之后的正文。认出来就不重排，见下 */
+let selfToggled: string | null = null
+/** 上一次重排被跳过了（DOM 就地改过，`html.value` 没跟上）。见 render() 里那一段 */
+let previewDomStale = false
 watch(
   () => state.draft,
-  () => {
+  (now) => {
     if (mode.value === 'write') return
+    /* 勾待办这一下不用重排：那个勾、那条删除线全都由 class + CSS 跟着走，
+       上面 onTaskClick 已经把 DOM 改好了，源码也只动了方括号里一个字符。
+       再整篇重排一次是纯白费，而且看得出来 —— 整块 <ul> 会被拆了重建，
+       刚画上的勾要重新画一遍（看着就是「闪一下」），长文还得跟着重跑
+       高亮、公式、图表。 */
+    const mine = selfToggled === now
+    selfToggled = null
+    if (mine) {
+      /* 这一次的 DOM 已经被 onTaskClick 就地改好了，html.value 却停在改之前 ——
+         记一笔，让下一次真正重排时别被「内容没变」骗过去。 */
+      previewDomStale = true
+      return
+    }
     if (previewTimer) clearTimeout(previewTimer)
     previewTimer = setTimeout(() => void render(), 180)
   },

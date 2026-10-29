@@ -37,7 +37,7 @@ import {
   X,
 } from 'lucide-vue-next'
 import { store, touchStickies } from '@/store'
-import { dropFromStickies, stickyStore } from '@/store/stickies'
+import { dropFromStickies, exitPick, stickyPick, stickyStore } from '@/store/stickies'
 import BrandGlyph from '@/components/BrandGlyph.vue'
 import ConfirmDialog from '@/components/ConfirmDialog.vue'
 import PromptDialog from '@/components/PromptDialog.vue'
@@ -78,9 +78,24 @@ const markBatch = ref(false)
 /* ── 选择模式 ──
    不做「Ctrl 点选」那套隐式交互：便签这一列点一下是「放到桌面上」，是主要
    动作，抢它的修饰键会让人先试错再学会。改成底栏一颗显式的「选择」，
-   进去以后点击才是勾选 —— 两种语义不打架。 */
-const selecting = ref(false)
-const selected = ref<string[]>([])
+   进去以后点击才是勾选 —— 两种语义不打架。
+
+   状态住在 `store/stickies`（不是这一列的局部变量）：右边那面墙摆的是同一批
+   纸，得读出「哪几张挑中了」才标得出来。这里的两个是那份额外状态的别名，
+   读和写都走同一处。 */
+const selecting = computed({
+  get: () => stickyPick.on,
+  set: (v: boolean) => {
+    stickyPick.on = v
+    if (!v) stickyPick.ids = []
+  },
+})
+const selected = computed({
+  get: () => stickyPick.ids,
+  set: (v: string[]) => {
+    stickyPick.ids = v
+  },
+})
 /** Shift 连选的头。在勾选状态之间划一段用 */
 const anchor = ref<string | null>(null)
 /** 批量删除的二次确认（一次问一批，不是逐条问） */
@@ -168,7 +183,8 @@ const allSel = computed(
  * 选中集要跟着数据走：某条被删掉（可能是右边的墙删的）之后，
  * 它不能继续算在「已选 3 张」里 —— 底栏会显示三张、列表上只剩两张。
  *
- * 这是**这一列自己的**显示状态，不是数据同步，所以留在这儿而不是共享模块里。
+ * 剪枝放在这儿，是因为「哪些 id 还算数」取决于这一列看到的那份列表；
+ * 选择本身住在 store 里（右边那面墙要读它，见 store/stickies.ts 的 stickyPick）。
  */
 watch(
   () => stickyStore.items,
@@ -203,6 +219,10 @@ onMounted(() => {
 onBeforeUnmount(() => {
   window.removeEventListener('nota:sticky-select', onSelectReq)
   window.removeEventListener('resize', checkTagsMore)
+  /* 选择状态现在住在 store 里，不会随组件一起消失 —— 离开这一屏得自己收干净，
+     否则下次进来会「一进来就有一排绿勾」。 */
+  exitPick()
+  anchor.value = null
 })
 
 /** 时间只做粗粒度：便签没人关心「3 分钟前」还是「4 分钟前」 */

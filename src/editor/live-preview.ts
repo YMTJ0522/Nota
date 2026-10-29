@@ -63,10 +63,8 @@ const MARKER_NODES = new Set([
 /** 列表标记单独给一层 class，方便用强调色区分 • 与 1. */
 const LIST_MARKER_NODES = new Set(["ListMark"]);
 
-/** 任务列表里已经勾选的那一行，整行弱化 + 删除线。 */
-const TASK_DONE_LINE = /^\s*[-*+]\s+\[[xX]\]\s/;
-/** 任务列表未勾选的行，让 `[ ]` 保持醒目。 */
-const TASK_TODO_LINE = /^\s*[-*+]\s+\[\s\]\s/;
+/** 任务行：圆点、序号、引用块里的（`> - [ ]`）都算 —— 预览那边三种都渲染。 */
+const TASK_LINE = /^[ \t]*(?:>[ \t]?)*(?:[-*+]|\d+[.)])[ \t]+\[([ xX])\](?=[ \t]|$)/;
 
 function buildDecorations(view: EditorView): DecorationSet {
   const ranges: Range<Decoration>[] = [];
@@ -146,11 +144,13 @@ function buildDecorations(view: EditorView): DecorationSet {
     while (pos <= to) {
       const line = view.state.doc.lineAt(pos);
       const text = line.text;
-      if (TASK_DONE_LINE.test(text)) {
-        ranges.push(Decoration.line({ class: "cm-md-task-done" }).range(line.from));
-      } else if (TASK_TODO_LINE.test(text)) {
-        const markIdx = text.indexOf("[");
-        if (markIdx >= 0) {
+      const task = TASK_LINE.exec(text);
+      if (task) {
+        const open = task[0].indexOf("[");
+        if (task[1].toLowerCase() === "x") {
+          ranges.push(Decoration.line({ class: "cm-md-task-done" }).range(line.from));
+        } else if (open >= 0) {
+          const markIdx = task.index + open;
           ranges.push(
             Decoration.mark({ class: "cm-md-task-todo" }).range(
               line.from + markIdx,
