@@ -35,6 +35,7 @@ import {
 } from '@codemirror/search'
 import { notaThemeExtensions } from '@/editor/theme'
 import { countWords, formatWordCount } from '@/editor/word-count'
+import { resolveWikiNote as resolveWikiNoteIn } from '@/editor/wiki-resolve'
 import { createSlashCommandsExtension } from '@/editor/slash-commands'
 import { runAi, type AiAction } from '@/editor/ai'
 import type { SlashMenuRenderState, SlashCommandId } from '@/editor/slash-commands'
@@ -962,29 +963,12 @@ function insertNoteRef(rel: string) {
 /**
  * `[[名字]]` 里的名字对应工作区里哪一篇。
  *
- * 名字不带目录，所以按 Obsidian 那套顺次试：
- *  1. 名字本身就是相对路径（`日记/2026-01`）—— 选择器给的正是这种，必中；
- *  2. 全库只有一个叫这个名字的笔记 —— 就是它；
- *  3. 重名且不止一个 —— 不许猜。猜错了跳到别的笔记上去，
- *     人得回头翻半天才知道自己刚才去了哪儿，还不如明着说找不着。
+ * 规则本身搬到了 `@/editor/wiki-resolve`：旁边那一栏「链接」和关系图
+ * 也要回答同一个问题，三处必须用同一份规则，否则会出现「预览里点得动、
+ * 图里连不上」这种查不出源头的 bug。这里只补上组件里那两样上下文。
  */
 function resolveWikiNote(name: string): string | null {
-  const want = name.replace(/\\/g, '/').replace(/^\/+/, '').replace(/\.md$/i, '')
-  const root = (state.root ?? '').replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase()
-  const files = store.allFiles.value
-  /* 第一档是**路径形式**，重名的时候全靠它（补全遇到重名插的就是路径）。
-     以前这里写的是 `root.replace(/\\/g, '')` —— 把分隔符删掉而不是统一，
-     拼出来是 `C:Users…笔记.md` 这种四不像，一条也命中不了；于是「选择器
-     给的就是路径，必中」这句话是假的，一切重名的笔记都只能掉到下面那条
-     按名字猜的路上，而按名字猜的规则是「重名就不猜」→ 永远指向空处。 */
-  if (root) {
-    const full = `${root}/${want}.md`
-    const hit = files.find((f) => f.path.replace(/\\/g, '/').toLowerCase() === full)
-    if (hit) return hit.path
-  }
-  const base = want.slice(want.lastIndexOf('/') + 1).toLowerCase()
-  const sameBase = files.filter((f) => f.name.replace(/\.md$/i, '').toLowerCase() === base)
-  return sameBase.length === 1 ? sameBase[0].path : null
+  return resolveWikiNoteIn(name, store.allFiles.value, state.root)
 }
 
 /** 双链指向的那篇存不存在，要等 DOM 挂上去才好判断（参数带不过去，见 transformWikiLinks）。

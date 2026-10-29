@@ -4,7 +4,7 @@
  *
  * 它的顶部分成两种情形，和参考图一样：
  *
- * · 「笔记」这一类（笔记 / 大纲 / 引用）—— 顶上一排页签，右边一个「+」。
+ * · 「笔记」这一类（笔记 / 大纲 / 链接）—— 顶上一排页签，右边一个「+」。
  *   三种看法看的是同一批东西，所以并排放在一排里。
  *
  * · 附件库 / 回收站 / AI 编写 —— 各自是一次单独的「去某个地方」，
@@ -24,10 +24,10 @@ import {
   ChevronsDown,
   FilePlus2,
   FileText,
+  Link2,
   ListTree,
   Loader2,
   Paperclip,
-  Quote,
   Sparkles,
   StickyNote,
   Trash2,
@@ -68,14 +68,14 @@ const NOTE_TABS = computed(() =>
   [
     { id: 'notes' as ColumnView, label: '笔记', icon: FileText },
     { id: 'outline' as ColumnView, label: '大纲', icon: ListTree },
-    { id: 'quote' as ColumnView, label: '引用', icon: Quote },
+    { id: 'quote' as ColumnView, label: '链接', icon: Link2 },
   ].filter((t) => t.id !== 'outline' || state.outline),
 )
 
 /**
  * 另外三种：各占一屏，靠侧栏入口切过来。
  *
- * 这张表只有那三种 —— 「笔记 / 大纲 / 引用」是页签，名字和图标在
+ * 这张表只有那三种 —— 「笔记 / 大纲 / 链接」是页签，名字和图标在
  * NOTE_TABS 里。所以「当前这一屏叫什么」要分两路问，不能一路问到底：
  * 拿 SOLO[view] 去问笔记类会拿到 undefined。
  */
@@ -118,7 +118,7 @@ function tabCount(id: ColumnView) {
 /**
  * 新建：顺手把这一列切回「笔记」。
  *
- * 住在资料栏右上角，就得对得起这个位置 —— 在「大纲」「引用」页签下点它，
+ * 住在资料栏右上角，就得对得起这个位置 —— 在「大纲」「链接」页签下点它，
  * 新笔记是建了，可眼前这一屏跟新笔记半点关系都没有，看着像没反应。
  */
 async function doNew() {
@@ -378,7 +378,7 @@ async function doCloseAllSticky() {
   font-variant-numeric: tabular-nums;
   color: var(--n-fg-faint);
   /* 占位宽度锁死：切筛选（所有 → 收藏）时数字从两位变一位，
-     右边的「大纲 / 引用」不该跟着挪一下 —— 位数变化只发生在格子里 */
+     右边的「大纲 / 链接」不该跟着挪一下 —— 位数变化只发生在格子里 */
   min-width: 14px;
   text-align: center;
 }
