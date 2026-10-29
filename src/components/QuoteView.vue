@@ -101,13 +101,20 @@ async function readCached(path: string, mtime: number) {
  */
 function collectOutgoing(text: string) {
   const files = store.allFiles.value
-  const seen = new Set<string>()
+  /* 同一篇只留一行：这一栏回答的是「链到了谁」，不是「用了几种写法」。
+     但**嵌入要留下痕迹** —— `![[甲]]` 和 `[[甲]]` 合成一行时，
+     那一行得带上「嵌入」，否则最显眼的那条信息反而被吞了。 */
+  const at = new Map<string, number>()
   const out: OutRow[] = []
   for (const l of outgoingLinks(text)) {
     const path = resolveWikiNote(l.target, files, state.root)
     const key = path ?? `?${l.target}`
-    if (seen.has(key)) continue
-    seen.add(key)
+    const dup = at.get(key)
+    if (dup !== undefined) {
+      if (l.embed) out[dup].embed = true
+      continue
+    }
+    at.set(key, out.length)
     out.push({
       key,
       name: path ? (path.split(/[\\/]/).pop() ?? l.target).replace(/\.md$/i, '') : l.target,
@@ -120,7 +127,15 @@ function collectOutgoing(text: string) {
   outRows.value = out
 }
 
+/**
+ * 每次扫描领一个号。扫到一半用户换了笔记、或者窗口焦点事件又触发一轮，
+ * 旧的那一轮回来时号已经不是最新的 —— 它写进去的结果会把新的盖掉，
+ * 于是屏幕上显示的是上一篇的反链。所以每轮只认自己是不是最新那号。
+ */
+let scanId = 0
+
 async function scan() {
+  const my = ++scanId
   const target = state.activePath
   const name = targetName.value
   rows.value = []
@@ -141,10 +156,12 @@ async function scan() {
 
   async function worker() {
     for (;;) {
+      if (my !== scanId) return
       const i = cursor++
       if (i >= files.length) return
       const f = files[i]
       const text = await readCached(f.path, f.mtime ?? 0)
+      if (my !== scanId) return
       done.value += 1
       if (!text || !re.test(text)) continue
       // 命中的行各摘一行出来当上下文，最多两条 —— 认出「在哪儿提到的」就够了
@@ -158,6 +175,7 @@ async function scan() {
   }
 
   await Promise.all(Array.from({ length: Math.min(POOL, files.length) }, worker))
+  if (my !== scanId) return
   scanning.value = false
 
   // 按路径排一下，顺序稳定，切来切去不会跳
@@ -197,8 +215,17 @@ function toast(text: string) {
 
 async function refresh() {
   fileCache.clear()
-  await scan()
-  toast('已重扫工作区')
+  /* 先重读工作区：只清自己的缓存不够 —— 外部新增的笔记压根还没进
+     allFiles，扫多少遍都扫不到。重读没变化时不会换掉 tree，
+     所以那一下最多是一次目录遍历。 */
+  const prevTree = state.tree
+  const r = await store.reloadWorkspace({ quiet: true })
+  // 树换过了，上面那个 watcher 已经会在下一拍重扫；没换才需要自己叫一次
+  if (state.tree === prevTree) await scan()
+  const bits = [`已重扫 ${r.total} 篇`]
+  if (r.added) bits.push(`新增 ${r.added}`)
+  if (r.removed) bits.push(`消失 ${r.removed}`)
+  toast(bits.join(' · '))
 }
 </script>
 

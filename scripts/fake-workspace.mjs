@@ -167,6 +167,10 @@ export function makeInject(opts = {}) {
     ' window.__imported = [];' +
     ' const __api = {' +
     `  pickWorkspace: async () => ${JSON.stringify(ws)},` +
+    /* 开窗前主进程就把主题递过来了（`--nota-theme=`）。桩子必须给一个**字符串**：
+       少了这一行，代理会把「缺失的接口」那个函数原样递回来，
+       dataset.theme 就成了函数源码，切主题的断言全是废的。 */
+    '  bootTheme: "light",' +
     /* 首次启动建库。默认返回空 —— 老脚本都在页面加载后才注入，那时
        bootFirstRun 早就因为找不到这个接口安静退出了，行为跟以前一致；
        要测「第一屏就落在欢迎文档上」的，给 vault 传一个回执并前置注入。

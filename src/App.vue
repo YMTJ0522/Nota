@@ -168,6 +168,32 @@ function onPalette(e: Event) {
   search.value = { open: true, body: which === 'body' }
 }
 
+/**
+ * 回到窗口时再看一眼盘。
+ *
+ * Nota 不挂文件监听：云同步是把文件悄悄放进去的，用户也可能在资源管理器里
+ * 新建了一篇 —— 界面就一直停在旧列表上，而唯一能救场的 Ctrl+O「打开笔记库」
+ * 会顺手把当前这篇清空。与其教人记住一个快捷键，不如认一件事：
+ * **切回窗口就等于「我回来看看变了没有」**。
+ *
+ * 4 秒内不重复：在几个窗口之间来回点，不该每次都读一遍盘。
+ * 安静模式下没变化什么都不会弹 —— 见 store.reloadWorkspace。
+ */
+const RELOAD_GAP_MS = 4000
+let lastReload = 0
+
+function peekDisk() {
+  if (!state.root || state.loading) return
+  const now = Date.now()
+  if (now - lastReload < RELOAD_GAP_MS) return
+  lastReload = now
+  void store.reloadWorkspace({ quiet: true })
+}
+
+function onVisible() {
+  if (!document.hidden) peekDisk()
+}
+
 onMounted(async () => {
   store.initTheme()
   /* 设置是异步的（存在库里的 .nota/settings.json），所以这里要等。
@@ -202,6 +228,8 @@ onMounted(async () => {
      把窗口露出来 —— 早于这里显示的话，深色用户会先看到一帧浅色。 */
   window.api?.uiReady?.()
   window.addEventListener('nota:tour', onTour)
+  window.addEventListener('focus', peekDisk)
+  document.addEventListener('visibilitychange', onVisible)
   document.addEventListener('click', onLinkClick)
   /* 设置与对话是攒一批再写盘，关窗前催一次，别让最后那点改动跟着进程走 */
   window.addEventListener('beforeunload', store.flushAllOnExit)
@@ -278,6 +306,8 @@ onBeforeUnmount(() => {
   window.removeEventListener('nota:palette', onPalette)
   window.removeEventListener('nota:library', onLibrary)
   window.removeEventListener('nota:tour', onTour)
+  window.removeEventListener('focus', peekDisk)
+  document.removeEventListener('visibilitychange', onVisible)
   document.removeEventListener('click', onLinkClick)
   ro?.disconnect()
 })

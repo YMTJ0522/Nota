@@ -702,6 +702,127 @@ async function refreshTree() {
   state.tree = await window.api.readTree(state.root)
 }
 
+/** `reloadWorkspace` 干了什么。给调用方决定要不要说话，也方便测试断言 */
+export interface ReloadResult {
+  /** 盘上多了几篇 */
+  added: number
+  /** 盘上少了几篇 */
+  removed: number
+  /**
+   * 当前这篇的状态：
+   * · `''` 没变
+   * · `disk` 外部改过，已读进编辑区
+   * · `dirty` 外部改过，但编进区里有未保存的内容，没动它
+   * · `gone` 盘上已经不在了，编辑区里那份留着
+   */
+  active: '' | 'disk' | 'dirty' | 'gone'
+  total: number
+}
+
+/**
+ * 重新读取工作区：把树从磁盘再读一遍。不换根、不清当前正文。
+ *
+ * 存在的理由：Nota 不监听磁盘。笔记是在资源管理器里新建的、或者云同步
+ * 放进来的，界面就一直停在旧列表上 —— 那时候唯一的出路是 Ctrl+O 重开
+ * 工作区，而 `switchWorkspace` 会把当前这篇清空（它以为你要换库）。
+ * 这里只做一件事：把列表再读一遍。
+ *
+ * 三条规矩，都是为了「别替用户做决定」：
+ * · 正在写的正文**绝不因为刷新而被覆盖** —— 盘上那份更新、而你手上有
+ *   没保存的字，只提示，不替换；
+ * · 盘上找不到当前这篇了，正文也不清：那可能是他最后一稿；
+ * · 没变化就什么都不说。一个每秒都要报「一切正常」的提示，等于噪音。
+ */
+/**
+ * 上次已经提醒过的那份「外部改动」。
+ *
+ * `dirty` 这个状态会一直成立到你保存或放弃为止 —— 每切一次窗口就提醒
+ * 一遍「别覆盖」，那就成了唠叨。同一份内容只提一次，动过才重新提。
+ */
+let warned = ''
+
+async function reloadWorkspace(opts: { quiet?: boolean } = {}): Promise<ReloadResult> {
+  const none: ReloadResult = { added: 0, removed: 0, active: '', total: 0 }
+  if (!state.root) return none
+
+  const before = new Map(allFiles.value.map((f) => [f.path, f.mtime ?? 0]))
+  const next = (await window.api.readTree(state.root)) ?? []
+  const after = new Map(flattenFiles(next).map((f) => [f.path, f.mtime ?? 0]))
+
+  let added = 0
+  let removed = 0
+  let same = before.size === after.size
+  for (const [p, m] of after) {
+    if (before.get(p) !== m) {
+      same = false
+      if (!before.has(p)) added++
+    }
+  }
+  for (const p of before.keys()) if (!after.has(p)) removed++
+
+  /* 一模一样就留着旧的那份树。换一个数组引用会让每个盯着 tree 的组件
+     （链接栏、大纲、关系图）白白重算一遍、列表还要闪一下 ——
+     「切回窗口就刷一次」之后，绝大多数时候其实什么都没变。 */
+  if (!same) state.tree = next
+
+  const path = state.activePath
+  let active: ReloadResult['active'] = ''
+  /** 盘上那份的原文，用来给「提醒过没有」做签名 */
+  let disk = ''
+  if (path && !after.has(path)) {
+    active = 'gone'
+  } else if (path) {
+    /* 拿磁盘那份跟 **`savedDraft`** 比，不是跟 `draft` 比。
+       跟 `draft` 比的话，只要你自己有没保存的字就永远「不一致」——
+       于是每切一次窗口都喊一句「盘上被改过」，成了狼来了。
+       `savedDraft` 是「上一次落盘时写下去的那份」，它变了才说明别人动过。 */
+    try {
+      const raw = (await window.api.readNote(path)) ?? ''
+      disk = raw
+      if (raw !== state.savedDraft) {
+        if (dirty.value) active = 'dirty'
+        else {
+          state.draft = raw
+          state.savedDraft = raw
+          active = 'disk'
+        }
+      }
+    } catch {
+      /* 读不出来就什么都不做 —— 把正文清成空才是灾难 */
+    }
+  }
+
+  const result: ReloadResult = { added, removed, active, total: after.size }
+  if (!opts.quiet) {
+    warned = ''
+    sayReload(result)
+  } else if (active === 'dirty' || active === 'gone') {
+    /* 同一份东西只提一次。`dirty` 会一直成立到你保存或放手为止，
+       不该每切一次窗口都喊一遍。 */
+    const stamp = path + '\u0000' + (active === 'gone' ? 'gone' : disk)
+    if (stamp !== warned) {
+      warned = stamp
+      sayReload(result)
+    }
+  } else if (active === 'disk') {
+    warned = ''
+    sayReload(result)
+  }
+  return result
+}
+
+/** 把一次重读的结果说成人话。只挑真正发生了的事说 */
+function sayReload(r: ReloadResult) {
+  const bits: string[] = []
+  if (r.added) bits.push(`多了 ${r.added} 篇`)
+  if (r.removed) bits.push(`少了 ${r.removed} 篇`)
+  if (r.active === 'disk') bits.push('当前这篇已按磁盘上的版本更新')
+  if (r.active === 'dirty') bits.push('当前这篇在磁盘上被改过，你有未保存的内容，没覆盖')
+  if (r.active === 'gone') bits.push('当前这篇在磁盘上不见了，正文还留着')
+  const text = bits.length ? bits.join('；') : `工作区已是最新（${r.total} 篇）`
+  window.dispatchEvent(new CustomEvent('nota:toast', { detail: text }))
+}
+
 /* ── 节点图标 ──
    文件夹和笔记都可以自己挑一个图标：一组编程语言/技术栈的品牌图标，
    加一组工作向表情。默认是系统那两枚（文件夹 / 文档）。
@@ -3076,9 +3197,16 @@ function initAi() {
  * 参数交给 preload（`api.bootTheme`）。副本没了，第一帧照样是对的。
  */
 function initTheme() {
+  /* 只认字符串。preload 版本对不上时 `bootTheme` 可能根本不存在，
+     而 `??` 对「存在但是个怪东西」没辙 —— 那会把 data-theme 写成
+     "[object Object]" 之类，整屏配色直接回到无色。 */
+  const boot = window.api?.bootTheme
   const t =
-    window.api?.bootTheme ??
-    (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light')
+    typeof boot === 'string' && boot
+      ? boot
+      : window.matchMedia('(prefers-color-scheme: dark)').matches
+        ? 'dark'
+        : 'light'
   state.theme = t
   document.documentElement.setAttribute('data-theme', t)
 }
@@ -3778,6 +3906,7 @@ export const store = {
   switchWorkspace,
   forgetRoot,
   refreshTree,
+  reloadWorkspace,
   loadIcons,
   iconOf,
   setNodeIcon,

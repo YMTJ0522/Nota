@@ -147,6 +147,16 @@ export const commands: Command[] = [
     run: () => store.openWorkspace(),
   },
   {
+    /* 笔记是在资源管理器里新建的、或者云同步塞进来的，界面不会自己知道。
+       这一条就是那个「再看一眼盘」的按钮 —— 它只重读列表，不动你正在写的字。 */
+    id: 'file.reload',
+    title: '重新读取工作区',
+    group: '文件',
+    icon: RefreshCw,
+    keys: ['reload', 'refresh', 'rescan', 'resync', 'shuaxin', 'chongdu'],
+    run: () => store.reloadWorkspace(),
+  },
+  {
     id: 'file.star',
     title: '收藏 / 取消收藏当前笔记',
     group: '文件',
