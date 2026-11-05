@@ -41,9 +41,9 @@
 
 ![分栏视图](./site/shots/hero.png)
 
-提示块与图表：
+阅读模式下的排版（表格、代码块、脚注）：
 
-![提示块与图表](./site/shots/callouts.png)
+![阅读模式的排版](./site/shots/article.png)
 
 关系图：
 
