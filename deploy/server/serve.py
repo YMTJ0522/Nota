@@ -22,6 +22,33 @@ import sys
 ROOT = os.path.dirname(os.path.abspath(__file__))
 CERTDIR = '/etc/nota'
 RANGE_RE = re.compile(r'bytes=(\d*)-(\d*)')
+
+# 磁盘上叫 setup.exe / portable.exe，但用户存下来该看到带版本号的名字。
+# info.json 由部署脚本生成，读它比在代码里写死版本号靠谱。
+_INFO_CACHE = {'mtime': None, 'names': {}}
+
+
+def branded_name(disk_name):
+    key = 'portable' if 'portable' in disk_name.lower() else (
+        'setup' if 'setup' in disk_name.lower() else '')
+    if not key:
+        return disk_name
+    p = os.path.join(ROOT, 'info.json')
+    try:
+        mtime = os.path.getmtime(p)
+        if _INFO_CACHE['mtime'] != mtime:
+            import json
+            with open(p, encoding='utf-8') as f:
+                d = json.load(f)
+            _INFO_CACHE['names'] = {
+                k: (v or {}).get('name') or ''
+                for k, v in (d.get('assets') or {}).items()
+            }
+            _INFO_CACHE['mtime'] = mtime
+        return _INFO_CACHE['names'].get(key) or disk_name
+    except Exception:            # noqa: BLE001  info.json 坏了也要能下载
+        return disk_name
+
 # TLS 握手最多等这么久。超过就丢掉这条连接 —— 只连不说话的客户端
 # （扫描器、半开连接）不能让 443 卡住。
 HANDSHAKE_TIMEOUT = int(os.environ.get('NOTA_HANDSHAKE_TIMEOUT') or 10)
@@ -97,6 +124,13 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         # 下载别让浏览器猜；站点自己的文件里没有需要缓存很久的
         if self.path.startswith('/d/'):
             self.send_header('Accept-Ranges', 'bytes')
+            # 明确告知「这是附件、请你下载」：微信、QQ 这类内置浏览器的
+            # 内核遇到 octet-stream 仍可能就地打开或直接放弃，
+            # 带上 attachment 才会走下载流程
+            name = os.path.basename(self.path.split('?', 1)[0]) or 'Nota-Setup.exe'
+            if name.lower().endswith('.exe'):
+                self.send_header('Content-Disposition',
+                                 'attachment; filename="%s"' % branded_name(name))
         super().end_headers()
 
     def send_head(self):

@@ -5,608 +5,716 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Nota — 一个只做笔记的笔记应用</title>
 <meta name="description" content="Nota 是一个纯本地的 Markdown 笔记应用：文件躺在你自己的目录里，不联网、不上传、不要账号。支持随手便签、双链、关系图、提示块、图表、公式、云同步，可导出 Markdown / HTML / PDF / Word。">
+<meta name="theme-color" content="#FAF7F1">
 <link rel="icon" href="icon.png">
+<script>/* 抢在首帧之前打标记：少数需要 JS 的隐藏态只在这个类存在时生效，
+         脚本没跑起来的话整页就是普通可见的静态页面，不会白屏 */document.documentElement.classList.add('js')</script>
 <style>
-/* ══ 基础 ══
-   配色还是应用里那一套：奶油纸底、墨色字、青绿强调。
-   这一版换掉的是「排法」：更大的标题、更松弛的留白、
-   一处一处跟着滚动进场的动画 —— 高级感来自克制，不来自加东西。 */
+/* ══════════════════════════════════════════
+   Nota 官网
+
+   纸是主角。整页只有三样东西：纸白、墨、产品自己的那支绿（#3F6F5A）。
+   不靠撞色制造记忆点，靠字号、留白、细线和节奏——
+   大标题 100px，正文 16px，中间几乎没有过渡，对比自己会说话。
+
+   动效尽量交给 CSS 滚动驱动动画（animation-timeline: view()），
+   跑在合成器上，不占主线程；不支持的浏览器直接看到静态成品。
+   ══════════════════════════════════════════ */
 :root{
-  --paper:#faf9f5; --paper-2:#f3f1ea; --card:#ffffff;
-  --ink:#1f1e1a; --ink-2:#55534e; --ink-3:#8d897e;
-  --line:#e7e3d9; --line-2:#d9d4c8;
-  --accent:#2f6f52; --accent-2:#245842; --accent-soft:#e9f1ec;
-  --dark:#191a17; --dark-2:#22231f;
-  --radius:16px; --radius-lg:24px;
+  --paper:#FAF7F1;
+  --white:#FFFFFF;
+  --ink:#171614;
+  --ink-2:#5C574E;
+  --ink-3:#8E877A;
+  --line:rgba(23,22,20,.10);
+  --line-2:rgba(23,22,20,.17);
+  --green:#3F6F5A;
+  --green-2:#2E5745;
+  --green-wash:#EDF3EF;
+  --sand:#BFAE8E;
   --font:"PingFang SC","Microsoft YaHei","Noto Sans CJK SC","Hiragino Sans GB",system-ui,-apple-system,"Segoe UI",sans-serif;
-  --font-mono:"JetBrains Mono","Cascadia Code",ui-monospace,Consolas,monospace;
-  --shadow:0 1px 2px rgb(50 45 32 / .05), 0 10px 30px -14px rgb(50 45 32 / .16);
-  --shadow-lg:0 2px 6px rgb(50 45 32 / .06), 0 36px 80px -30px rgb(50 45 32 / .30);
-  --max:1140px;
+  --serif:Georgia,"Times New Roman",serif;
+  --mono:"JetBrains Mono","Cascadia Code",ui-monospace,Consolas,monospace;
+  --max:1200px;
   --ease:cubic-bezier(.22,.8,.3,1);
+  --ease-out:cubic-bezier(.16,1,.3,1);
 }
 *{box-sizing:border-box}
-html{-webkit-text-size-adjust:100%;scroll-behavior:smooth}
+html{-webkit-text-size-adjust:100%;scroll-behavior:smooth;overflow-x:hidden}
 body{
   margin:0;background:var(--paper);color:var(--ink);font-family:var(--font);
-  font-size:16px;line-height:1.8;-webkit-font-smoothing:antialiased;
-  overflow-x:hidden;
+  font-size:16px;line-height:1.8;overflow-x:hidden;
+  -webkit-font-smoothing:antialiased;
 }
-/* 极淡的纸纹：一层几乎看不见的噪点，把「纯平的网页」变成「纸面」 */
-body::before{
-  content:"";position:fixed;inset:0;pointer-events:none;z-index:0;opacity:.5;
-  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2'/%3E%3CfeColorMatrix values='0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 .03 0'/%3E%3C/filter%3E%3Crect width='140' height='140' filter='url(%23n)'/%3E%3C/svg%3E");
-}
-main,header.nav,footer{position:relative;z-index:1}
-img{max-width:100%;height:auto;display:block} /* height:auto 是命门：少了它，缩宽时图会被压扁 */
-a{color:var(--accent);text-decoration:none}
-.wrap{max-width:var(--max);margin:0 auto;padding:0 28px}
-h1,h2,h3,h4{margin:0;line-height:1.25;letter-spacing:-.02em;font-weight:700}
+img{max-width:100%;height:auto;display:block}
+a{color:inherit;text-decoration:none}
+h1,h2,h3,h4{margin:0;line-height:1.14;letter-spacing:-.018em;font-weight:700}
 p{margin:0}
-code,kbd{font-family:var(--font-mono);font-size:.88em}
+code,kbd{font-family:var(--mono);font-size:.86em}
+code{background:rgba(23,22,20,.055);padding:1.5px 5px;border-radius:4px;white-space:nowrap}
 kbd{
-  padding:1px 7px;border-radius:6px;border:1px solid var(--line-2);
-  border-bottom-width:2px;background:#fff;color:var(--ink-2);white-space:nowrap;
+  padding:1px 6px;border-radius:4px;background:var(--white);
+  border:1px solid var(--line-2);border-bottom-width:2px;color:var(--ink);
+  white-space:nowrap;font-size:11.5px;font-weight:500;
 }
-::selection{background:color-mix(in srgb,var(--accent) 22%,transparent)}
+::selection{background:rgba(63,111,90,.18)}
+.wrap{max-width:var(--max);margin:0 auto;padding:0 32px}
 
-/* ══ 滚动入场 ══
-   页面里所有 .rv 元素：进视口前略沉 + 透明，进了就浮上来。
-   JS 只负责加一个类，动画全在 CSS —— 禁 JS 也能看（只是不动画）。 */
-.rv{opacity:0;transform:translateY(26px);transition:opacity .8s var(--ease),transform .8s var(--ease)}
-.rv.in{opacity:1;transform:none}
-@media (prefers-reduced-motion:reduce){
-  html{scroll-behavior:auto}
-  .rv{opacity:1;transform:none;transition:none}
-  .orb{animation:none!important}
+/* 纸纹：极淡的一层颗粒，只为了让大片米白不呆板 */
+body::after{
+  content:"";position:fixed;inset:0;pointer-events:none;z-index:3;
+  opacity:.34;mix-blend-mode:multiply;
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='200'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.92' numOctaves='4'/%3E%3CfeColorMatrix values='0 0 0 0 .1 0 0 0 0 .09 0 0 0 0 .07 0 0 0 .045 0'/%3E%3C/filter%3E%3Crect width='200' height='200' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+/* 只给 main / footer 抬层级：别写成 header.nav，那会盖过 .nav 的 fixed */
+main,footer{position:relative;z-index:1}
+
+/* ── 顶部细进度线 ── */
+.bar{position:fixed;top:0;left:0;height:2px;width:0;z-index:100;
+  background:var(--green);transition:width .1s linear}
+
+/* ── 光标柔光：极淡，只让纸有一点点活气 ── */
+.spot{
+  position:fixed;top:0;left:0;width:820px;height:820px;z-index:0;pointer-events:none;
+  margin:-410px 0 0 -410px;border-radius:50%;
+  background:radial-gradient(circle,rgba(63,111,90,.075),rgba(63,111,90,.025) 42%,transparent 68%);
+  opacity:0;transition:opacity .9s var(--ease);will-change:transform;
 }
 
-/* ══ 顶栏：悬浮胶囊 ══ */
-.nav{
-  position:sticky;top:14px;z-index:50;padding:0 20px;
+/* ══ 顶栏：没有胶囊，只有一条随滚动出现的细线 ══ */
+.nav{position:fixed;top:0;left:0;right:0;z-index:60;
+  transition:background .4s var(--ease),border-color .4s var(--ease),backdrop-filter .4s;
+  border-bottom:1px solid transparent}
+.nav.on{
+  background:rgba(250,247,241,.86);
+  backdrop-filter:saturate(150%) blur(14px);-webkit-backdrop-filter:saturate(150%) blur(14px);
+  border-bottom-color:var(--line);
 }
-.nav-in{
-  max-width:880px;margin:0 auto;display:flex;align-items:center;gap:18px;
-  height:56px;padding:0 10px 0 16px;border-radius:999px;
-  background:color-mix(in srgb,var(--paper) 78%,transparent);
-  backdrop-filter:saturate(180%) blur(16px);
-  border:1px solid color-mix(in srgb,var(--line-2) 80%,transparent);
-  box-shadow:0 8px 30px -18px rgb(50 45 32 / .35);
-  transition:box-shadow .3s var(--ease);
-}
-.nav.scrolled .nav-in{box-shadow:0 10px 40px -16px rgb(50 45 32 / .5)}
-.brand{display:flex;align-items:center;gap:9px;font-weight:700;font-size:16.5px;color:var(--ink)}
-.brand img{width:26px;height:26px;border-radius:7px;box-shadow:0 0 0 1px rgb(50 45 32 / .16)}
-.nav-links{display:flex;gap:4px;margin-left:auto;align-items:center}
+.nav-in{max-width:var(--max);margin:0 auto;padding:0 32px;height:68px;
+  display:flex;align-items:center;gap:14px}
+.brand{display:flex;align-items:center;gap:10px;font-weight:600;font-size:16px;letter-spacing:-.01em}
+.brand img{width:26px;height:26px;border-radius:7px;outline:1px solid var(--line-2);outline-offset:-1px}
+.nav-links{display:flex;gap:30px;margin-left:auto;align-items:center}
 .nav-links a{
-  color:var(--ink-2);font-size:14px;padding:7px 13px;border-radius:999px;
-  transition:background .2s var(--ease),color .2s var(--ease);
+  position:relative;font-size:14px;color:var(--ink-2);padding:4px 0;
+  transition:color .25s var(--ease);
 }
-.nav-links a:hover{color:var(--ink);background:color-mix(in srgb,var(--ink) 6%,transparent);text-decoration:none}
-.nav-cta{
-  background:var(--ink)!important;color:var(--paper)!important;font-weight:600;
+.nav-links a::after{
+  content:"";position:absolute;left:0;right:0;bottom:0;height:1px;
+  background:var(--ink);transform:scaleX(0);transform-origin:right;
+  transition:transform .4s var(--ease);
 }
-.nav-cta:hover{background:#000!important}
-
-/* ══ 按钮 ══ */
-.btn{
-  display:inline-flex;align-items:center;justify-content:center;gap:8px;
-  padding:13px 24px;border-radius:12px;font-size:15px;font-weight:600;
-  border:1px solid transparent;cursor:pointer;transition:.22s var(--ease);
+.nav-links a:hover{color:var(--ink)}
+.nav-links a:hover::after{transform:scaleX(1);transform-origin:left}
+.nav-links .cta{
+  padding:9px 18px;border-radius:8px;background:var(--ink);color:var(--paper);
+  font-weight:500;font-size:13.5px;
+  transition:background .28s var(--ease),transform .28s var(--ease);
 }
-.btn:hover{text-decoration:none;transform:translateY(-2px)}
-.btn:active{transform:translateY(0)}
-.btn-primary{background:var(--accent);color:#fff;box-shadow:0 10px 26px -10px rgb(47 111 82 / .65)}
-.btn-primary:hover{background:var(--accent-2);box-shadow:0 14px 32px -10px rgb(47 111 82 / .7)}
-.btn-ghost{background:var(--card);border-color:var(--line-2);color:var(--ink);box-shadow:var(--shadow)}
-.btn-ghost:hover{border-color:var(--ink-3)}
-.btn-sub{display:block;margin-top:9px;font-size:12.5px;color:var(--ink-3)}
+.nav-links .cta::after{display:none}
+.nav-links .cta:hover{background:var(--green);color:#fff;transform:translateY(-1px)}
 
 /* ══ 首屏 ══ */
-/* overflow-x:clip 是给两团光斑用的：560px 的圆以 50% 定位再横移，
-   手机上必然甩出视口右侧、把 scrollWidth 撑到两倍宽（页面能横向拖）。
-   只裁横向 —— 用 overflow:hidden 会把顶上 -180px 那半团光一并裁掉，光就没了。 */
-.hero{padding:96px 0 30px;text-align:center;position:relative;overflow-x:clip}
-/* 两团柔光在标题后面慢慢漂 —— 页面是「活」的，但不吵 */
-.orb{position:absolute;border-radius:50%;filter:blur(90px);pointer-events:none;z-index:-1}
-.orb-a{width:560px;height:560px;left:50%;top:-180px;transform:translateX(-72%);
-  background:radial-gradient(circle,color-mix(in srgb,var(--accent) 16%,transparent),transparent 66%);
-  animation:drift 17s ease-in-out infinite alternate}
-.orb-b{width:460px;height:460px;left:50%;top:-40px;transform:translateX(6%);
-  background:radial-gradient(circle,color-mix(in srgb,#c9a44a 13%,transparent),transparent 66%);
-  animation:drift 21s ease-in-out infinite alternate-reverse}
-@keyframes drift{to{transform:translateX(-58%) translateY(30px)}}
-@keyframes drift-b{to{transform:translateX(14%) translateY(-24px)}}
-.orb-b{animation-name:drift-b}
-.badge{
-  display:inline-flex;align-items:center;gap:8px;padding:6px 15px;border-radius:999px;
-  border:1px solid var(--line-2);background:var(--card);font-size:12.5px;color:var(--ink-2);
-  box-shadow:var(--shadow);
+.hero{position:relative;padding:118px 0 0}
+.kicker{
+  display:inline-flex;align-items:center;gap:9px;
+  font-family:var(--mono);font-size:11.5px;letter-spacing:.1em;text-transform:uppercase;
+  color:var(--ink-3);
+  animation:fadeUp 1s var(--ease-out) both .05s;
 }
-.badge .dot{width:6px;height:6px;border-radius:50%;background:var(--accent);animation:pulse 2.4s infinite}
-@keyframes pulse{50%{opacity:.35}}
-.hero h1{font-size:clamp(40px,6.4vw,72px);margin:26px 0 0;letter-spacing:-.035em;line-height:1.14}
-.hero h1 .grad{
-  background:linear-gradient(120deg,var(--accent) 20%,#4b8a6b 55%,#8a7a3c);
-  -webkit-background-clip:text;background-clip:text;color:transparent;
-}
-.hero .lede{
-  /* 640px 时副标题第二行末尾的「字。」会被挤到第三行单挂一个字，
-     提到 700 正好收在一行里 */
-  max-width:700px;margin:22px auto 0;font-size:clamp(16px,2vw,19px);color:var(--ink-2);
-}
-.hero-btns{display:flex;gap:14px;justify-content:center;flex-wrap:wrap;margin-top:36px}
-.hero-note{margin-top:18px;font-size:13px;color:var(--ink-3)}
+.kicker i{width:5px;height:5px;border-radius:50%;background:var(--green);display:block}
 
-/* 笔记本外框 + 鼠标视差倾斜。
-   这一块来回改过三次，结论是：**回到最先那版，而且别画键盘**。
-   中间试过补一整块 rotateX(70deg) 的键盘面，压出来是一片放射状的脏条纹，
-   键帽糊成灰雾，触控板像贴了块胶布，还把首屏的注意力从界面本身拽走了。
-   笔记本认得出，靠的从来不是键帽，是这三样：屏幕四周一圈窄铝边、
-   比屏幕略宽出一点的下半身、以及正中间那道开盖凹槽。
-   所以下面只把这版原先的三个小毛病修掉：机身整片死黑没厚度（补一条上沿亮线）、
-   凹槽给得太宽像划痕（收窄）、落影贴得太紧（拉开一点）。 */
-.device-wrap{margin:64px auto 0;max-width:1020px;perspective:1600px}
-.device{
-  transition:transform .5s var(--ease);transform-style:preserve-3d;will-change:transform;
+h1{
+  margin:26px 0 0;max-width:15em;
+  font-size:clamp(44px,7.2vw,100px);font-weight:700;
+  letter-spacing:-.025em;line-height:1.03;
 }
-/* 上半：屏幕。边框上宽下窄，下巴留厚一点 —— 真机的下巴总比左右宽，
-   拉平了就成了「一块贴了边的截图」。底角按机身收口。 */
-.device-screen{
-  position:relative;padding:14px 14px 19px;
-  background:linear-gradient(180deg,#3f403a 0%,#2a2b24 46%,#21221b 100%);
-  border-radius:16px 16px 5px 5px;
-  box-shadow:
-    0 0 0 1px rgb(255 255 255/.09) inset,   /* 铝边外沿的一圈反光 */
-    0 1px 0 rgb(255 255 255/.14) inset,     /* 顶光 */
-    0 -1px 0 rgb(0 0 0/.5) inset;           /* 下巴内侧压暗，屏幕才像陷在里边 */
+/* 逐行从遮罩里升起来：不需要 JS，没脚本也照常播放 */
+h1 .ln{display:block;overflow:hidden;padding-bottom:.06em}
+h1 .ln > span{display:block;animation:lineUp 1.2s var(--ease-out) backwards}
+h1 .ln:nth-child(1) > span{animation-delay:.1s}
+h1 .ln:nth-child(2) > span{animation-delay:.22s}
+h1 em{font-style:normal;color:var(--green)}
+@keyframes lineUp{from{transform:translateY(108%)}}
+@keyframes fadeUp{from{opacity:0;translate:0 14px}}
+
+.sub-line{
+  display:flex;align-items:baseline;gap:16px;flex-wrap:wrap;
+  margin-top:20px;
+  animation:fadeUp 1s var(--ease-out) both .42s;
 }
-.device-screen::before{
-  content:"";position:absolute;top:6px;left:50%;transform:translateX(-50%);
-  width:4px;height:4px;border-radius:50%;
-  background:#5b5c53;
-  box-shadow:0 0 0 1px rgb(0 0 0/.5),0 0 4px rgb(126 166 255/.22);
+.sub-line em{
+  font-family:var(--serif);font-style:italic;font-size:clamp(15px,1.6vw,19px);
+  color:var(--ink-3);letter-spacing:.01em;
 }
-.device-screen img{display:block;width:100%;height:auto;border-radius:2px;background:#fff}
-/* 下半：机身前沿 —— 只露一条厚度。
-   真机摆桌上、镜头略高于屏幕中线时，能看见的下半身就这么一线。做成一整块
-   楔形（上沿亮、往下压到近乎黑），它才有「厚度」，而不是一条贴上去的杠。
-   宽度比屏幕多出 2.4%：多出来的那点正是机身外沿，少了就读成同一块板。 */
-.device-base{
-  position:relative;height:17px;margin:-1px -2.4% 0;
-  border-radius:2px 2px 12px 12px;
-  /* 铰链那一线比屏幕边框亮一点点就够了。早先试过整片银灰 —— 一眼就成了
-     「屏幕坐在一块铝托盘上」，反而更假。 */
-  background:
-    linear-gradient(90deg,rgb(255 255 255/.10),transparent 4%,transparent 96%,rgb(255 255 255/.10)),
-    linear-gradient(180deg,#5f6055 0%,#3a3b31 34%,#232419 78%,#1a1b14 100%);
-  box-shadow:
-    0 1px 0 rgb(255 255 255/.17) inset,    /* 上沿那道迎光的边 */
-    inset 0 -1px 0 rgb(0 0 0/.55),         /* 下沿收暗，不然这条会飘 */
-    0 1px 0 rgb(0 0 0/.22);                /* 机身下沿贴桌的那道硬影 */
+.sub-line s{
+  text-decoration:none;flex:1;min-width:40px;height:1px;background:var(--line-2);
+  transform-origin:left;animation:ruleIn 1.4s var(--ease-out) both .5s;
 }
-/* 铰链：屏幕压在下半身里端的那道暗缝。负 margin 只叠了 1px，
-   所以这条 2px 的线露出来正好 1px，像一道真正的接缝。 */
-.device-base::after{
-  content:"";position:absolute;left:0;right:0;top:0;height:2px;
-  background:rgb(0 0 0/.36);
+@keyframes ruleIn{from{transform:scaleX(0)}}
+
+/* 说明与按钮：左右错位，像刊物的导语 */
+.hero-foot{
+  display:grid;grid-template-columns:1.1fr .9fr;gap:48px;align-items:end;
+  margin-top:44px;padding-top:30px;border-top:1px solid var(--line);
+  animation:fadeUp 1s var(--ease-out) both .52s;
 }
-/* 开盖凹槽，正中间。真机的凹槽是很窄的一道缝 —— 原先给到 148px 宽，
-   在这么暗的机身上读出来像被人划了一道。 */
-.device-base::before{
-  content:"";position:absolute;top:0;left:50%;transform:translateX(-50%);
-  width:104px;height:5px;border-radius:0 0 6px 6px;
-  background:rgb(14 15 8/.7);
-  box-shadow:inset 0 1px 2px rgb(0 0 0/.55),0 1px 0 rgb(255 255 255/.09);
+.lede{color:var(--ink-2);font-size:15.5px;line-height:1.9;max-width:33em;text-wrap:pretty}
+.lede b{color:var(--ink);font-weight:700}
+.hero-act{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+
+.btn{
+  display:inline-flex;align-items:center;gap:9px;
+  padding:13px 22px;border-radius:9px;
+  background:var(--ink);color:var(--paper);font-size:14.5px;font-weight:500;
+  transition:background .28s var(--ease),transform .28s var(--ease),box-shadow .28s var(--ease);
+  will-change:transform;
 }
-/* 桌上的落影。两层：贴着机身那圈收得很紧（真机的接触影很硬），
-   外面再铺一层散得慢的。只有一层大雾会显得机器是飘着的。 */
-.device-glow{
-  height:50px;margin:-10px auto 0;max-width:90%;border-radius:50%;
-  background:
-    radial-gradient(ellipse 50% 36% at 50% 8%,rgb(18 18 12/.30),transparent 72%),
-    radial-gradient(ellipse 82% 52% at 50% 14%,rgb(18 18 12/.10),transparent 76%);
-  filter:blur(8px);
+.btn svg{width:17px;height:17px;fill:none;stroke:currentColor;stroke-width:1.8;
+  stroke-linecap:round;stroke-linejoin:round;flex:none}
+.btn:hover{background:var(--green);transform:translateY(-2px);
+  box-shadow:0 10px 24px -12px rgba(63,111,90,.8)}
+.btn-quiet{
+  padding:13px 18px;border-radius:9px;font-size:14.5px;color:var(--ink-2);
+  border:1px solid rgba(23,22,20,.24);background:transparent;
+  transition:border-color .28s var(--ease),color .28s var(--ease),background .28s;
+}
+.btn-quiet:hover{border-color:var(--ink);color:var(--ink);background:var(--white)}
+.hero-meta{
+  margin-top:16px;font-family:var(--mono);font-size:11.5px;color:var(--ink-3);
+  letter-spacing:.02em;display:flex;gap:14px;flex-wrap:wrap;
 }
 
-/* ══ 跑马灯：一行关键词缓慢滚过，代替一块「支持列表」 ══ */
-.tape{overflow:hidden;border-block:1px solid var(--line);padding:15px 0;margin-top:72px;
-  -webkit-mask-image:linear-gradient(90deg,transparent,#000 12%,#000 88%,transparent);
-  mask-image:linear-gradient(90deg,transparent,#000 12%,#000 88%,transparent)}
-.tape-row{display:flex;gap:44px;width:max-content;animation:tape 30s linear infinite}
-.tape:hover .tape-row{animation-play-state:paused}
-.tape-row span{font-size:14px;color:var(--ink-3);white-space:nowrap;display:flex;align-items:center;gap:10px}
-.tape-row b{color:var(--ink-2);font-weight:600}
-@keyframes tape{to{transform:translateX(-50%)}}
+/* ── 首屏大图：纸张抽出来 ── */
+.hero-shot{position:relative;margin:60px auto 0;max-width:var(--max);padding:0 32px}
+.hero-shot-in{
+  position:relative;border-radius:16px;overflow:hidden;background:var(--white);
+  border:1px solid var(--line-2);
+  box-shadow:0 1px 0 rgba(255,255,255,.7) inset,0 50px 90px -55px rgba(23,22,20,.45);
+}
+.win-bar{
+  display:flex;align-items:center;gap:7px;height:34px;padding:0 14px;
+  background:#F4F1EA;border-bottom:1px solid var(--line);
+}
+.win-bar i{width:9px;height:9px;border-radius:50%;background:rgba(23,22,20,.14);display:block}
 
-/* ══ 通用分区 ══ */
-.sec{padding:104px 0}
-.sec-head{max-width:640px;margin-bottom:56px}
-.sec-head.center{margin-inline:auto;text-align:center}
-.sec-head h2{font-size:clamp(28px,3.8vw,42px);letter-spacing:-.03em}
-.sec-head p{margin-top:14px;color:var(--ink-2);font-size:16.5px}
-.eyebrow{
-  display:inline-flex;align-items:center;gap:8px;
-  font-size:12px;font-weight:700;letter-spacing:.14em;color:var(--accent);
-  text-transform:uppercase;margin-bottom:14px;
+/* ══ 成绩条 ══ */
+.stats{
+  display:grid;grid-template-columns:repeat(4,1fr);
+  margin-top:96px;border-top:1px solid var(--ink);border-bottom:1px solid var(--line);
 }
-.eyebrow::before{content:"";width:22px;height:1.5px;background:var(--accent);opacity:.6}
+.stat{padding:26px 0 24px;border-left:1px solid var(--line)}
+.stat:first-child{border-left:0}
+.stat b{display:flex;align-items:baseline;gap:5px;font-family:var(--serif);
+  font-weight:400;line-height:1;letter-spacing:-.02em}
+.stat .n{font-size:clamp(34px,4vw,50px)}
+.stat .u{font-family:var(--font);font-size:12.5px;color:var(--ink-3);font-weight:400}
+.stat > span{display:block;margin-top:12px;font-size:12.5px;color:var(--ink-3);
+  line-height:1.65;max-width:16em}
+.stat:not(:first-child){padding-left:30px}
 
-/* ══ Bento 特性格 ══ */
-.bento{display:grid;grid-template-columns:repeat(6,1fr);gap:16px}
-.cell{
-  padding:26px;border:1px solid var(--line);border-radius:var(--radius-lg);
-  background:var(--card);box-shadow:var(--shadow);overflow:hidden;position:relative;
-  transition:transform .3s var(--ease),box-shadow .3s var(--ease),border-color .3s var(--ease);
+/* ══ 区块通用 ══ */
+.sec{padding:120px 0 0}
+.sec-head{display:grid;grid-template-columns:1fr 1fr;gap:48px;align-items:end;
+  padding-bottom:34px;border-bottom:1px solid var(--ink)}
+.sec-title{display:flex;gap:20px;align-items:baseline}
+.sec-no{
+  font-family:var(--mono);font-size:11.5px;color:var(--ink-3);letter-spacing:.1em;
+  padding-top:.55em;
 }
-.cell:hover{transform:translateY(-4px);box-shadow:var(--shadow-lg);border-color:var(--line-2)}
-.cell h3{font-size:17px;margin-bottom:8px}
-.cell p{font-size:14.5px;color:var(--ink-2);line-height:1.75}
-.cell .ic{
-  width:38px;height:38px;border-radius:11px;background:var(--accent-soft);color:var(--accent);
-  display:flex;align-items:center;justify-content:center;margin-bottom:16px;
+.sec-head h2{
+  font-size:clamp(28px,3.6vw,44px);font-weight:700;letter-spacing:-.028em;line-height:1.18;
+  text-wrap:balance;
 }
-.cell .ic svg{fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
-.c-4{grid-column:span 4}.c-3{grid-column:span 3}.c-2{grid-column:span 2}
-/* 大格子只放文字。这里试过挂一张截图当装饰（先绝对定位压右下角，后改底部横条），
-   两种都别扭：压右下角会盖住正文，横条则是把整窗截图缩成一条看不清的色带。
-   「它长什么样」那一段本来就有四张真截图，格子这里不重复。 */
+.sec-head p{color:var(--ink-2);font-size:15px;line-height:1.85;max-width:30em;text-wrap:pretty}
 
-/* ══ 功能特写：一图一文，左右交替，图带倾斜揭示 ══ */
-.show{display:grid;grid-template-columns:1fr 1.15fr;gap:64px;align-items:center;padding:46px 0}
-.show + .show{border-top:1px solid var(--line)}
-.show.rev .show-shot{order:-1}
-.show-copy h3{font-size:clamp(22px,2.8vw,29px);margin-bottom:14px;letter-spacing:-.025em}
-.show-copy p{color:var(--ink-2);font-size:15.5px}
-.show-copy ul{margin:18px 0 0;padding:0;list-style:none}
-.show-copy li{position:relative;padding-left:24px;margin:9px 0;font-size:14.5px;color:var(--ink-2)}
-.show-copy li svg{
-  position:absolute;left:0;top:.42em;width:15px;height:15px;
-  fill:none;stroke:var(--accent);stroke-width:2.4;stroke-linecap:round;stroke-linejoin:round;
+/* ══ 特性：编辑体清单 ══ */
+.feat{display:grid;grid-template-columns:1fr 1fr;gap:0 64px;margin-top:8px}
+.f{
+  position:relative;display:grid;grid-template-columns:auto 1fr;gap:18px;
+  padding:26px 0 24px;border-bottom:1px solid var(--line);
 }
-.show-shot{position:relative}
-.show-shot .frame{
-  border-radius:var(--radius);overflow:hidden;border:1px solid var(--line-2);
-  box-shadow:var(--shadow-lg);aspect-ratio:16/10;background:#fff;
-  transition:transform .5s var(--ease),box-shadow .5s var(--ease);
+.f-n{
+  font-family:var(--mono);font-size:11px;color:var(--ink-3);letter-spacing:.08em;
+  padding-top:5px;transition:color .3s var(--ease);
 }
-.show-shot:hover .frame{transform:translateY(-6px) scale(1.012);box-shadow:0 4px 10px rgb(50 45 32/.08),0 48px 96px -32px rgb(50 45 32/.4)}
-.show-shot .frame img{width:100%;height:100%;object-fit:cover;object-position:top}
-.show-shot .glowbar{
-  position:absolute;inset:auto 12% -18px;height:34px;border-radius:50%;
-  background:radial-gradient(ellipse,rgb(47 111 82/.22),transparent 70%);filter:blur(12px);
+.f h3{font-size:16.5px;font-weight:700;letter-spacing:-.01em;
+  transition:transform .35s var(--ease)}
+.f p{margin-top:7px;font-size:14px;color:var(--ink-2);line-height:1.8}
+.f::before{
+  content:"";position:absolute;left:-18px;top:28px;width:2px;height:14px;
+  background:var(--green);opacity:0;transform:scaleY(.3);transform-origin:top;
+  transition:opacity .35s var(--ease),transform .35s var(--ease);
 }
+.f:hover::before{opacity:1;transform:scaleY(1)}
+.f:hover .f-n{color:var(--green)}
+.f:hover h3{transform:translateX(6px)}
 
-/* ══ 数字条 ══ */
-.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:16px;text-align:center}
-.stat{padding:26px 12px;border-radius:var(--radius);background:var(--card);border:1px solid var(--line)}
-.stat b{display:block;font-size:clamp(26px,3.4vw,38px);font-weight:700;letter-spacing:-.03em;color:var(--ink)}
-.stat span{font-size:13px;color:var(--ink-3)}
+/* ══ 界面画廊 ══ */
+.gallery{display:grid;grid-template-columns:1fr 1fr;gap:34px 26px;margin-top:52px}
+.gallery .wide{grid-column:1/-1}
+.gallery figure{margin:0}
+.gallery .fr{
+  border-radius:13px;overflow:hidden;border:1px solid var(--line-2);
+  background:var(--white);box-shadow:0 30px 60px -46px rgba(23,22,20,.5);
+  transition:transform .6s var(--ease-out),box-shadow .6s var(--ease-out),border-color .6s;
+}
+.gallery img{width:100%;display:block;cursor:zoom-in}
+.gallery figure:hover .fr{transform:translateY(-6px);border-color:var(--line-2);
+  box-shadow:0 46px 78px -46px rgba(23,22,20,.55)}
+.gallery figcaption{
+  margin-top:13px;font-size:12.5px;color:var(--ink-3);font-family:var(--mono);
+  letter-spacing:.02em;display:flex;gap:9px;align-items:center;
+}
+.gallery figcaption i{width:5px;height:5px;border-radius:50%;background:var(--green);
+  display:block;flex:none}
+.gallery .wide figcaption{margin-top:15px}
 
-/* ══ 下载：深色大卡 ══ */
+/* ══ 便签：三栏白卡 ══ */
+.notes{display:grid;grid-template-columns:repeat(3,1fr);gap:20px;margin-top:48px}
+.note{
+  position:relative;padding:30px 26px 28px;background:var(--white);
+  border:1px solid var(--line);border-radius:13px;
+  transition:transform .45s var(--ease-out),box-shadow .45s var(--ease-out),border-color .45s;
+}
+.note:hover{transform:translateY(-5px);border-color:var(--line-2);
+  box-shadow:0 28px 50px -34px rgba(23,22,20,.4)}
+.note .k{
+  display:inline-flex;align-items:center;padding:4px 9px;border-radius:5px;
+  background:var(--green-wash);color:var(--green-2);
+  font-family:var(--mono);font-size:11px;font-weight:500;letter-spacing:.03em;
+}
+.note h3{font-size:17px;font-weight:700;margin:18px 0 9px;letter-spacing:-.01em}
+.note p{font-size:14px;color:var(--ink-2);line-height:1.82}
+.note::after{
+  content:"";position:absolute;left:26px;right:26px;top:0;height:2px;
+  background:var(--green);transform:scaleX(0);transform-origin:left;
+  transition:transform .5s var(--ease);
+}
+.note:hover::after{transform:scaleX(1)}
+
+/* ══ 云同步 ══ */
+.sync{display:grid;grid-template-columns:1fr 1fr;gap:64px;align-items:center;margin-top:52px}
+.sync-copy h3{font-size:clamp(22px,2.6vw,30px);font-weight:700;letter-spacing:-.025em}
+.sync-copy p{margin-top:14px;color:var(--ink-2);font-size:15px;line-height:1.85;max-width:28em}
+.sync-copy ul{list-style:none;margin:24px 0 0;padding:0;display:grid;gap:11px}
+.sync-copy li{display:flex;gap:12px;align-items:flex-start;font-size:14px;
+  color:var(--ink-2);line-height:1.7}
+.sync-copy li svg{width:15px;height:15px;flex:none;margin-top:5px;
+  fill:none;stroke:var(--green);stroke-width:2.4;stroke-linecap:round;stroke-linejoin:round}
+.sync-art{
+  aspect-ratio:5/4;border-radius:14px;background:var(--green-wash);
+  border:1px solid rgba(63,111,90,.16);
+  display:grid;place-items:center;position:relative;overflow:hidden;
+}
+.sync-art::before{
+  content:"";position:absolute;inset:0;
+  background-image:linear-gradient(rgba(63,111,90,.09) 1px,transparent 1px),
+                   linear-gradient(90deg,rgba(63,111,90,.09) 1px,transparent 1px);
+  background-size:44px 44px;
+  mask-image:radial-gradient(ellipse at center,#000 30%,transparent 72%);
+  -webkit-mask-image:radial-gradient(ellipse at center,#000 30%,transparent 72%);
+}
+.sync-art svg{width:30%;position:relative;stroke:var(--green)}
+
+/* ══ 下载 ══ */
 .dl{
-  padding:64px 56px;border-radius:28px;text-align:center;color:#f3f2ec;
-  background:
-    radial-gradient(600px 300px at 50% -80px,rgb(47 111 82/.4),transparent 70%),
-    linear-gradient(180deg,var(--dark-2),var(--dark));
-  box-shadow:var(--shadow-lg);
+  margin-top:52px;padding:64px 56px;border-radius:20px;background:var(--green-wash);
+  border:1px solid rgba(63,111,90,.16);
+  display:grid;grid-template-columns:1.15fr .85fr;gap:48px;align-items:center;
 }
-.dl h2{font-size:clamp(26px,3.6vw,38px);color:#fff;letter-spacing:-.03em}
-.dl .sub{margin-top:12px;color:#a7a598}
-.dl-grid{display:grid;grid-template-columns:1fr;gap:18px;max-width:460px;margin:38px auto 0}
-.dl-item{
-  padding:26px;border-radius:var(--radius);background:rgb(255 255 255/.045);
-  border:1px solid rgb(255 255 255/.1);backdrop-filter:blur(6px);
-  transition:background .25s var(--ease),transform .25s var(--ease);
+.dl h2{font-size:clamp(28px,3.6vw,42px);font-weight:700;letter-spacing:-.028em;line-height:1.16}
+.dl .sub{margin-top:14px;color:var(--ink-2);font-size:14.5px;line-height:1.85;max-width:26em}
+.dl-act{display:flex;flex-direction:column;gap:12px;align-items:flex-start}
+.dl .btn{width:100%;justify-content:center}
+.dl-mob{
+  display:none;margin:2px 0 0;font-size:12.5px;line-height:1.75;
+  color:var(--ink-2);padding:10px 12px;border-radius:8px;
+  border:1px dashed rgba(63,111,90,.42);background:rgba(63,111,90,.055);
 }
-.dl-item:hover{background:rgb(255 255 255/.08);transform:translateY(-3px)}
-.dl-item h4{margin:0 0 4px;font-size:16px;color:#fff}
-.dl-item .meta{font-size:13px;color:#8f8d80;font-family:var(--font-mono)}
-.dl-item .btn{width:100%;margin-top:16px}
-/* 便携版不抢主按钮的位置 —— 大多数人要的是安装包。但它得在边上看得见，
-   否则「有没有免安装的」这个问题每隔几天就会被问一次。 */
-.dl-alt{margin:16px 0 0;font-size:12.5px;color:#8f8d80}
-.dl-alt a{color:#c9c7bb;text-decoration:underline;text-underline-offset:3px}
-.dl-alt a:hover{color:#fff}
-.dl-alt .fn{font-family:var(--font-mono);font-size:11.5px;color:#6f6d63}
-/* 双击后那十几秒没有窗口，是 Windows 在把这个没签名的安装包完整扫一遍。
-   不解释一句，用户会以为装坏了，反复双击 —— 越双击越乱。 */
-.dl-note{margin:26px auto 0;max-width:520px;font-size:12.5px;line-height:1.9;
-  color:#8f8d80;text-align:left}
-.dl-note b{color:#c9c7bb;font-weight:600}
-.dl .facts{
-  display:flex;flex-wrap:wrap;justify-content:center;gap:8px 26px;
-  margin-top:30px;font-size:13px;color:#8f8d80;
+.dl-mob b{color:var(--ink);font-weight:700}
+.dl-file{font-family:var(--mono);font-size:11px;color:var(--ink-3);letter-spacing:.02em;
+  word-break:break-all}
+.dl-alt{font-size:13px;color:var(--ink-2)}
+.dl-alt a{color:var(--green-2);border-bottom:1px solid rgba(63,111,90,.4);padding-bottom:1px}
+.dl-alt a:hover{border-bottom-color:var(--green-2)}
+.dl-note{
+  grid-column:1/-1;margin-top:12px;padding-top:26px;border-top:1px solid rgba(63,111,90,.2);
+  font-size:12.5px;line-height:1.85;color:var(--ink-2);max-width:64em;
 }
-.dl .facts kbd{background:rgb(255 255 255/.08);border-color:rgb(255 255 255/.16);color:#c9c7bb}
+.dl-note b{color:var(--ink);font-weight:600}
+.facts{
+  grid-column:1/-1;display:flex;gap:8px 26px;flex-wrap:wrap;
+  font-family:var(--mono);font-size:11px;color:var(--ink-3);letter-spacing:.03em;
+}
 
 /* ══ 页脚 ══ */
-.foot{border-top:1px solid var(--line);padding:40px 0;margin-top:96px}
-.foot-in{display:flex;align-items:center;gap:16px;flex-wrap:wrap;font-size:13.5px;color:var(--ink-3)}
-.foot-in a{color:var(--ink-2)}
-.foot-in .sp{margin-left:auto}
+.foot{margin-top:110px;padding:34px 0 44px;border-top:1px solid var(--line)}
+.foot-in{display:flex;align-items:center;gap:12px;font-size:12.5px;color:var(--ink-3)}
+.foot-in img{width:22px;height:22px;border-radius:6px;outline:1px solid var(--line-2);outline-offset:-1px}
+.foot-in .r{margin-left:auto;font-family:var(--mono);font-size:11px}
 
-@media (max-width:940px){
-  .bento{grid-template-columns:1fr 1fr}
-  .c-4,.c-3,.c-2{grid-column:span 2}
-  .show{grid-template-columns:1fr;gap:28px}
-  .show.rev .show-shot{order:0}
-  .stats{grid-template-columns:1fr 1fr}
-  .nav-links a:not(.nav-cta){display:none}
-  .dl{padding:44px 24px}
-  .dl-grid{grid-template-columns:1fr}
-  .sec{padding:72px 0}
-  .hero{padding:64px 0 20px}
+/* ══ 点开看大图 ══ */
+.lb{
+  position:fixed;inset:0;z-index:200;display:flex;align-items:center;justify-content:center;
+  padding:4vh 3vw;background:rgba(23,22,20,.9);
+  backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);
+  opacity:0;pointer-events:none;transition:opacity .3s var(--ease);
+}
+.lb.on{opacity:1;pointer-events:auto}
+.lb img{
+  max-width:94vw;max-height:88vh;width:auto;height:auto;border-radius:10px;
+  box-shadow:0 40px 100px rgba(0,0,0,.5);
+  transform:scale(.97);transition:transform .4s var(--ease-out);
+}
+.lb.on img{transform:scale(1)}
+.lb .x{
+  position:absolute;top:22px;right:24px;width:40px;height:40px;border-radius:50%;
+  background:var(--paper);border:0;color:var(--ink);cursor:pointer;
+  font:400 21px/1 var(--font);display:grid;place-items:center;
+  transition:background .25s;
+}
+.lb .x:hover{background:#fff}
+
+/* 手机上屏幕窄，等宽显示等于没放大；放到 1.8 倍宽，横向拖着看细节 */
+@media(max-width:760px){
+  .dl-mob{display:block}
+  .lb{align-items:flex-start;overflow:auto;padding:14px 14px 40px;
+    -webkit-overflow-scrolling:touch}
+  .lb img{max-width:none;max-height:none;width:180vw;height:auto;margin:0}
+  .lb .x{position:fixed;top:14px;right:14px}
+}
+
+/* ══ 入场 ══
+   只有 html.io 存在时才隐藏 —— .io 由脚本在确认能观察后立刻加上，
+   脚本没跑起来（或半路出错）这些内容就是普通可见的，不会留白。
+   位移用独立的 translate 属性，不和 hover 的 transform 抢。 */
+html.io .rise{opacity:0;translate:0 30px;
+  transition:opacity .85s var(--ease-out),translate .85s var(--ease-out)}
+html.io .paper{opacity:0;translate:0 34px;
+  transition:opacity 1s var(--ease-out),translate 1s var(--ease-out)}
+html.io .rise.in{opacity:1;translate:0 0}
+html.io .paper.in{opacity:1;translate:0 0}
+
+/* ══ 平板 / 手机 ══ */
+@media(max-width:1000px){
+  .sec-head{grid-template-columns:1fr;gap:18px;align-items:start}
+  .feat{gap:0 40px}
+  .sync{grid-template-columns:1fr;gap:32px}
+  .dl{grid-template-columns:1fr;gap:32px;padding:44px 32px}
+  .hero-foot{grid-template-columns:1fr;gap:26px;align-items:start}
+  .stats{margin-top:72px}
+  .sec{padding:88px 0 0}
+}
+@media(max-width:760px){
+  .wrap,.nav-in,.hero-shot{padding-left:22px;padding-right:22px}
+  .nav{height:auto}
+  .nav-in{height:60px;gap:10px}
+  .nav-links{gap:16px}
+  .nav-links a:nth-child(2),.nav-links a:nth-child(3){display:none}
+  .hero{padding-top:104px}
+  h1{font-size:clamp(38px,9.6vw,52px);letter-spacing:-.022em;margin-top:20px}
+  .sub-line{margin-top:16px;gap:10px}
+  .sub-line em{font-size:14px}
+  .hero-foot{margin-top:32px;padding-top:24px}
+  .hero-act{gap:10px}
+  .btn,.btn-quiet{width:100%;justify-content:center}
+  .hero-shot{margin-top:40px}
+  .stats{grid-template-columns:1fr 1fr;margin-top:56px}
+  .stat{padding:22px 0 20px}
+  .stat:nth-child(odd){border-left:0;padding-left:0}
+  .stat:nth-child(even){padding-left:20px}
+  .stat:nth-child(3),.stat:nth-child(4){border-top:1px solid var(--line)}
+  .stat > span{font-size:11.5px}
+  .feat{grid-template-columns:1fr}
+  .f{padding:22px 0 20px}
+  .f::before{left:-14px}
+  .gallery{grid-template-columns:1fr;gap:26px;margin-top:36px}
+  .gallery .wide{grid-column:auto}
+  .notes{grid-template-columns:1fr;gap:14px;margin-top:34px}
+  .dl{padding:34px 22px;border-radius:16px}
+  .foot{margin-top:72px}
+  .foot-in{flex-wrap:wrap;gap:8px}
+  .foot-in .r{margin-left:0;width:100%}
+  .sec{padding:72px 0 0}
+}
+@media(prefers-reduced-motion:reduce){
+  *{animation-duration:.01ms !important;animation-iteration-count:1 !important;
+    transition-duration:.01ms !important;scroll-behavior:auto !important}
+  h1 .ln > span{transform:none}
 }
 </style>
 </head>
 <body>
 
+<div class="bar" id="bar"></div>
+<div class="spot" id="spot" aria-hidden="true"></div>
+
 <header class="nav" id="nav">
   <div class="nav-in">
-    <span class="brand"><img src="icon.png" alt="">Nota</span>
+    <a class="brand" href="#top"><img src="icon.png" alt="">Nota</a>
     <nav class="nav-links">
       <a href="#features">功能</a>
       <a href="#shots">界面</a>
       <a href="#sync">云同步</a>
-      <a class="nav-cta" href="#download">获取 Nota</a>
+      <a class="cta" href="#download">获取 Nota</a>
     </nav>
   </div>
 </header>
 
-<main>
+<main id="top">
 
 <!-- ══ 首屏 ══ -->
 <section class="hero">
-  <span class="orb orb-a" aria-hidden="true"></span>
-  <span class="orb orb-b" aria-hidden="true"></span>
   <div class="wrap">
-    <span class="badge rv"><span class="dot"></span><span data-dl-badge>v2.10.0 · </span>Windows · 免费 · 开源</span>
-    <h1 class="rv" style="transition-delay:.06s">
-      一个只做笔记的<br><span class="grad">笔记应用</span>
+    <div class="kicker"><i></i><span data-dl-badge>v2.10.0 · </span>Windows · 免费 · 开源</div>
+
+    <h1>
+      <span class="ln"><span>一个只做笔记的</span></span>
+      <span class="ln"><span><em>笔记应用</em></span></span>
     </h1>
-    <p class="lede rv" style="transition-delay:.14s">
-      文件躺在你自己的目录里，就是一份份普通的 Markdown。<br>
-      不联网、不上传、不要账号 —— 换任何编辑器打开，都还是你写的那些字。
-    </p>
-    <div class="hero-btns rv" style="transition-delay:.22s">
-      <a class="btn btn-primary" href="#download">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12m0 0 5-5m-5 5-5-5"/><path d="M4 19h16"/></svg>
-        下载安装包
-      </a>
-    </div>
-    <p class="hero-note rv" style="transition-delay:.3s">Windows 10 / 11 · 安装包约 70 MB</p>
 
-    <div class="device-wrap rv" style="transition-delay:.18s">
-      <div class="device" id="device">
-        <div class="device-screen">
-          <img src="shots/hero.png" width="3000" height="1880" alt="Nota 的分栏视图：左边是 Markdown 源码，右边是实时渲染的结果" loading="eager">
+    <div class="sub-line">
+      <em>a notebook that only takes notes</em>
+      <s></s>
+    </div>
+
+    <div class="hero-foot">
+      <p class="lede">
+        文件躺在你自己的目录里，就是一份份普通的 Markdown。
+        <b>不联网、不上传、不要账号</b> —— 换任何编辑器打开，都还是你写的那些字。
+      </p>
+      <div>
+        <div class="hero-act">
+          <a class="btn magnet" data-dl="setup" href="/d/setup.exe" download>
+            <svg viewBox="0 0 24 24"><path d="M12 3v12m0 0 4-4m-4 4-4-4"/><path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/></svg>
+            下载 Windows 版
+          </a>
+          <a class="btn-quiet" href="#shots">先看看界面</a>
         </div>
-        <div class="device-base" aria-hidden="true"></div>
+        <div class="hero-meta">
+          <span>Windows 10 / 11 · 64 位</span>
+          <span>约 68 MB</span>
+          <span>不需要账号</span>
+        </div>
       </div>
-      <div class="device-glow" aria-hidden="true"></div>
     </div>
   </div>
 
-  <!-- 关键词跑马灯 -->
-  <div class="tape rv" aria-hidden="true">
-    <div class="tape-row" id="tapeRow">
-      <span><b>双链</b> [[笔记]]</span><span>关系图</span><span><b>Mermaid</b> 图表</span>
-      <span>十一种提示块</span><span><b>KaTeX</b> 公式</span><span>脚注</span>
-      <span><b>PDF / Word</b> 导出</span><span>全文搜索</span><span><b>WebDAV</b> 云同步</span>
-      <span>版本历史</span><span>深浅主题</span><span><b>六套</b>强调色</span>
+  <div class="hero-shot">
+    <div class="hero-shot-in paper">
+      <div class="win-bar" aria-hidden="true"><i></i><i></i><i></i></div>
+      <img src="shots/hero.png" width="3000" height="1880"
+           alt="Nota 的分栏视图：左边是 Markdown 源码，右边是实时渲染的结果">
     </div>
   </div>
 </section>
 
-<!-- ══ 数字 ══ -->
-<section class="sec" style="padding-top:72px;padding-bottom:0">
-  <div class="wrap">
-    <div class="stats">
-      <div class="stat rv"><b>0</b><span>联网请求 · 不打开浏览器也不偷偷上报</span></div>
-      <div class="stat rv" style="transition-delay:.08s"><b>4 种</b><span>导出格式 · 排版跟屏幕上一致</span></div>
-      <div class="stat rv" style="transition-delay:.16s"><b>11 种</b><span>提示块 · 各有各的颜色与记号</span></div>
-      <div class="stat rv" style="transition-delay:.24s"><b>1 份</b><span>标准 Markdown · 你的数据只属于你</span></div>
-    </div>
+<!-- ══ 成绩条 ══ -->
+<div class="wrap">
+  <div class="stats">
+    <div class="stat rise"><b><span class="n" data-count="0">0</span></b><span>联网请求 · 不打开浏览器也不偷偷上报</span></div>
+    <div class="stat rise"><b><span class="n" data-count="4">4</span><span class="u">种</span></b><span>导出格式 · 排版跟屏幕上一致</span></div>
+    <div class="stat rise"><b><span class="n" data-count="11">11</span><span class="u">种</span></b><span>提示块 · 各有各的颜色与记号</span></div>
+    <div class="stat rise"><b><span class="n" data-count="1">1</span><span class="u">份</span></b><span>标准 Markdown · 你的数据只属于你</span></div>
   </div>
-</section>
+</div>
 
-<!-- ══ Bento 特性 ══ -->
+<!-- ══ 功能 ══ -->
 <section class="sec" id="features">
   <div class="wrap">
-    <div class="sec-head center rv">
-      <div class="eyebrow">Why Nota</div>
-      <h2>它把注意力留给内容</h2>
+    <div class="sec-head rise">
+      <div class="sec-title">
+        <span class="sec-no">01 / WHY</span>
+        <h2>它把注意力留给内容</h2>
+      </div>
       <p>没有插件市场，没有强制注册，没有「协作邀请」。该有的编辑能力一个不少，不该打扰的一样都没有。</p>
     </div>
-    <div class="bento">
-      <div class="cell c-4 rv">
-        <div class="ic"><svg viewBox="0 0 24 24" width="19" height="19"><rect x="4" y="10" width="16" height="10" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg></div>
-        <h3>纯本地，也陪你上云</h3>
-        <p>笔记就是你目录里的 .md 文件，断网照常写。想跨设备时填一个 WebDAV 地址——同步在后台按文件比对新旧，冲突会留底，谁的字都不会被悄悄覆盖。</p>
-      </div>
-      <div class="cell c-2 rv" style="transition-delay:.08s">
-        <div class="ic"><svg viewBox="0 0 24 24" width="19" height="19"><path d="M4 4h11l5 5v11H4z"/><path d="M15 4v5h5"/><path d="M8 13h8M8 17h5"/></svg></div>
-        <h3>随手一张便签</h3>
-        <p>任何程序里按 <code>Alt+N</code>，屏幕角落弹一张纸：连按连开、自动保存、<code>Esc</code> 收起。正文里打 <code>#标签</code> 就算归类，<code>- [ ]</code> 会变成能点的勾。攒够了一句按一下存进笔记库，纸自己收进抽屉，反悔还有一步「撤销」。</p>
-      </div>
-      <div class="cell c-2 rv" style="transition-delay:.16s">
-        <div class="ic"><svg viewBox="0 0 24 24" width="19" height="19"><path d="M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.7 1.7"/><path d="M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7l1.7-1.7"/></svg></div>
-        <h3>双链与关系图</h3>
-        <p><code>[[笔记]]</code> 弹选择器选，不用手打；关系图把谁提到了谁画成连线。</p>
-      </div>
-      <div class="cell c-2 rv">
-        <div class="ic"><svg viewBox="0 0 24 24" width="19" height="19"><path d="M4 19.5V6a2 2 0 0 1 2-2h14v14H6a2 2 0 0 0-2 2Zm0 0a2 2 0 0 0 2 2h14"/><path d="M9 8h6M9 12h4"/></svg></div>
-        <h3>所见即所写</h3>
-        <p>分栏同步滚动、行号、代码高亮、补全。源码即文件，别的工具也认。</p>
-      </div>
-      <div class="cell c-2 rv" style="transition-delay:.08s">
-        <div class="ic"><svg viewBox="0 0 24 24" width="19" height="19"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9h18M7 14h6"/></svg></div>
-        <h3>提示块与图表</h3>
-        <p>十一种提示块轻重分明；Mermaid 配色跟深浅主题走，换主题会重画。</p>
-      </div>
-      <div class="cell c-2 rv" style="transition-delay:.16s">
-        <div class="ic"><svg viewBox="0 0 24 24" width="19" height="19"><path d="M6 9V3h12v6M6 18H4a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v3a2 2 0 0 1-2 2h-2"/><path d="M6 14h12v7H6z"/></svg></div>
-        <h3>四种导出</h3>
-        <p>Markdown / HTML / PDF / Word。公式走 MathML，图表转图像，Word 里也是规整排版。</p>
-      </div>
-      <div class="cell c-4 rv" style="min-height:auto">
-        <div class="ic"><svg viewBox="0 0 24 24" width="19" height="19"><path d="M12 8V4m0 0-2 2m2-2 2 2"/><path d="M4 14a8 3 0 1 0 16 0V8"/><path d="M4 8v6c0 1.7 3.6 3 8 3s8-1.3 8-3V8"/><path d="M4 8c0 1.7 3.6 3 8 3s8-1.3 8-3"/></svg></div>
-        <h3>可选的 AI 编写，可选的联网</h3>
-        <p>接你自己的模型 —— 本机 Ollama 也行，任意 OpenAI 兼容接口也行。联网检索是应用替模型去查的，本地模型同样能用；不填密钥，这些功能连入口都不出现。</p>
-      </div>
+
+    <div class="feat">
+      <article class="f rise">
+        <div class="f-n">01</div>
+        <div>
+          <h3>纯本地，也陪你上云</h3>
+          <p>笔记就是你目录里的 .md 文件，断网照常写。想跨设备时填一个 WebDAV 地址——同步在后台按文件比对新旧，冲突会留底，谁的字都不会被悄悄覆盖。</p>
+        </div>
+      </article>
+      <article class="f rise">
+        <div class="f-n">02</div>
+        <div>
+          <h3>随手一张便签</h3>
+          <p>任何程序里按 <code>Alt+N</code>，屏幕角落弹一张纸：连按连开、自动保存、<code>Esc</code> 收起。</p>
+        </div>
+      </article>
+      <article class="f rise">
+        <div class="f-n">03</div>
+        <div>
+          <h3>双链与关系图</h3>
+          <p><code>[[笔记]]</code> 弹选择器选，不用手打；关系图把谁提到了谁画成连线，孤岛一眼可见。</p>
+        </div>
+      </article>
+      <article class="f rise">
+        <div class="f-n">04</div>
+        <div>
+          <h3>所见即所写</h3>
+          <p>分栏同步滚动、行号、代码高亮、补全。源码即文件，别的工具也认。</p>
+        </div>
+      </article>
+      <article class="f rise">
+        <div class="f-n">05</div>
+        <div>
+          <h3>提示块与图表</h3>
+          <p>十一种提示块轻重分明；Mermaid 配色跟深浅主题走，换主题会重画。</p>
+        </div>
+      </article>
+      <article class="f rise">
+        <div class="f-n">06</div>
+        <div>
+          <h3>四种导出</h3>
+          <p>Markdown / HTML / PDF / Word。公式走 MathML，图表转图像。</p>
+        </div>
+      </article>
+      <article class="f rise">
+        <div class="f-n">07</div>
+        <div>
+          <h3>可选的 AI 编写，可选的联网</h3>
+          <p>接你自己的模型 —— 本机 Ollama 也行，任意 OpenAI 兼容接口也行。联网检索是应用替模型去查的，本地模型同样能用；不填密钥，这些功能连入口都不出现。</p>
+        </div>
+      </article>
     </div>
   </div>
 </section>
 
-<!-- ══ 界面特写 ══ -->
-<section class="sec" id="shots" style="border-top:1px solid var(--line)">
+<!-- ══ 界面 ══ -->
+<section class="sec" id="shots">
   <div class="wrap">
-    <div class="sec-head rv">
-      <div class="eyebrow">Screens</div>
-      <h2>它长什么样</h2>
-      <p>下面每一张都是真实界面截图，不是画出来的示意图。</p>
+    <div class="sec-head rise">
+      <div class="sec-title">
+        <span class="sec-no">02 / SCREENS</span>
+        <h2>它长什么样</h2>
+      </div>
+      <p>下面每一张都是真实界面截图，不是画出来的示意图。点开可以看大图。</p>
     </div>
 
-    <div class="show">
-      <div class="show-copy rv">
-        <h3>左边写，右边看</h3>
-        <p>分栏视图下源码和渲染结果同步滚动 —— 滚到哪儿，另一边就跟着到哪儿，点大纲也不会跳错位置。</p>
-        <ul>
-          <li><svg viewBox="0 0 24 24"><path d="m4 12 5 5L20 7"/></svg>标题锚点做双向映射，长文不漂移</li>
-          <li><svg viewBox="0 0 24 24"><path d="m4 12 5 5L20 7"/></svg>代码块右上角常驻语言标识</li>
-          <li><svg viewBox="0 0 24 24"><path d="m4 12 5 5L20 7"/></svg>预览里的待办可以勾，勾了会回写源码</li>
-        </ul>
+    <div class="gallery">
+      <figure class="wide rise">
+        <div class="fr"><img src="shots/hero.png" alt="分栏视图：左边源码、右边渲染结果" loading="lazy"></div>
+        <figcaption><i></i>分栏视图 · 源码与渲染同步滚动</figcaption>
+      </figure>
+      <figure class="rise">
+        <div class="fr"><img src="shots/article.png" alt="阅读模式下一篇真文章的排版：表格、代码块、脚注" loading="lazy"></div>
+        <figcaption><i></i>阅读模式 · 表格、代码块、脚注</figcaption>
+      </figure>
+      <figure class="rise">
+        <div class="fr"><img src="shots/graph.png" alt="关系图：笔记之间的双链连线" loading="lazy"></div>
+        <figcaption><i></i>关系图 · 谁提到了谁</figcaption>
+      </figure>
+      <figure class="rise">
+        <div class="fr"><img src="shots/search.png" alt="搜索面板：标题命中与正文命中分两段显示" loading="lazy"></div>
+        <figcaption><i></i>搜索 · 标题与正文分两段命中</figcaption>
+      </figure>
+      <figure class="rise">
+        <div class="fr"><img src="shots/dark.png" alt="深色主题下的阅读模式" loading="lazy"></div>
+        <figcaption><i></i>深色主题 · 对比单独调过</figcaption>
+      </figure>
+    </div>
+  </div>
+</section>
+
+<!-- ══ 便签 ══ -->
+<section class="sec">
+  <div class="wrap">
+    <div class="sec-head rise">
+      <div class="sec-title">
+        <span class="sec-no">03 / QUICK NOTE</span>
+        <h2>想记的那个瞬间，<br>不该先找软件</h2>
       </div>
-      <div class="show-shot rv" style="transition-delay:.1s">
-        <div class="frame"><img src="shots/hero.png" alt="分栏视图：左边源码、右边渲染结果" loading="lazy"></div>
-        <div class="glowbar" aria-hidden="true"></div>
-      </div>
+      <p>便签不读笔记库、不建文件树、不连任何服务 —— 只有一条标题栏和一个输入框。所以它必须在按下去的那一秒就出现。</p>
     </div>
 
-    <div class="show rev">
-      <div class="show-copy rv">
-        <h3>阅读模式下，它像一篇写好的文章</h3>
-        <p>表格有圆角、脚注有编号、代码块能带标题和行号、行内还能插标签和块 ID。这些不是「支持的语法清单」，是一篇真文章里本来就会有的东西。</p>
-        <ul>
-          <li><svg viewBox="0 0 24 24"><path d="m4 12 5 5L20 7"/></svg>高级代码块：加标题、加行号、高亮指定行</li>
-          <li><svg viewBox="0 0 24 24"><path d="m4 12 5 5L20 7"/></svg>Mermaid 图表配色跟主题走，不再是那片蓝紫</li>
-          <li><svg viewBox="0 0 24 24"><path d="m4 12 5 5L20 7"/></svg>提示块十一种类型各一色相，需要强调时才用</li>
-        </ul>
+    <div class="notes">
+      <div class="note rise">
+        <span class="k">Alt + N</span>
+        <h3>任何程序里按一下</h3>
+        <p>屏幕角落弹一张纸，连按连开、位置自动错开。Esc 收起，内容早就存好了，不会丢。</p>
       </div>
-      <div class="show-shot rv" style="transition-delay:.1s">
-        <div class="frame"><img src="shots/article.png" alt="阅读模式下一篇真文章的排版：表格、代码块、脚注" loading="lazy"></div>
-        <div class="glowbar" aria-hidden="true"></div>
+      <div class="note rise">
+        <span class="k">#标签</span>
+        <h3>打字就是归类</h3>
+        <p>正文里打 <code>#docker</code> 就真的挂上了这个标签；<code>- [ ]</code> 会变成能点的方框。标签是写字的副产品，不是一道额外工序。</p>
       </div>
-    </div>
-
-    <div class="show">
-      <div class="show-copy rv">
-        <h3>关系图：谁提到了谁</h3>
-        <p>列表能告诉你有 60 篇，但看不出哪篇是枢纽、哪几篇是孤岛。关系图把 <code>[[双链]]</code> 画成连线，孤立的笔记单独画成空心。</p>
-        <ul>
-          <li><svg viewBox="0 0 24 24"><path d="m4 12 5 5L20 7"/></svg>滚轮缩放、拖动平移、拖节点挪位置</li>
-          <li><svg viewBox="0 0 24 24"><path d="m4 12 5 5L20 7"/></svg>双击节点打开那一篇，单击不跳，摆图时不会误触</li>
-          <li><svg viewBox="0 0 24 24"><path d="m4 12 5 5L20 7"/></svg><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>G</kbd> 随手唤出</li>
-        </ul>
-      </div>
-      <div class="show-shot rv" style="transition-delay:.1s">
-        <div class="frame"><img src="shots/graph.png" alt="关系图：笔记之间的双链连线" loading="lazy"></div>
-        <div class="glowbar" aria-hidden="true"></div>
-      </div>
-    </div>
-
-    <div class="show rev">
-      <div class="show-copy rv">
-        <h3>记得写了什么，忘了在哪一篇</h3>
-        <p><kbd>Ctrl</kbd>+<kbd>P</kbd> 只搜标题和路径，几十毫秒出结果；<kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>F</kbd> 连正文一起搜，命中那一行直接给你看。</p>
-        <ul>
-          <li><svg viewBox="0 0 24 24"><path d="m4 12 5 5L20 7"/></svg>结果分两段：先标题后正文</li>
-          <li><svg viewBox="0 0 24 24"><path d="m4 12 5 5L20 7"/></svg>↑↓ 选择、Enter 打开，全程不碰鼠标</li>
-          <li><svg viewBox="0 0 24 24"><path d="m4 12 5 5L20 7"/></svg>「链接」页签两段并排：谁提到了这篇、这篇又提到了谁</li>
-        </ul>
-      </div>
-      <div class="show-shot rv" style="transition-delay:.1s">
-        <div class="frame"><img src="shots/search.png" alt="搜索面板：标题命中与正文命中分两段显示" loading="lazy"></div>
-        <div class="glowbar" aria-hidden="true"></div>
-      </div>
-    </div>
-
-    <div class="show">
-      <div class="show-copy rv">
-        <h3>深色不是把颜色反过来</h3>
-        <p>深浅两套各自调过对比：纸张不是纯黑，强调色在暗底上单独调过亮度，图表的颜色也会重新画一遍。</p>
-        <ul>
-          <li><svg viewBox="0 0 24 24"><path d="m4 12 5 5L20 7"/></svg>六套强调色可换</li>
-          <li><svg viewBox="0 0 24 24"><path d="m4 12 5 5L20 7"/></svg>代码高亮在深色下另配了一组颜色</li>
-          <li><svg viewBox="0 0 24 24"><path d="m4 12 5 5L20 7"/></svg>导出永远是适合打印的浅色，不跟主题走</li>
-        </ul>
-      </div>
-      <div class="show-shot rv" style="transition-delay:.1s">
-        <div class="frame"><img src="shots/dark.png" alt="深色主题下的阅读模式" loading="lazy"></div>
-        <div class="glowbar" aria-hidden="true"></div>
+      <div class="note rise">
+        <span class="k">存为笔记</span>
+        <h3>攒够了就收进库</h3>
+        <p>按一下存进笔记库的 <code>便签/</code> 目录，纸自己折进抽屉，底下浮一条提示带撤销。同名自动加序号，不会盖掉你写好的东西。</p>
       </div>
     </div>
   </div>
 </section>
 
 <!-- ══ 云同步 ══ -->
-<section class="sec" id="sync" style="border-top:1px solid var(--line)">
+<section class="sec" id="sync">
   <div class="wrap">
-    <div class="show rev" style="border:0;padding-top:0">
-      <div class="show-copy rv">
-        <div class="eyebrow">Sync</div>
-        <h3>云同步，不托管</h3>
-        <p>填一个 WebDAV 地址，Nota 在后台按文件比对新旧：本地改了推上去，云端改了拉下来。</p>
+    <div class="sec-head rise">
+      <div class="sec-title">
+        <span class="sec-no">04 / SYNC</span>
+        <h2>云同步，不托管</h2>
+      </div>
+      <p>填一个 WebDAV 地址，Nota 在后台按文件比对新旧：本地改了推上去，云端改了拉下来。</p>
+    </div>
+
+    <div class="sync">
+      <div class="sync-copy rise">
+        <h3>你的笔记躺在你的网盘里</h3>
+        <p>同步不经过任何第三方服务器，也不需要把笔记交给谁保管。密钥存在本机，换一台机器填同一个地址就接着写。</p>
         <ul>
           <li><svg viewBox="0 0 24 24"><path d="m4 12 5 5L20 7"/></svg>冲突不覆盖：本地版本自动改名留底</li>
           <li><svg viewBox="0 0 24 24"><path d="m4 12 5 5L20 7"/></svg>启动时与每 10 分钟各同步一轮，也可以手动</li>
-          <li><svg viewBox="0 0 24 24"><path d="m4 12 5 5L20 7"/></svg>密钥存本机；你的笔记躺在你的网盘里，不经过任何第三方服务器</li>
+          <li><svg viewBox="0 0 24 24"><path d="m4 12 5 5L20 7"/></svg>按文件比对新旧，不整库重传</li>
         </ul>
       </div>
-      <div class="show-shot rv" style="transition-delay:.1s">
-        <div class="frame" style="aspect-ratio:16/10;display:flex;align-items:center;justify-content:center;background:linear-gradient(160deg,#223029,#191a17)">
-          <svg width="42%" height="42%" viewBox="0 0 24 24" fill="none" stroke="#4b8a6b" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round" style="opacity:.85">
-            <path d="M4 14.9A7 7 0 1 1 15.7 8h1.8a4.5 4.5 0 0 1 2.5 8.2"/>
-            <path d="M12 12v9m0-9 3 3m-3-3-3 3"/>
-          </svg>
-        </div>
-        <div class="glowbar" aria-hidden="true"></div>
+      <div class="sync-art rise">
+        <svg viewBox="0 0 24 24" fill="none" stroke-width=".9"
+             stroke-linecap="round" stroke-linejoin="round">
+          <path d="M4 14.9A7 7 0 1 1 15.7 8h1.8a4.5 4.5 0 0 1 2.5 8.2"/>
+          <path d="M12 12v9m0-9 3 3m-3-3-3 3"/>
+        </svg>
       </div>
     </div>
   </div>
 </section>
 
 <!-- ══ 下载 ══ -->
-<section class="sec" id="download" style="padding-top:20px">
+<section class="sec" id="download">
   <div class="wrap">
-    <div class="dl rv">
-      <h2>现在就试试</h2>
-      <p class="sub">Windows 10 / 11，64 位。装上就能用，不需要账号，也不会往后台挂任何东西。</p>
-      <div class="dl-grid">
-        <div class="dl-item">
-          <h4>下载 Nota</h4>
-          <div class="meta" data-dl-meta="setup">Nota-Setup-2.10.0.exe · 68 MB</div>
-          <!-- 直链落在自己域名下的 /d/setup.exe；带 .exe 后缀是故意的，
-               任何静态服务器都能直接吐文件，浏览器存下来也是正常文件名 -->
-          <a class="btn btn-primary" data-dl="setup" href="/d/setup.exe">下载安装包</a>
-          <span class="btn-sub" style="color:#8f8d80">打开后自己选：装到这台电脑，或者直接运行</span>
-          <p class="dl-alt">不想装？<a data-dl="portable" href="/d/portable.exe">下载免安装版</a>
-            <span class="fn" data-dl-meta="portable">Nota-Portable-2.10.0.exe</span>，双击直接进界面</p>
-        </div>
+    <div class="dl rise">
+      <div>
+        <h2>现在就试试</h2>
+        <p class="sub">Windows 10 / 11，64 位。装上就能用，不需要账号，也不会往后台挂任何东西。</p>
       </div>
+
+      <div class="dl-act">
+        <a class="btn magnet" data-dl="setup" href="/d/setup.exe" download>
+          <svg viewBox="0 0 24 24"><path d="M12 3v12m0 0 4-4m-4 4-4-4"/><path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/></svg>
+          下载安装包
+        </a>
+        <div class="dl-file" data-dl-meta="setup">Nota-Setup-2.10.0.exe · 68 MB</div>
+        <p class="dl-alt">不想装？<a data-dl="portable" href="/d/portable.exe" download>下载免安装版</a>，启动时选「直接运行」</p>
+        <div class="dl-file" data-dl-meta="portable">Nota-Portable-2.10.0.exe</div>
+        <p class="dl-mob">手机上装不了 <b>.exe</b>。<br>换台 Windows 电脑，打开 <b>ymtj.hyper99.top</b></p>
+      </div>
+
       <p class="dl-note">
         <b>双击后十几秒没出窗口，不是卡住。</b>
         Windows 会先把整个安装包扫一遍才放行；这个包没有代码签名证书，扫得比一般软件更久。
         若弹出「已保护你的电脑」，点「更多信息 → 仍要运行」就行。
         装的时候位置可以改，不想要快捷方式就选「直接运行」，一个文件两种用法。
-        装的时候还能顺便指定笔记存哪个文件夹 —— 选完继续装，第一次打开就落在那里。
       </p>
+
       <div class="facts">
         <span data-dl-ver>当前版本 2.10.0</span>
         <span>Windows 10 / 11 · 64 位</span>
         <span>界面字体：南西新圆体（随包）</span>
-        <span><kbd>Ctrl</kbd>+<kbd>P</kbd> 跳转 · <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>F</kbd> 全文 · <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>G</kbd> 关系图 · <kbd>Alt</kbd>+<kbd>N</kbd> 便签</span>
         <span>开源，MIT</span>
       </div>
     </div>
@@ -617,128 +725,235 @@ kbd{
 
 <footer class="foot">
   <div class="wrap foot-in">
-    <img src="icon.png" alt="" width="22" height="22" style="border-radius:6px">
+    <img src="icon.png" alt="">
     <span>Nota · 一个只做笔记的笔记应用</span>
+    <span class="r">MIT · 2.10.0</span>
   </div>
 </footer>
 
+<div class="lb" id="lb" aria-hidden="true">
+  <button class="x" type="button" aria-label="关闭">×</button>
+  <img alt="">
+</div>
+
 <script>
-/* 滚动入场：进入视口的 .rv 加 .in。一次性，不回退 —— 回头看反而烦。 */
-const io = new IntersectionObserver((es) => {
-  for (const e of es) {
-    if (e.isIntersecting) {
-      e.target.classList.add('in')
-      io.unobserve(e.target)
+/* ══════════ 1. 入场 ══════════ */
+;(function reveal(){
+  if (!('IntersectionObserver' in window)) return
+  const els = [...document.querySelectorAll('.rise, .paper')]
+  if (!els.length) return
+  document.documentElement.classList.add('io')
+
+  const io = new IntersectionObserver((es) => {
+    for (const e of es) {
+      if (e.isIntersecting) { e.target.classList.add('in'); io.unobserve(e.target) }
     }
+  }, { threshold: 0.1, rootMargin: '0px 0px -7% 0px' })
+
+  els.forEach((el) => io.observe(el))
+
+  /* 首屏里本来就在视口内的，隔两帧就入场：不等观察回调，
+     也让浏览器先画出隐藏态，过渡才跑得起来 */
+  requestAnimationFrame(() => requestAnimationFrame(() => {
+    for (const el of els) {
+      if (el.getBoundingClientRect().top < innerHeight) el.classList.add('in')
+    }
+  }))
+
+  /* 兜底：三秒半后还没露头的（比如被层级挡住、尺寸为 0），直接显示，绝不留白 */
+  setTimeout(() => {
+    for (const el of els) {
+      if (!el.classList.contains('in') && el.getBoundingClientRect().top < innerHeight * 1.15) {
+        el.classList.add('in')
+      }
+    }
+  }, 3500)
+})()
+
+/* ══════════ 2. 数字滚动 ══════════ */
+const counters = document.querySelectorAll('[data-count]')
+const cio = new IntersectionObserver((es) => {
+  for (const e of es) {
+    if (!e.isIntersecting) continue
+    const el = e.target
+    const target = Number(el.dataset.count || 0)
+    if (target === 0) { el.textContent = '0'; cio.unobserve(el); continue }
+    const t0 = performance.now()
+    const dur = 1200
+    const tick = (now) => {
+      const p = Math.min(1, (now - t0) / dur)
+      const eased = 1 - Math.pow(1 - p, 3)
+      el.textContent = String(Math.round(target * eased))
+      if (p < 1) requestAnimationFrame(tick)
+    }
+    requestAnimationFrame(tick)
+    cio.unobserve(el)
   }
-}, { threshold: .12, rootMargin: '0px 0px -40px' })
-document.querySelectorAll('.rv').forEach((el) => io.observe(el))
+}, { threshold: 0.6 })
+counters.forEach((c) => cio.observe(c))
 
-/* 顶栏滚过首屏后加深投影 */
+/* ══════════ 2. 滚动：进度线 / 顶栏 ══════════ */
+const bar = document.getElementById('bar')
 const nav = document.getElementById('nav')
-addEventListener('scroll', () => nav.classList.toggle('scrolled', scrollY > 30), { passive: true })
+const shot = document.querySelector('.hero-shot-in')
+const fine = matchMedia('(pointer: fine)').matches
+const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches
+let ticking = false
 
-/* 电脑外框：鼠标在上面时轻微 3D 倾斜，离开回正。
-   倾角只有 ±4° —— 是「可以摸」，不是「游乐场」。 */
-const device = document.getElementById('device')
-if (device && matchMedia('(pointer:fine)').matches) {
-  const wrapEl = device.parentElement
-  wrapEl.addEventListener('mousemove', (e) => {
-    const r = wrapEl.getBoundingClientRect()
-    const dx = (e.clientX - r.left) / r.width - .5
-    const dy = (e.clientY - r.top) / r.height - .5
-    device.style.transform = `rotateY(${dx * 8}deg) rotateX(${-dy * 6}deg)`
+function onScroll(){
+  if (ticking) return
+  ticking = true
+  requestAnimationFrame(() => {
+    const y = scrollY
+    const h = document.documentElement.scrollHeight - innerHeight
+    bar.style.width = (h > 0 ? (y / h) * 100 : 0) + '%'
+    nav.classList.toggle('on', y > 24)
+
+    /* 首屏大图轻微视差：比页面慢半拍，滚到整张露出来时归位。
+       只用纵向位移，不用 scale —— 缩放会让图左右缩进而和上面的文字对不齐。 */
+    if (shot && !reduce) {
+      const r = shot.getBoundingClientRect()
+      if (r.top < innerHeight && r.bottom > 0) {
+        const p = Math.min(1, Math.max(0, (innerHeight - r.top) / (innerHeight * 0.92)))
+        shot.style.transform = 'translateY(' + (p * -16).toFixed(1) + 'px)'
+      }
+    }
+    ticking = false
   })
-  wrapEl.addEventListener('mouseleave', () => { device.style.transform = '' })
+}
+addEventListener('scroll', onScroll, { passive: true })
+addEventListener('resize', onScroll, { passive: true })
+onScroll()
+
+/* ══════════ 3. 鼠标：柔光 / 按钮磁吸 ══════════ */
+if (fine && !reduce) {
+  const spot = document.getElementById('spot')
+  let sx = innerWidth / 2, sy = innerHeight * 0.3, cx = sx, cy = sy
+  addEventListener('mousemove', (e) => {
+    sx = e.clientX; sy = e.clientY
+    spot.style.opacity = '1'
+  }, { passive: true })
+  ;(function loop(){
+    cx += (sx - cx) * 0.08
+    cy += (sy - cy) * 0.08
+    spot.style.transform = 'translate3d(' + cx + 'px,' + cy + 'px,0)'
+    requestAnimationFrame(loop)
+  })()
+
+  for (const el of document.querySelectorAll('.magnet')) {
+    el.addEventListener('mousemove', (e) => {
+      const r = el.getBoundingClientRect()
+      const dx = e.clientX - (r.left + r.width / 2)
+      const dy = e.clientY - (r.top + r.height / 2)
+      el.style.translate = (dx * 0.08).toFixed(1) + 'px ' + (dy * 0.14).toFixed(1) + 'px'
+    })
+    el.addEventListener('mouseleave', () => { el.style.translate = '' })
+  }
 }
 
-/* 跑马灯：把内容复制一份接在后面，滚到一半无缝续上 */
-const row = document.getElementById('tapeRow')
-if (row) row.innerHTML += row.innerHTML
+/* ══════════ 4. 截图点开放大 ══════════ */
+;(function lightbox(){
+  const lb = document.getElementById('lb')
+  if (!lb) return
+  const big = lb.querySelector('img')
+  const closeBtn = lb.querySelector('.x')
 
-/* ══ 版本与下载地址：两级来源 ══
-   HTML 里写死的那几行只是兜底，页面不靠它们说实话。
-
-   1. 先看同目录的 info.json —— 站点架在自己服务器上时由部署脚本生成，
-      文件小、同域、不会被限流，是主路径。这时下载按钮保持 /d/setup.exe，
-      URL 干净，下载次数也归自己。
-
-   2. 没有 info.json（还没架到自己的服务器上，或者刚装好还没生成）→
-      去问发布接口，拿最新版安装包的文件地址和版本号，直接挂到按钮上。
-      这一步只发生在脚本里：**页面上一个字都不提它从哪来**，
-      访客点下去拿到的是文件本身，不会落到任何发布页面上。
-
-   两级都失败就保持 HTML 里写好的兜底，按钮照样能点。 */
-;(function downloadSource() {
-  var mb = function (n) { return n > 0 ? (n / 1048576).toFixed(0) + ' MB' : '' }
-  var btn = document.querySelector('[data-dl="setup"]')
-  var pbtn = document.querySelector('[data-dl="portable"]')
-  var meta = document.querySelector('[data-dl-meta="setup"]')
-  var pmeta = document.querySelector('[data-dl-meta="portable"]')
-  var verEl = document.querySelector('[data-dl-ver]')
-  var badge = document.querySelector('[data-dl-badge]')
-
-  /* 两份文件是同一个二进制复制出来的，体积一样，写法也共用 */
-  var label = function (name, size) {
-    var s = mb(size || 0)
-    return s ? name + ' · ' + s : name
+  const open = (src, alt) => {
+    big.src = src
+    big.alt = alt || ''
+    const gap = innerWidth - document.documentElement.clientWidth
+    document.body.style.paddingRight = gap > 0 ? gap + 'px' : ''
+    document.body.style.overflow = 'hidden'
+    lb.classList.add('on')
+    lb.setAttribute('aria-hidden', 'false')
+    closeBtn.focus()
+  }
+  const shut = () => {
+    lb.classList.remove('on')
+    lb.setAttribute('aria-hidden', 'true')
+    document.body.style.overflow = ''
+    document.body.style.paddingRight = ''
   }
 
-  var paint = function (setup, portable, version) {
+  for (const img of document.querySelectorAll('.gallery img')) {
+    img.addEventListener('click', () => open(img.currentSrc || img.src, img.alt))
+  }
+  lb.addEventListener('click', (e) => { if (e.target !== big) shut() })
+  addEventListener('keydown', (e) => { if (e.key === 'Escape' && lb.classList.contains('on')) shut() })
+})()
+
+/* ══════════ 5. 版本与下载地址：两级来源 ══════════
+   HTML 里写死的只是兜底。先看同目录 info.json（部署脚本生成，同域、不被限流），
+   没有再去问发布接口 —— 只有站点不在自己服务器上时才改按钮地址。 */
+;(function downloadSource(){
+  const mb = (n) => (n > 0 ? Math.round(n / 1048576) + ' MB' : '')
+
+  /* 不在正式域名下（本地预览、file:// 打开）时，/d/ 是取不到的，
+     直接把按钮指到线上绝对地址，免得点下去 404 */
+  const PROD = 'https://ymtj.hyper99.top'
+  const offsite = location.protocol === 'file:' || !/(^|\.)hyper99\.top$/i.test(location.hostname)
+  if (offsite) {
+    for (const el of document.querySelectorAll('[data-dl]')) {
+      const k = el.getAttribute('data-dl')
+      el.href = PROD + '/d/' + (k === 'portable' ? 'portable.exe' : 'setup.exe')
+    }
+  }
+  const btn = document.querySelector('[data-dl="setup"]')
+  const pbtn = document.querySelector('[data-dl="portable"]')
+  const meta = document.querySelector('[data-dl-meta="setup"]')
+  const pmeta = document.querySelector('[data-dl-meta="portable"]')
+  const verEl = document.querySelector('[data-dl-ver]')
+  const badge = document.querySelector('[data-dl-badge]')
+
+  /* 本地预览时上面已经指到线上地址了，元信息沿用 HTML 里的写法即可，
+     别再发同域探测（那只会 404 并污染控制台） */
+  if (offsite) return
+
+  const label = (name, size) => { const s = mb(size || 0); return s ? name + ' · ' + s : name }
+
+  const paint = (setup, portable, version) => {
     if (setup && setup.name && meta) meta.textContent = label(setup.name, setup.size)
     if (portable && portable.name && pmeta) pmeta.textContent = label(portable.name, portable.size)
     if (version) {
       if (verEl) verEl.textContent = '当前版本 ' + version
       if (badge) badge.textContent = 'v' + version + ' · '
+      const f = document.querySelector('.foot-in .r')
+      if (f) f.textContent = 'MIT · ' + version
     }
   }
 
   fetch('info.json', { cache: 'no-cache' })
-    .then(function (r) { return r.ok ? r.json() : Promise.reject(new Error('http ' + r.status)) })
-    .then(function (d) {
-      var a = (d && d.assets) || {}
+    .then((r) => (r.ok ? r.json() : Promise.reject(new Error('http ' + r.status))))
+    .then((d) => {
+      const a = (d && d.assets) || {}
       paint(a.setup || {}, a.portable || {}, d && d.version)
     })
-    .catch(function () {
-      /* 站内没有 info.json。先看 /d/setup.exe 在不在 ——
-         站点架在自己服务器上时它是通的，那就保持这个干净地址
-         （链接里不含任何外站域名），只把版本号和体积补齐；
-         不在（比如还挂在 Pages 上）才把链接换成发布接口给的直链。 */
+    .catch(() => {
       fetch('/d/setup.exe', { method: 'HEAD' })
-        .then(function (r) { if (!r.ok) throw new Error('http ' + r.status); askRelease(false) })
-        .catch(function () { askRelease(true) })
+        .then((r) => { if (!r.ok) throw new Error('http ' + r.status); askRelease(false) })
+        .catch(() => askRelease(true))
     })
 
-  /* 问一次最新发布版：版本号、文件名、体积都拿真的。
-     只有 direct 为真时才改按钮地址（改了就绕过自己的服务器）。 */
-  function askRelease(direct) {
+  function askRelease(direct){
     fetch('https://api.github.com/repos/YMTJ0522/Nota/releases/latest', {
       headers: { Accept: 'application/vnd.github+json' },
     })
-      .then(function (r) { return r.ok ? r.json() : Promise.reject(new Error('http ' + r.status)) })
-      .then(function (rel) {
-        var list = (rel && rel.assets) || []
-        var pick = function (re) {
-          for (var i = 0; i < list.length; i++) {
-            if (re.test(list[i].name || '')) return list[i]
-          }
-          return null
-        }
-        var hit = pick(/setup/i)
-        var phit = pick(/portable/i)
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error('http ' + r.status))))
+      .then((rel) => {
+        const list = (rel && rel.assets) || []
+        const pick = (re) => { for (const f of list) { if (re.test(f.name || '')) return f } return null }
+        const hit = pick(/setup/i)
+        const phit = pick(/portable/i)
         if (!hit && !phit) return
-        /* 只有 direct 为真时才改地址 —— 不然本来走自己服务器的下载
-           会被悄悄换成外站直链，下载次数也就统计不到了。 */
-        if (direct) {
+        if (direct && !offsite) {
           if (btn && hit && hit.browser_download_url) btn.href = hit.browser_download_url
           if (pbtn && phit && phit.browser_download_url) pbtn.href = phit.browser_download_url
         }
         paint(hit, phit, String(rel.tag_name || '').replace(/^v/, ''))
       })
-      .catch(function () { /* 兜底文字已经在 HTML 里 */ })
+      .catch(() => { /* 兜底文字已在 HTML 里 */ })
   }
 })()
 </script>
-
 </body>
 </html>
