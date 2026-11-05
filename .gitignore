@@ -41,3 +41,6 @@ promo/demo-stills/
 
 # 封面渲染出来的成品（重新跑 scripts/render-cover.mjs 就有）
 promo/cover-43.png
+
+# 工作区记忆与本地日志（不该进仓库）
+.workbuddy/
