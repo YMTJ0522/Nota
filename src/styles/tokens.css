@@ -34,8 +34,12 @@
 
   /* 文字 */
   --n-fg: #2a2b28;
-  --n-fg-dim: #8b8880;
-  --n-fg-faint: #b3afa6;
+  /* 次级 / 三级文字。
+     这两档原先都太淡：dim 在纸色底上只有 3.36:1，faint 更是 2.08:1，
+     低于正文 4.5:1 的门槛，长文档里的日期、字数、placeholder 读起来发虚。
+     往下压到 4.82 / 3.18 —— faint 仍明显比 dim 轻，层级还在，但不再是「糊的」。 */
+  --n-fg-dim: #726e67;
+  --n-fg-faint: #918c81;
 
   /* 强调色。这里只是兜底的青瓷绿，真正的取值由 <html data-accent> 决定
      （6 套色板见文件末尾），没设 data-accent 时就用这行。 */
@@ -202,7 +206,8 @@
   --n-line-strong: #45464d;
   --n-fg: #eeedea;
   --n-fg-dim: #a3a19b;
-  --n-fg-faint: #6e6c67;
+  /* 深色下 faint 原来压到 3.44:1，同样偏淡；提亮到 4.96，与浅色那档同一水平 */
+  --n-fg-faint: #8a8882;
   --n-accent: #6fae8f;
   --n-accent-soft: color-mix(in oklab, var(--n-accent) 16%, var(--n-bg));
   /* 深色下强调色偏亮，文字改用深色才够对比 */

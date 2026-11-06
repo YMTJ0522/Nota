@@ -181,13 +181,15 @@
   padding: 1px 7px;
   border-radius: 6px;
   background: color-mix(in oklab, var(--n-fg) 7%, var(--n-code-surface));
-  color: var(--n-fg-faint);
+  /* 这里原来挂 faint 再叠 opacity 0.75，实际只剩两个字号的浅灰，压在
+     同样浅灰的代码底上几乎读不出来。faint 整体调深之后仍不够，
+     直接换成 dim 并去掉那层 opacity —— 它本来就不该比正文更糊。 */
+  color: var(--n-fg-dim);
   font-family: var(--n-font-ui);
   font-size: 0.7em;
   font-weight: 600;
   letter-spacing: 0.02em;
   line-height: 1.6;
-  opacity: 0.75;
   pointer-events: none;
   -webkit-user-select: none;
   user-select: none;

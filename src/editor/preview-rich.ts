@@ -1106,7 +1106,7 @@ function mermaidThemeVariables(forceLight = false): Record<string, string> {
   const bg = pick('--n-bg', '#16161a', '#fbfaf6')
   const surface = pick('--n-surface', '#1c1d21', '#fffefb')
   const fg = pick('--n-fg', '#eeedea', '#2a2b28')
-  const fgDim = pick('--n-fg-dim', '#a3a19b', '#8b8880')
+  const fgDim = pick('--n-fg-dim', '#a3a19b', '#726e67')
   const line = pick('--n-line', '#33343a', '#e6e2da')
 
   /* 图表自己带一套色板，不再跟着界面强调色走。
