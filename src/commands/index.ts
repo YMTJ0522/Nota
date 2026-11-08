@@ -28,6 +28,7 @@ import {
   ListTree,
   Link2,
   Moon,
+  Network,
   PanelLeft,
   Paperclip,
   PenLine,
@@ -320,6 +321,16 @@ export const commands: Command[] = [
     icon: Share2,
     keys: ['graph', 'map', 'links', 'guanxitu'],
     run: () => store.toggleGraph(),
+  },
+  {
+    id: 'view.map',
+    title: '思维导图',
+    hint: 'Ctrl+Shift+M',
+    group: '视图',
+    icon: Network,
+    keys: ['map', 'mindmap', 'daotu', 'siwei', '思维导图'],
+    needNote: true,
+    run: () => store.toggleMap(),
   },
 
   /* ── 工具 ── */

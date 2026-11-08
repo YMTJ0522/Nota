@@ -215,6 +215,9 @@ interface State {
   /** 关系图开着没。它是主区的一次「换一个看法」，不是中间列的一个页签 ——
       中间列只有 300px 宽，画不下几百个节点。 */
   graphOpen: boolean
+  /** 思维导图开着没。和关系图同一个理由放在主区：一张要看清的树图
+      在 300px 的栏里只能缩到 0.28 倍，字糊成一片，等于没做。 */
+  mapOpen: boolean
   /** 中间那一列在显示什么（主区与这一列的分工见 setColumnView） */
   columnView: ColumnView
   /** 桌面上开着的便签张数。主进程推过来，侧栏角标和便签列表都读它 */
@@ -361,6 +364,7 @@ const state = reactive<State>({
   lineNumbers: PREF_DEFAULTS.lineNumbers,
   mainView: 'note',
   graphOpen: false,
+  mapOpen: false,
   columnView: 'notes',
   stickyOpen: 0,
   stickyRev: 0,
@@ -1358,6 +1362,66 @@ function absolutizeMedia(html: string): string {
   )
 }
 
+/* ── 导出侧的强调色 ──
+   tokens.css 的强调色板是 oklch，浏览器认、Word 不认；导出的文件又必须
+   跟着用户选的强调色走。这里存七套浅色档的 oklch 取值 —— tokens.css 是
+   应用内的权威，这里是它的导出投影，两边一一对应，改色板要同步。
+   深色档不参与：导出的文档是独立文件，固定浅色底。 */
+const ACCENT_EXPORT: Record<AccentName, [number, number, number]> = {
+  celadon: [0.49, 0.13, 150],
+  cinnabar: [0.54, 0.15, 30],
+  indigo: [0.52, 0.14, 252],
+  amber: [0.56, 0.105, 95],
+  lagoon: [0.49, 0.075, 205],
+  wisteria: [0.52, 0.14, 300],
+  graphite: [0.47, 0.006, 260],
+}
+
+/** oklch → sRGB（标准 BCH 变换 + gamma）。导出侧一次性换算用，不追求极小色差 */
+function oklchToRgb([l, c, h]: [number, number, number]): [number, number, number] {
+  const rad = (h * Math.PI) / 180
+  const a = c * Math.cos(rad)
+  const b = c * Math.sin(rad)
+  const l_ = l + 0.3963377774 * a + 0.2158037573 * b
+  const m_ = l - 0.1055613458 * a - 0.0638541728 * b
+  const s_ = l - 0.0894841775 * a - 1.291485548 * b
+  const L = l_ ** 3
+  const M = m_ ** 3
+  const S = s_ ** 3
+  const lin = [
+    4.0767416621 * L - 3.3077115913 * M + 0.2309699292 * S,
+    -1.2684380046 * L + 2.6097574011 * M - 0.3413193965 * S,
+    -0.0041960863 * L - 0.7034186147 * M + 1.707614701 * S,
+  ]
+  return lin.map((x) => {
+    const v = x <= 0.0031308 ? 12.92 * x : 1.055 * Math.pow(x, 1 / 2.4) - 0.055
+    return Math.min(255, Math.max(0, Math.round(v * 255)))
+  }) as [number, number, number]
+}
+
+/** sRGB 直线混。掺 13% 做浅底色这个量级，直线混和 oklab 混肉眼分不出来 */
+function mixRgb(
+  x: [number, number, number],
+  y: [number, number, number],
+  t: number,
+): [number, number, number] {
+  return [
+    Math.round(x[0] * t + y[0] * (1 - t)),
+    Math.round(x[1] * t + y[1] * (1 - t)),
+    Math.round(x[2] * t + y[2] * (1 - t)),
+  ]
+}
+
+const rgbHex = (rgb: [number, number, number]) =>
+  '#' + rgb.map((v) => v.toString(16).padStart(2, '0')).join('')
+
+/** 当前强调色的导出取值：主色 hex、13% 掺纸底的 soft hex、rgb 三元组（拼 rgba 用） */
+function exportAccent(): { hex: string; softHex: string; rgb: [number, number, number] } {
+  const rgb = oklchToRgb(ACCENT_EXPORT[state.accent])
+  const soft = mixRgb(rgb, [250, 249, 246], 0.13) // 0.13 的那一成是主色，纸底 = --n-bg #faf9f6
+  return { hex: rgbHex(rgb), softHex: rgbHex(soft), rgb }
+}
+
 /**
  * 导出用的排版。
  *
@@ -1370,13 +1434,20 @@ function absolutizeMedia(html: string): string {
  * 字族与软件一致：圆体在前，系统字体兜底。本机装了圆体（软件本身自带）时
  * 导出的文档跟屏幕上是一个字形；换一台没装字的机器也只是退回系统字体，
  * 不会缺字、不会变乱码。
+ *
+ * 强调色三件套（accent / accent-soft / 双链的 rgba 派生）在导出时由
+ * exportAccent() 注入：用户选了哪套强调色，导出的文件就是哪套，
+ * soft 的掺水比例（13%）和应用内 --n-accent-soft 同一条规则。
+ * --code-bg 直接取应用 --n-code-bg 的值（#f1efe9），不再另调一套冷绿。
  */
-export const EXPORT_CSS = `
+export function exportCss(): string {
+  const { hex, softHex, rgb } = exportAccent()
+  return `
 :root {
   --fg: #24231f; --fg-dim: #55534e; --fg-faint: #8a867c;
   --line: #dedbd4; --surface: #f7f6f3;
-  --code-bg: #f4f2ec; --code-line: #e2ded4; --code-fg: #3b3934;
-  --accent: #2f6f52; --accent-soft: #eef4f0;
+  --code-bg: #f1efe9; --code-line: #e2ded4; --code-fg: #3b3934;
+  --accent: ${hex}; --accent-soft: ${softHex};
 }
 * { box-sizing: border-box; }
 html { -webkit-text-size-adjust: 100%; }
@@ -1537,10 +1608,10 @@ details.pv-details[open] > summary { margin-bottom: .5em; }
   border: 1px solid var(--line); border-radius: 6px; background: var(--surface);
   font-size: .92em; color: var(--accent); }
 .pv-wlink { color: var(--accent); text-decoration: none;
-  border-bottom: 1px solid rgba(47,111,82,.4); }
+  border-bottom: 1px solid rgba(${rgb.join(',')},.4); }
 .pv-wlink.is-missing, .pv-embed.is-missing { border-style: dashed; color: var(--fg-faint); }
 .pv-wlink-tag, .pv-embed-tag { margin-right: 4px; padding: 0 4px; border-radius: 3px;
-  background: rgba(47,111,82,.12); color: var(--accent); font-size: 10px; }
+  background: rgba(${rgb.join(',')},.12); color: var(--accent); font-size: 10px; }
 /* ── 公式 ── */
 .pv-math, .pv-math-block { font-family: ui-monospace, Consolas, monospace;
   background: var(--code-bg); border-radius: 4px; padding: 0 .3em; }
@@ -1602,6 +1673,7 @@ sup.pv-fnref { font-size: .75em; line-height: 0; vertical-align: super; }
 }
 /* 导出文件不带暗色模式：打印/分享时永远是白底 */
 `
+}
 
 /**
  * Word / WPS 那一份样式表。
@@ -1615,7 +1687,10 @@ sup.pv-fnref { font-size: .75em; line-height: 0; vertical-align: super; }
  *
  * 尺寸一律用 pt：Word 的排版单位是 pt，用 em/px 它换算出来的大小常常对不上。
  */
-export const WORD_CSS = `
+export const WORD_CSS = () => {
+  // 强调色跟着用户走：Word 文档是独立文件，必须在生成时把 oklch 换算成 hex 写死进去
+  const { hex, softHex } = exportAccent()
+  return `
 body { font-family: "等线","DengXian","Microsoft YaHei","PingFang SC",sans-serif;
   font-size: 10.5pt; line-height: 1.72; color: #24231f; background: #ffffff;
   margin: 0; padding: 0; }
@@ -1631,13 +1706,13 @@ h5 { font-size: 11pt; color: #55534e; }
 h6 { font-size: 10.5pt; color: #8a867c; }
 /* 列表已由 wordify 转为内联段落 [data-wc-li]（符号写在段首，缩进用 margin-left，
    故意不写 class 规则：WPS 对 p.class 规则 + 内联样式的组合解析有 bug） */
-a { color: #2f6f52; text-decoration: underline; }
+a { color: ${hex}; text-decoration: underline; }
 strong { font-weight: bold; }
 s { color: #8a867c; text-decoration: line-through; }
 mark { background: #f6e3a8; }
 hr { border: none; border-top: 1pt solid #dedbd4; margin: 14pt 0; }
-blockquote { margin: 10pt 0 10pt 12pt; padding: 4pt 0 4pt 12pt; border-left: 3pt solid #2f6f52;
-  background: #f2f5f3; color: #55534e; }
+blockquote { margin: 10pt 0 10pt 12pt; padding: 4pt 0 4pt 12pt; border-left: 3pt solid ${hex};
+  background: ${softHex}; color: #55534e; }
 code { font-family: Consolas,"Courier New",monospace; font-size: 9.5pt;
   background: #f4f2ec; padding: 0 2pt; }
 /* 代码块 → 单格表格（Word 不画 div 的边框和底色）
@@ -1708,10 +1783,10 @@ figcaption { font-size: 9pt; color: #8a867c; margin-top: 4pt; text-align: center
 /* 待办 */
 .pv-task { font-family: "Segoe UI Symbol",Arial,sans-serif; }
 /* 双链与嵌入 */
-.pv-embed { color: #2f6f52; border-bottom: 1pt solid #dedbd4; }
-.pv-wlink { color: #2f6f52; text-decoration: underline; }
+.pv-embed { color: ${hex}; border-bottom: 1pt solid #dedbd4; }
+.pv-wlink { color: ${hex}; text-decoration: underline; }
 .pv-wlink.is-missing, .pv-embed.is-missing { color: #8a867c; }
-.pv-tag { color: #2f6f52; }
+.pv-tag { color: ${hex}; }
 .pv-bid { color: #8a867c; font-size: 9pt; }
 /* 代码块标题与语言标签（已在 table.wc-code 内定义） */
 .pv-code-title { font-weight: bold; font-size: 9.5pt; color: #55534e; }
@@ -1732,7 +1807,7 @@ table.pv-tab-pane { width: 100%; border-collapse: collapse; margin: 0 0 8pt; }
 table.pv-tab-pane td { border: 1pt solid #dedbd4; background: #f7f6f3;
   padding: 6pt 10pt; }
 table.pv-tab-pane p { margin: 0 0 4pt; font-size: 10.5pt; line-height: 1.72; text-align: justify; }
-.pv-tab-label { font-weight: bold; font-size: 10pt; color: #2f6f52; margin: 8pt 0 3pt; }
+.pv-tab-label { font-weight: bold; font-size: 10pt; color: ${hex}; margin: 8pt 0 3pt; }
 /* 脚注 */
 .footnotes { margin-top: 16pt; padding-top: 6pt; border-top: 1pt solid #dedbd4;
   font-size: 9pt; color: #55534e; }
@@ -1742,6 +1817,7 @@ sup a { text-decoration: none; }
 @page WordSection1 { size: A4; margin: 2.54cm 2.2cm; }
 div.WordSection1 { page: WordSection1; }
 `
+}
 
 /**
  * 把正文 HTML 改成 Word 认得的结构。
@@ -2187,6 +2263,8 @@ const WORD_HL_COLORS: Record<string, string> = {
 }
 
 export function inlineWordStyles(root: HTMLElement) {
+  // 内联样式里没有 var() 可用，强调色在这里换算成 hex 敲死（与 WORD_CSS 同源）
+  const { hex: accHex, softHex: accSoft } = exportAccent()
   const stamp = (el: Element, css: string) => {
     const old = el.getAttribute('style')
     el.setAttribute('style', old ? `${css};${old}` : css)
@@ -2218,10 +2296,10 @@ export function inlineWordStyles(root: HTMLElement) {
   // WPS 解析到后会把行高判成 0，导致多行列表项全部叠在一起。
   // 引用块
   each('blockquote',
-    'margin:10pt 0 10pt 12pt;padding:4pt 0 4pt 12pt;border-left:3pt solid #2f6f52;background:#f2f5f3;color:#55534e;')
+    `margin:10pt 0 10pt 12pt;padding:4pt 0 4pt 12pt;border-left:3pt solid ${accHex};background:${accSoft};color:#55534e;`)
   each('code', 'font-family:Consolas,"Courier New",monospace;font-size:9.5pt;background:#f4f2ec;',
     '.wc-code')
-  each('a', 'color:#2f6f52;text-decoration:underline;')
+  each('a', `color:${accHex};text-decoration:underline;`)
   /* 高亮：Word 里没有 mark 这个语义，只能靠内联底色模拟。
      颜色跟着 data-c 走，没写颜色就是默认那支黄笔 —— 否则在预览里挑了
      绿笔的人，导出后会发现全变成黄的。 */
@@ -2309,7 +2387,7 @@ export function inlineWordStyles(root: HTMLElement) {
     if (cls) stamp(el, `color:${WORD_HL_COLORS[cls]};`)
   }
   // 分栏标签：标题段落 + 内容表格（wordify 已将 pane div 改为 table）
-  each('.pv-tab-label', 'font-weight:bold;font-size:10pt;color:#2f6f52;margin:8pt 0 3pt;text-align:left;')
+  each('.pv-tab-label', `font-weight:bold;font-size:10pt;color:${accHex};margin:8pt 0 3pt;text-align:left;`)
   each('table.pv-tab-pane', 'border-collapse:collapse;width:100%;margin:0 0 8pt;')
   each('table.pv-tab-pane td', 'border:1pt solid #dedbd4;background:#f7f6f3;padding:6pt 10pt;text-align:left;')
   each('table.pv-tab-pane p', 'margin:0 0 4pt;text-align:justify;font-size:10.5pt;line-height:1.72;')
@@ -2323,8 +2401,8 @@ export function inlineWordStyles(root: HTMLElement) {
   // 脚注区
   each('.footnotes', 'margin-top:8pt;padding-top:0;font-size:9pt;color:#55534e;display:block;')
   each('.footnotes p', 'margin:0 0 3pt;font-size:9pt;line-height:1.5;text-align:left;')
-  each('.footnotes .pv-fn-n', 'color:#2f6f52;font-weight:bold;margin-right:4pt;')
-  each('sup.pv-fnref', 'font-size:8pt;color:#2f6f52;')
+  each('.footnotes .pv-fn-n', `color:${accHex};font-weight:bold;margin-right:4pt;`)
+  each('sup.pv-fnref', `font-size:8pt;color:${accHex};`)
 
   /* 代码的每一行必须是**真的块级元素**。
      预览里一行就是一个 `<span class="pv-line">`，换行靠 CSS `display:block` 撑；
@@ -2337,7 +2415,7 @@ export function inlineWordStyles(root: HTMLElement) {
     let css = 'margin:0;padding:0;line-height:1.55;text-align:left;' +
       'font-family:Consolas,"Courier New",monospace;font-size:9pt;' +
       'white-space:pre-wrap;word-break:break-all;color:#3b3934;'
-    if (el.classList.contains('is-hl')) css += 'background:#eef4f0;'
+    if (el.classList.contains('is-hl')) css += `background:${accSoft};`
     const old = el.getAttribute('style')
     p.setAttribute('style', old ? `${css};${old}` : css)
     while (el.firstChild) p.appendChild(el.firstChild)
@@ -2757,7 +2835,7 @@ export function htmlDocument(title: string, body: string, extraCss = '') {
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="generator" content="Nota">
 <title>${escapeHtmlText(title)}</title>
-<style>${EXPORT_CSS}</style>${extraCss ? `\n<style>${extraCss}</style>` : ''}
+<style>${exportCss()}</style>${extraCss ? `\n<style>${extraCss}</style>` : ''}
 </head>
 <body>
 ${body}
@@ -2786,7 +2864,7 @@ export function wordDocument(title: string, body: string) {
 </xml>
 <![endif]-->
 <style>
-${WORD_CSS}
+${WORD_CSS()}
 </style>
 </head>
 <body style="font-family:'等线','DengXian','Microsoft YaHei','PingFang SC',sans-serif;font-size:10.5pt;line-height:1.72;color:#24231f;">
@@ -2900,6 +2978,21 @@ const AI_WITH_NOTE_KEY = 'nota-ai-withnote'
  */
 function toggleGraph() {
   state.graphOpen = !state.graphOpen
+  if (state.graphOpen) state.mapOpen = false
+}
+
+/**
+ * 思维导图的开关。
+ *
+ * 和关系图互斥 —— 两者都铺在主区，同时开着只会剩下后挂上的那一张，
+ * 而 state 里还写着两张都开，之后任何一处读它都会判断错。
+ *
+ * 关掉不切 activePath：看完结构回正文，该还在原来那一篇上。
+ */
+function toggleMap(on?: boolean) {
+  const next = on ?? !state.mapOpen
+  state.mapOpen = next
+  if (next) state.graphOpen = false
 }
 
 function setColumnView(v: ColumnView) {
@@ -2908,7 +3001,10 @@ function setColumnView(v: ColumnView) {
   state.mainView = v === 'ai' ? 'ai' : 'note'
   /* 关系图铺在主区。切到便签 / 附件 / 回收站的时候主区已经换人了，
      图要跟着收起来 —— 不然会出现「我明明切到便签了，屏幕上还是一张图」。 */
-  if (v !== 'notes' && v !== 'ai') state.graphOpen = false
+  if (v !== 'notes' && v !== 'ai') {
+    state.graphOpen = false
+    state.mapOpen = false
+  }
   remember(COLUMN_KEY, v)
 }
 
@@ -3900,6 +3996,7 @@ export const store = {
   navTitle,
   allTags,
   toggleGraph,
+  toggleMap,
   restoreLastWorkspace,
   bootFirstRun,
   openWorkspace,

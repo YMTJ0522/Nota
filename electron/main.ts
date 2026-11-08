@@ -15,10 +15,10 @@ import {
 import type { NativeImage } from 'electron'
 import path from 'node:path'
 import fs from 'node:fs/promises'
-import { existsSync } from 'node:fs'
+import { existsSync, statSync, rmSync } from 'node:fs'
 import { pathToFileURL } from 'node:url'
 import { testConnection, syncWorkspace, onSyncProgress } from './sync'
-import { maybeRunInstaller } from './installer'
+import { maybeRunInstaller, installerUiActive } from './installer'
 import { ensureVault, ensureVaultAt, readVaultPointer, takeFreshFlag } from './vault'
 import { checkUpdate } from './update'
 import { lockZoom } from './lock-zoom'
@@ -426,6 +426,9 @@ async function refreshTrayMenu(): Promise<void> {
   if (!tray || tray.isDestroyed()) return
   const prefs = await readPrefs(LOCAL_APP_DATA)
   const n = openStickyCount()
+  /* 菜单是 Windows 画的原生菜单，字号行高跟系统走，应用改不了；
+     能做的是把行数压到刚刚好：没开便签就不摆「收起全部便签」，
+     快捷键一切正常时也不摆状态行 —— 只有出错或被关掉才值得占一行。 */
   tray.setContextMenu(
     Menu.buildFromTemplate([
       { label: '打开 Nota', click: () => showMain() },
@@ -436,13 +439,16 @@ async function refreshTrayMenu(): Promise<void> {
         registerAccelerator: false,
         click: () => void onHotkeyNew(),
       },
-      {
-        label: '收起全部便签',
-        accelerator: HOTKEY_CLOSE_ALL,
-        registerAccelerator: false,
-        enabled: n > 0,
-        click: () => void closeAllStickies().then(() => refreshTrayMenu()),
-      },
+      ...(n > 0
+        ? [
+            {
+              label: '收起全部便签',
+              accelerator: HOTKEY_CLOSE_ALL,
+              registerAccelerator: false,
+              click: () => void closeAllStickies().then(() => refreshTrayMenu()),
+            },
+          ]
+        : []),
       { type: 'separator' },
       {
         label: '开机时自动启动',
@@ -451,14 +457,11 @@ async function refreshTrayMenu(): Promise<void> {
         enabled: canAutoStart(),
         click: (item) => void setAutoStart(item.checked),
       },
-      {
-        label: prefs.hotkey
-          ? hotkeyError
-            ? `快捷键没注册：${hotkeyError}`
-            : '全局快捷键已开启'
-          : '全局快捷键已关闭',
-        enabled: false,
-      },
+      ...(prefs.hotkey
+        ? hotkeyError
+          ? [{ label: `快捷键没注册：${hotkeyError}`, enabled: false }]
+          : []
+        : [{ label: '全局快捷键已关闭', enabled: false }]),
       { type: 'separator' },
       { label: '退出 Nota', click: () => app.quit() },
     ]),
@@ -2188,13 +2191,58 @@ async function consumeFreshInstall() {
  * 自己安静退出。 */
 const gotLock = app.requestSingleInstanceLock()
 
-if (!gotLock) {
-  app.quit()
-} else {
-  app.on('second-instance', () => {
-    if (app.isReady()) showMain()
-  })
+/* second-instance 只对「持有锁的实例」有意义，但监听要在拿锁结果出来前
+   挂好 —— 安装交接重试成功后本进程也会成为持有者。 */
+app.on('second-instance', () => {
+  /* 安装窗活着的时候绝不能 showMain：装完点「打开 Nota」的瞬间，
+     新进程抢单实例锁失败，会把 second-instance 发回给安装器进程 ——
+     旧代码在这里建了个主窗口，那个「闪一下的滚动条」就是它加载时一闪而过，
+     900ms 后又跟安装器一起被 quit 杀掉。安装期间只认安装窗。 */
+  if (installerUiActive()) return
+  if (app.isReady()) showMain()
+})
 
+if (!gotLock) {
+  /* 抢锁失败：通常说明已经有一个 Nota 在跑，安静退出。
+     唯一的例外是安装交接 —— 安装器点「打开 Nota」时写下 install-handoff
+     再退出，锁由「马上就要消失的安装器」暂时持有，本进程正是它拉起来的
+     新程序。这种情况下不能走，等锁释放后重试，否则装完能不能打开
+     全看新旧进程谁跑得快（竞态输了就是「点打开没反应」）。 */
+  let handoff = false
+  try {
+    handoff =
+      Date.now() - statSync(path.join(LOCAL_APP_DATA, 'install-handoff')).mtimeMs <
+      30_000
+  } catch {
+    /* 没有标记文件 = 正常的重复启动 */
+  }
+  if (handoff) {
+    const sentinel = path.join(LOCAL_APP_DATA, 'install-handoff')
+    /* 兜底：安装器要是意外死不了，20 秒后放弃，别让自己变成僵尸。
+       重试一旦成功必须把定时器拆掉，否则到点会把正常运行的程序一起带走。 */
+    const giveUp = setTimeout(() => {
+      clearInterval(retry)
+      app.exit(0)
+    }, 20_000)
+    const retry = setInterval(() => {
+      if (app.requestSingleInstanceLock()) {
+        clearInterval(retry)
+        clearTimeout(giveUp)
+        try {
+          rmSync(sentinel, { force: true })
+        } catch { /* 留着也只影响 30 秒内的判断新鲜度 */ }
+        app.whenReady().then(boot)
+      }
+    }, 200)
+  } else {
+    app.quit()
+  }
+} else {
+  /* 直接拿到锁：如果存在新鲜的交接标记，说明本进程就是安装器拉起来的
+     新程序、而且一次就抢到了锁 —— 把标记消费掉，别让它悬到过期。 */
+  try {
+    rmSync(path.join(LOCAL_APP_DATA, 'install-handoff'), { force: true })
+  } catch { /* 没有/删不掉都无所谓 */ }
   app.whenReady().then(boot)
 }
 

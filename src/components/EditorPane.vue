@@ -70,7 +70,6 @@ import {
   toolbarTabs,
   toolbarMermaid,
   toolbarCodeBlock,
-  toolbarAdvancedCodeBlock,
   toolbarTable,
   toolbarHorizontalRule,
   toolbarMathBlock,
@@ -293,6 +292,12 @@ function onHeadingRequest(e: Event) {
       const r = el.getBoundingClientRect()
       const br = box.getBoundingClientRect()
       const top = box.scrollTop + (r.top - br.top) - 12
+      tweenScroll(box, top, { onFrame: () => { echo.preview = performance.now() + 90 } })
+    } else if (h.line != null && h.line >= 0) {
+      /* 列表项没有对应的标题元素 —— 大纲现在连着列表一起列，点条目也得让
+         预览跟着走。按行号在相邻标题之间插值，和同步滚动用的是同一套换算；
+         只滚编辑区的话，分栏模式下会出现「左边动了、右边纹丝不动」。 */
+      const top = Math.max(0, previewTopForLine(h.line) - 12)
       tweenScroll(box, top, { onFrame: () => { echo.preview = performance.now() + 90 } })
     }
   }
@@ -1153,7 +1158,6 @@ function runSlashFormat(id: SlashCommandId, v: EditorView) {
     case 'comment': toolbarInline(v, 'comment'); break
     // 代码 / 表格 / 数学
     case 'codeBlock': toolbarCodeBlock(v); break
-    case 'advancedCodeBlock': toolbarAdvancedCodeBlock(v); break
     case 'mermaid': toolbarMermaid(v); break
     case 'table': toolbarTable(v, '| 列 1 | 列 2 | 列 3 |'); break
     case 'inlineMath': toolbarInline(v, 'inlineMath'); break
@@ -1298,6 +1302,13 @@ function onToolbarToast(text: string) {
 /** 行号 / 自动换行要能运行时开关，走 Compartment 重配置而不是重建编辑器 */
 const prefsCompartment = new Compartment()
 
+/** 光标落在代码块的第几行（1 起）；不在围栏代码块里就是 null。
+    「标行」那颗按钮靠它决定提示里写第几行。 */
+const fenceLine = ref<number | null>(null)
+/** 光标那一行**当前有没有被标行**。按钮的「亮」用它：亮 = 已标（再点是撤），
+    不亮 = 还没标 —— 不能拿「在代码块里」当亮的条件。 */
+const fenceMarked = ref(false)
+
 function createEditor() {
   if (!host.value) return
 
@@ -1310,6 +1321,10 @@ function createEditor() {
         scheduleSave()
       },
       onFind: openFind,
+      onFenceContext: (ctx) => {
+        fenceLine.value = ctx.line
+        fenceMarked.value = ctx.marked
+      },
     }),
     prefsCompartment.of(
       editorViewPrefs({ lineWrap: state.lineWrap, lineNumbers: state.lineNumbers }),
@@ -1838,6 +1853,8 @@ defineExpose({ getView: () => view })
     <Toolbar
       v-if="showEditor"
       :get-view="() => view"
+      :fence-line="fenceLine"
+      :fence-marked="fenceMarked"
       @toast="onToolbarToast"
       @pick-note="openNotePicker"
       @find="openFind"

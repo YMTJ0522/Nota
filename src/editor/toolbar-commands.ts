@@ -25,7 +25,6 @@ import {
   type MarkdownCommandResult,
 } from "./markdown-commands";
 import {
-  ADVANCED_CODE_INFO,
   CALLOUT_TYPES,
   CHART_TEMPLATES,
   DETAILS_CLOSE,
@@ -36,6 +35,7 @@ import {
   MATH_BLOCK_SNIPPET,
   MERMAID_FALLBACK,
 } from "./markdown-snippets";
+import { toggleLineMarks } from "./code-line-marks";
 
 /**
  * View-level toolbar commands bridging markdown-commands.ts to CodeMirror.
@@ -118,8 +118,8 @@ export function toolbarLink(view: EditorView, url = "") {
   dispatchResult(view, insertLinkCommand(doc(view), selection(view), url));
 }
 
-export function toolbarImage(view: EditorView, url = "") {
-  dispatchResult(view, insertImageCommand(doc(view), selection(view), url));
+export function toolbarImage(view: EditorView, url = "", alt?: string) {
+  dispatchResult(view, insertImageCommand(doc(view), selection(view), url, alt));
 }
 
 export function toolbarTag(view: EditorView) {
@@ -202,11 +202,16 @@ export function toolbarCodeBlock(view: EditorView) {
   dispatchResult(view, insertCodeBlockCommand(doc(view), selection(view)));
 }
 
-export function toolbarAdvancedCodeBlock(view: EditorView) {
-  dispatchResult(
-    view,
-    insertCodeBlockCommand(doc(view), selection(view), ADVANCED_CODE_INFO),
-  );
+/**
+ * 标行：把光标/选区对应的那几行写进 info 串的 `{…}`。
+ *
+ * 它不返回 MarkdownCommandResult —— 因为这个动作可能一次改动 info 串、
+ * 也可能什么都没改（光标在围栏行上），还可能整段包成代码块。
+ * 这些差异都收在 code-line-marks.ts 里，这里只把「该跟用户说一句什么」
+ * 带出去，由工具栏转成 toast。
+ */
+export function toolbarLineMarks(view: EditorView): string {
+  return toggleLineMarks(view);
 }
 
 /**

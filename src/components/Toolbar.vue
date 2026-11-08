@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, onBeforeUnmount, watch, nextTick } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount, watch, nextTick } from 'vue'
 import type { EditorView } from '@codemirror/view'
 import {
   /* 图标全部取自 Lucide（lucide-vue-next，ISC 许可）。
@@ -26,7 +26,6 @@ import {
   Sigma,
   Blocks,
   LineChart,
-  MessageSquareWarning,
   ChevronDown,
 } from 'lucide-vue-next'
 import {
@@ -49,7 +48,7 @@ import {
   toolbarTabs,
   toolbarMermaid,
   toolbarCodeBlock,
-  toolbarAdvancedCodeBlock,
+  toolbarLineMarks,
   toolbarTable,
   toolbarHorizontalRule,
   toolbarMathBlock,
@@ -57,8 +56,17 @@ import {
   pickImageAndInsert,
 } from '@/editor/toolbar-commands'
 import type { PickMode } from '@/components/NotePickerDialog.vue'
+import RemoteImageDialog from '@/components/RemoteImageDialog.vue'
 
-const props = defineProps<{ getView: () => EditorView | null }>()
+const props = defineProps<{
+  getView: () => EditorView | null
+  /** 光标在第几条代码行（1 起）；不在围栏代码块里就是 null。
+      由外层挂的 updateListener 算好传进来，工具栏自己不去读编辑器状态。 */
+  fenceLine?: number | null
+  /** 光标那一行当前有没有被标行。按钮的「亮」用它：亮 = 已标、再点是撤，
+      不亮 = 还没标 —— 「在不在代码块里」不能当亮的条件。 */
+  fenceMarked?: boolean
+}>()
 const emit = defineEmits<{
   (e: 'toast', text: string): void
   /** 插入一段指向别的笔记的写法（笔记嵌入 / 双链 / 块引用）。
@@ -87,6 +95,57 @@ function run(fn: (view: EditorView) => void) {
   fn(view)
 }
 
+/* ── 标行 ──
+   提示文字跟着光标走：在代码块里就写「标出第 3 行」，不在就告诉人该去哪儿标。
+   这不是装饰——「标行」最怕的就是按钮挂在那儿，但谁也不知道什么时候该点它。 */
+const markTitle = computed(() => {
+  const n = props.fenceLine
+  return n
+    ? `标出第 ${n} 行 (Ctrl+Alt+L)`
+    : '标行 · 把光标放进代码块，或选中要包的代码 (Ctrl+Alt+L)'
+})
+
+function lineMarks() {
+  /* 先收下拉：这颗按钮和「代码与图表」同处一个组，而下拉开着时点组内
+     的任何东西都不会被判成「点了外面」，菜单会一直挂着挡视线。 */
+  close()
+  const view = v()
+  if (!view) return
+  const message = toolbarLineMarks(view)
+  if (message) emit('toast', message)
+}
+
+/* ── 远程图片 ──
+   链接要粘贴、要核对、要看图对不对，这三件事在一对空括号里做不了，
+   所以收进弹窗。选中的正文先填进「说明」那一格：它本来就该是那张图的说明。 */
+const imageDialogOpen = ref(false)
+const imageAlt = ref('')
+
+function openImageDialog() {
+  close()
+  const view = v()
+  if (!view) return
+  const sel = view.state.selection.main
+  /* 选中的正文先填进「说明」那一格——但只在这段话短得像一句话的时候。
+     框住两行代码再插图片，把整段代码搬进 alt 里毫无意义，
+     还会把代码从原来的位置顶走。 */
+  const picked = sel.empty ? '' : view.state.sliceDoc(sel.from, sel.to)
+  imageAlt.value = selectedAlt(picked)
+  imageDialogOpen.value = true
+}
+
+/** 一句以内的选中文字才配当图片说明；含换行或过长的当没选 */
+function selectedAlt(text: string): string {
+  const t = text.replace(/\s+/g, ' ').trim()
+  if (!text.trim() || text.includes('\n') || t.length > 40) return ''
+  return t
+}
+
+function insertRemoteImage(payload: { url: string; alt: string }) {
+  imageDialogOpen.value = false
+  run((v) => toolbarImage(v, payload.url, payload.alt))
+}
+
 /* ── 下拉菜单 ──
    顺序与分组对齐 inkstone 参考实现：
    搜索 │ 标题 │ 加粗/斜体/删除线/高亮/行内代码 │ 无序/有序/任务/引用 │
@@ -103,13 +162,12 @@ type MenuId =
   | 'chart'
   | 'math'
   | 'block'
-  | 'callout'
   | 'table'
   | null
 
 /** 顺序即工具栏从左到右的顺序，方向键切换也按它 */
 const MENU_ORDER: Exclude<MenuId, null>[] = [
-  'heading', 'highlight', 'reference', 'image', 'note', 'code', 'chart', 'table', 'math', 'block', 'callout',
+  'heading', 'highlight', 'reference', 'image', 'note', 'code', 'chart', 'table', 'math', 'block',
 ]
 
 /* 五支荧光笔。黄色的色块直接吃 --n-mark，其余四支各有自己的 token，
@@ -444,6 +502,33 @@ function insertTable(rows: number, cols: number) {
       <button class="tb-btn" title="行内代码 (Ctrl+E)" @click="run((v) => toolbarInlineCode(v))">
         <Code :size="ICON" :stroke-width="STROKE" />
       </button>
+      <!-- 标行：给围栏代码块标出要人看的几行。
+           跟前面的「行内代码」挨在一起——这一栏收的是所有跟「代码」有关的动作，
+           用的人找代码相关的按钮时，视线扫到这里就能停。
+           不塞进后面「代码与图表」的下拉里：这是最常用的一项，得「一按就中」，
+           藏进二级菜单就又没人用了。 -->
+      <button
+        class="tb-btn"
+        :class="{ on: !!fenceMarked }"
+        :title="markTitle"
+        data-role="line-marks"
+        @click="lineMarks"
+      >
+        <!-- 图标是手画的：三条横条，第一条实心、第三条短一截。
+             原来用 lucide 的 Rows3（三条等长等重），读起来像「表格/行」，
+             看不出「有一行被挑出来了」——而这颗按钮要说的正是那句话。 -->
+        <svg
+          class="tb-icon-marks"
+          :width="ICON"
+          :height="ICON"
+          viewBox="0 0 15 15"
+          aria-hidden="true"
+        >
+          <rect x="1.5" y="2" width="12" height="3" rx="1" fill="currentColor" />
+          <rect x="1.5" y="6.4" width="12" height="3" rx="1" fill="currentColor" opacity="0.5" />
+          <rect x="1.5" y="10.8" width="7" height="3" rx="1" fill="currentColor" opacity="0.28" />
+        </svg>
+      </button>
     </div>
 
     <span class="tb-sep" />
@@ -528,11 +613,19 @@ function insertTable(rows: number, cols: number) {
               <span>从本地插入视频</span>
             </button>
             <span class="tb-sep-h n-menu-sep" />
-            <button class="tb-item n-menu-item" @click="pick((v) => toolbarImage(v))">
+            <button class="tb-item n-menu-item" @click="openImageDialog">
               <span>远程图片链接</span><span class="kbd">![]()</span>
             </button>
           </div>
         </Teleport>
+        <!-- 链接在弹窗里填：原来直接往光标处插一对空括号，
+             让人自己把网址粘进去，粘歪是常事，也看不见图对不对 -->
+        <RemoteImageDialog
+          :open="imageDialogOpen"
+          :initial-alt="imageAlt"
+          @confirm="insertRemoteImage"
+          @cancel="imageDialogOpen = false"
+        />
     </div>
 
     <div :ref="wrapRef('note')" class="tb-group tb-menu-wrap">
@@ -592,9 +685,6 @@ function insertTable(rows: number, cols: number) {
         >
           <button class="tb-item n-menu-item" @click="pick((v) => toolbarCodeBlock(v))">
             <span>代码块</span><span class="kbd">```</span>
-          </button>
-          <button class="tb-item n-menu-item" @click="pick((v) => toolbarAdvancedCodeBlock(v))">
-            <span>高级代码块</span><span class="tag">标题/行号</span>
           </button>
           <span class="tb-sep-h n-menu-sep" />
           <button class="tb-item n-menu-item" @click="pick((v) => toolbarMermaid(v))">
@@ -713,7 +803,7 @@ function insertTable(rows: number, cols: number) {
         <div
           v-if="openMenu === 'block'"
           :ref="menuRef('block')"
-          class="tb-menu tb-menu--float n-menu"
+          class="tb-menu tb-menu--float tb-scroll-menu n-menu"
           :style="menuStyle"
         >
           <button class="tb-item n-menu-item" @click="pick((v) => toolbarDetails(v))">
@@ -726,28 +816,8 @@ function insertTable(rows: number, cols: number) {
           <button class="tb-item n-menu-item" @click="pick((v) => toolbarHorizontalRule(v))">
             <span>分割线</span>
           </button>
-        </div>
-      </Teleport>
-    </div>
-
-    <!-- 8. 提示块：十一种类型各带一颗色点，配色与预览里完全一致 -->
-    <div :ref="wrapRef('callout')" class="tb-group tb-menu-wrap">
-      <button
-        class="tb-btn"
-        :class="{ on: openMenu === 'callout' }"
-        title="提示块"
-        @click="toggle('callout')"
-      >
-        <MessageSquareWarning :size="ICON" :stroke-width="STROKE" />
-        <ChevronDown class="caret" :size="10" :stroke-width="2" />
-      </button>
-      <Teleport to="body">
-        <div
-          v-if="openMenu === 'callout'"
-          :ref="menuRef('callout')"
-          class="tb-menu tb-menu--float tb-scroll-menu n-menu"
-          :style="menuStyle"
-        >
+          <span class="tb-sep-h n-menu-sep" />
+          <!-- 提示块收编进这里：十一种类型各带一颗色点，配色与预览里完全一致 -->
           <button
             v-for="c in calloutList"
             :key="c.key"
@@ -763,6 +833,7 @@ function insertTable(rows: number, cols: number) {
         </div>
       </Teleport>
     </div>
+
   </div>
 </template>
 
@@ -850,6 +921,14 @@ function insertTable(rows: number, cols: number) {
   opacity: 0.6;
   fill: none;
   stroke: currentColor;
+}
+
+/* 「标行」那颗是这排里唯一一个填充画的图标（三条横条，第一条实心）。
+   上面那条 `fill: none` 是给描边图标准备的，会把它的三个矩形清空——
+   CSS 的 fill 优先于 rect 上的 fill 属性，所以必须单独放行。 */
+.tb-btn svg.tb-icon-marks {
+  fill: currentColor;
+  stroke: none;
 }
 
 /* 菜单本体的长相统一在 styles/menu.css 的 .n-menu 里，

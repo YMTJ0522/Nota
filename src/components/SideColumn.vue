@@ -240,9 +240,12 @@ async function doCloseAllSticky() {
         </button>
       </template>
 
-      <!-- 一进一出，永远在这一列的右上角：
-           不管当前看的是笔记、附件还是 AI，收起笔记的地方都在同一处。 -->
-      <template v-else>
+      <!-- 一进一出，永远在这一列的右上角 —— 但只长在「跟笔记有关」的屏。
+           附件库、回收站这两屏的语境是「看别的东西」：附件有自己的导入菜单
+           （AttachView 里那枚），回收站里压根不该新建笔记。
+           以前无条件显示，结果用户想点顶行的「附件库」时，手一偏就按到了
+           上面的「新建笔记」—— 凭空多出一篇空笔记，还不知道哪来的。 -->
+      <template v-else-if="view !== 'attach' && view !== 'trash'">
         <button
           class="col-act"
           data-role="new-note"

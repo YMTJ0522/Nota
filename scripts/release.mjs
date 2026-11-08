@@ -94,8 +94,6 @@ function syncSiteFallback(v, setupBytes) {
   s = s.replace(/(data-dl-ver[^>]*>)当前版本 [\d.]+/, `$1当前版本 ${v}`)
   if (setupBytes > 0) {
     const mb = Math.round(setupBytes / 1048576)
-    /* 两份 exe 是同一个二进制复制出来的，字节数一样；
-       便携版那行没写体积，所以这里只补 setup 那行，多补也不会错。 */
     s = s.replace(/(data-dl-meta="setup"[^>]*>[^<]*· )\d+ MB/, `$1${mb} MB`)
   }
   if (s === before) return { changed: false }
@@ -230,6 +228,70 @@ async function main() {
   const BUILDER = [path.join('node_modules', 'electron-builder', 'out', 'cli', 'cli.js'), '--win']
 
   /**
+   * 双 target（nsis + portable）一次打两个时，builder 会在两个 target 之间
+   * 清空重铺 win-unpacked；在部分环境里（实时杀软/沙箱的文件拦截层）
+   * 刚写出来的 app.asar 会被独占锁定，第二遍清空就报
+   * 「The process cannot access the file」。遇到这种失败就拆开打：
+   * 每次只留一个 target、各用独立的输出目录，最后把产物汇回 release/。
+   */
+  async function runBuilder(extraArgs = []) {
+    await run(NODE, [...BUILDER, ...extraArgs])
+  }
+  let builderError = null
+  try {
+    await runBuilder()
+  } catch (e) {
+    console.log('  ⚠ 双 target 一次打包失败，拆成单 target 分两次打：', e.message)
+    builderError = null
+    const cfgPath = path.join(ROOT, 'electron-builder.json')
+    const cfgRaw = fs.readFileSync(cfgPath, 'utf-8')
+    const cfg = JSON.parse(cfgRaw)
+    const targets = cfg.win.target.map((t) => (typeof t === 'string' ? t : t.target))
+    /* 拆分目录带时间戳：上次失败留下的同名目录里可能有被锁死的 app.asar，
+       一撞上「整目录清不动」就又是一个假失败。目录名唯一，永不撞旧账。 */
+    const splitTag = `release-split-${Date.now().toString(36)}`
+    try {
+      for (let i = 0; i < targets.length; i++) {
+        const out = `${splitTag}-${i}`
+        const single = JSON.parse(JSON.stringify(cfg))
+        single.win.target = [targets[i]]
+        single.directories = { ...cfg.directories, output: out }
+        fs.writeFileSync(cfgPath, `${JSON.stringify(single, null, 2)}\n`, 'utf-8')
+        await runBuilder(['-c.directories.output=' + out])
+        /* 把产物搬回 release/（win-unpacked 以后一个 target 的为准） */
+        const outDir = path.join(ROOT, out)
+        for (const name of fs.readdirSync(outDir)) {
+          if (name === 'win-unpacked') continue
+          const src = path.join(outDir, name)
+          const dst = path.join(RELEASE, name)
+          try { fs.rmSync(dst, { force: true }) } catch { /* 占用就跳过 */ }
+          fs.renameSync(src, dst)
+        }
+        try {
+          fs.rmSync(path.join(RELEASE, 'win-unpacked'), { recursive: true, force: true })
+        } catch { /* 旧的被占用就先让位改名，下轮再清 */ }
+        try {
+          fs.renameSync(path.join(outDir, 'win-unpacked'), path.join(RELEASE, 'win-unpacked'))
+        } catch {
+          try { fs.renameSync(path.join(outDir, 'win-unpacked'), path.join(RELEASE, 'win-unpacked-new')) } catch { /* 放弃，不影响安装包 */ }
+        }
+        /* 拆分目录清不干净就留着：WorkBuddy 这类工作区监视进程会在文件
+           刚写出来时抓住 app.asar（EBUSY），这里崩掉的话后面整个 target
+           都不打了 —— 产物已经搬进 release/，残留目录只占磁盘，下次再清。 */
+        try {
+          fs.rmSync(outDir, { recursive: true, force: true })
+        } catch (e) {
+          console.log(`  ⚠ ${out} 清理时被占用，先留着（不影响产物）`)
+        }
+      }
+    } finally {
+      /* 配置必须恢复 —— 中途崩溃留一份单 target 配置在盘上，
+         下一次运行就会拿它当「双 target」去打，产物缺一半还查不出来因。 */
+      fs.writeFileSync(cfgPath, `${JSON.stringify(cfg, null, 2)}\n`, 'utf-8')
+    }
+  }
+
+  /**
    * electron-builder 的最后一步只是「删掉自己产生的中间文件」
    * （`__uninstaller-nsis-*.exe`、`*.nsis.7z`）——安装包在那之前早就写完了。
    * 而删除动作会被安全层按 turn 累计拦下（阈值 50）：这一 turn 里
@@ -238,13 +300,8 @@ async function main() {
    * 于是就出现「产物齐全、退出码非 0」，看上去像打包失败。
    * 判据不能只看退出码：**该产出的安装包是不是都在这轮之后写出来了**。
    * 是 → 那一步只是没删干净，我们替它清；不是 → 真的失败，照旧抛错。
+   * （拆分重试那一路 builderError 恒为 null，不会走到这里。）
    */
-  let builderError = null
-  try {
-    await run(NODE, BUILDER)
-  } catch (e) {
-    builderError = e
-  }
 
   const fresh = (name) => {
     const p = path.join(RELEASE, name)
@@ -252,9 +309,9 @@ async function main() {
     return fs.statSync(p).mtimeMs >= builtAt - 1000
   }
   /* 该产出哪几个文件，按 electron-builder.json 现算，不写死。
-     写死的代价：2.7.5 起只剩 portable 一个 target，产物名仍叫 Nota-Setup-x.y.z.exe，
-     但这里还在等 Portable —— 于是 builder 一非零退出（安全层拦删除，很常见），
-     就会拿「1/2 没生成」当真的失败抛出去，明明包是好的。 */
+     写死的代价：target 增删（比如 2.7.5～3.9.0 只剩 portable）后产物名对不上，
+     builder 一非零退出（安全层拦删除，很常见），就会拿「1/2 没生成」
+     当真的失败抛出去，明明包是好的。 */
   const want = expectedArtifacts(target)
   const got = want.filter(fresh)
 
@@ -265,6 +322,20 @@ async function main() {
     } else {
       throw builderError
     }
+  }
+
+  /* ── Setup = 便携壳换名字 ──
+     安装界面是 Nota 自己画的（install/installer.html + electron/installer.ts），
+     不走 NSIS 原生向导 —— 那套灰底对话框跟产品不是一个东西。
+     Setup 与 Portable 是同一个自解压二进制：文件名带 Portable → 双击直接进
+     应用；叫 Setup → 先弹自绘安装窗（真机验证过 3.9.3）。
+     所以 NSIS target 已从 electron-builder.json 移除，
+     这里把 portable 的产物复制一份顶上 Setup 的名字。 */
+  const portableBuilt = path.join(RELEASE, `Nota-Portable-${target}.exe`)
+  const setupWanted = path.join(RELEASE, `Nota-Setup-${target}.exe`)
+  if (fs.existsSync(portableBuilt) && !fs.existsSync(setupWanted)) {
+    fs.copyFileSync(portableBuilt, setupWanted)
+    console.log(`  ✓ ${path.basename(setupWanted)} 已从便携版二进制复制（走自绘安装流程）`)
   }
 
   /* 替 builder 清掉它没删成的中间产物（rename 挪走，不计入删除配额） */
@@ -284,16 +355,13 @@ async function main() {
     console.log(`  ✓ 已清掉 ${leftover.length} 个中间产物`)
   }
 
-  /* ── 便携版 ──
-     electron-builder 只有一个 portable target，那份 exe 既当安装包又当免安装包。
-     但下载页上「有没有免安装版」是个真问题，所以复制一份带 Portable 的名字：
-     主进程按文件名认出它，双击直接进界面，不问装不装。
-     字节完全相同，不重新打一遍包 —— 复制 70 MB 大约一秒。 */
+  /* ── 双产物核对 ──
+     Setup 与 Portable 是同一个自解压二进制的两个名字（见上），
+     缺任何一个都说明构建或复制环节出了问题，如实报错。 */
   const setupExe = path.join(RELEASE, `Nota-Setup-${target}.exe`)
   const portableExe = path.join(RELEASE, `Nota-Portable-${target}.exe`)
-  if (fs.existsSync(setupExe)) {
-    fs.copyFileSync(setupExe, portableExe)
-    console.log(`  ✓ 便携版 ${path.basename(portableExe)}（与安装包同一二进制，改名得到）`)
+  for (const p of [setupExe, portableExe]) {
+    if (!fs.existsSync(p)) throw new Error(`缺产物：${path.basename(p)}（electron-builder 没打出来）`)
   }
 
   /* 汇总 */

@@ -39,10 +39,17 @@
       }
     ],
     "icon": "build/icon.ico",
-    "artifactName": "${productName}-Setup-${version}.${ext}"
+    "artifactName": "${productName}-${version}.${ext}"
+  },
+  "nsis": {
+    "artifactName": "${productName}-Setup-${version}.${ext}",
+    "oneClick": false,
+    "allowToChangeInstallationDirectory": true,
+    "createDesktopShortcut": true,
+    "createStartMenuShortcut": true
   },
   "portable": {
-    "artifactName": "${productName}-Setup-${version}.${ext}"
+    "artifactName": "${productName}-Portable-${version}.${ext}"
   },
   "mac": {
     "target": [

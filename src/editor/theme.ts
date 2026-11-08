@@ -389,18 +389,17 @@ export const notaTheme = EditorView.theme({
     textDecorationColor: "var(--n-fg-faint)",
   },
 
-  /* ── 代码块：整块一层薄底，不加边框 ──
-     参考项目就是这么处理的：代码块靠底色与等宽字体区分，不画框。
-     画框会和文档里大量的引用块、Callout、表格抢视觉重量。
-     .cm-md-codeblock 由 code-languages.ts 给块内每一行打上。
+  /* ── 代码块：一张全宽的圆角卡片 ──
+     预览里的代码块就是这么画的（.md-body pre：--n-code-surface + 圆角 + 细边），
+     编辑器这里对齐它。早先底色只铺到文本盒（::before 左右各缩进 18px），
+     浅色纸上看不出问题，深色下两侧就是两条暗缝；标行的高亮走同一层，
+     也跟着缩在中间，看起来「没选满、被卡住」。现在铺满整行，
+     代码块从行号右侧开始是一整块，选中、标行都到边。
 
-     底色为什么走 ::before 而不是直接写 background：
-     .cm-line 的 background 覆盖的是 padding box（左右各 18px 内边距），
-     而 CodeMirror 的选区层按**文本内容盒**画矩形，两者正好差 18px。
-     于是选中代码块时，底色会在选区两侧各露出一条细边，看起来就是
-     「选中不满整行、有一点缝」。::before 自己按内容盒的宽度画、
-     并且压到选区层下面（z-index: -1，最近的层叠上下文是 .cm-scroller），
-     两者边界就完全重合了。 */
+     底色仍然走 ::before 而不是直接写 background：.cm-activeLine 会把
+     background 整个换成高亮混色，活动行一进代码块，底色就丢了；
+     ::before（z-index: -1，最近的层叠上下文是 .cm-scroller）垫在行背景
+     下面，两层各自成立。 */
   ".cm-md-codeblock": {
     position: "relative",
     fontFamily: "var(--n-font-mono)",
@@ -410,19 +409,50 @@ export const notaTheme = EditorView.theme({
   ".cm-md-codeblock::before": {
     content: '""',
     position: "absolute",
-    /* 左右各让出 .cm-line 的内边距，和文本列、选区矩形对齐 */
-    inset: "0 18px",
-    zIndex: "-1",
-    backgroundColor: "color-mix(in oklab, var(--n-surface) 70%, transparent)",
+    /* 上下各溢出半像素：行高带小数时，相邻两行的底色之间会有发丝缝 */
+    inset: "-0.5px 0",
+    /* -2 而不是 -1：选区层（.cm-selectionLayer）也在 -1 这一层、但排在
+       内容前面 —— 底色若是 -1 就画在选区之后，把代码块里的选中高亮整个
+       盖掉（实底下尤其明显）。压到 -2 让它沉到选区下面：底色垫底、
+       选区居中、文字最上。 */
+    zIndex: "-2",
+    backgroundColor: "var(--n-code-surface)",
     pointerEvents: "none",
   },
+  /* 圆角只给首末行：中间行的 ::before 上下要跟相邻行接住，不能收边 */
+  ".cm-md-codeblock-open::before": { borderRadius: "9px 9px 0 0" },
+  ".cm-md-codeblock-close::before": { borderRadius: "0 0 9px 9px" },
+  /* 整块只有一行（围栏开合在同一行）时四个角都要圆 */
+  ".cm-md-codeblock-open.cm-md-codeblock-close::before": { borderRadius: "9px" },
   /* 首末行补一点纵向留白，整块看起来才是个独立的段落 */
   ".cm-md-codeblock-open": { paddingTop: "7px" },
   ".cm-md-codeblock-close": { paddingBottom: "7px" },
 
-  /* ── 代码块的「语言」标签 ──
+  /* ── 被「标行」标出来的代码行 ──
+     和预览里的 `.pv-line.is-hl` 用同一层色（--n-accent-soft），两边看起来
+     才是同一个功能；左边再压一道 3px 竖条。
+
+     实现上不能另起一个 ::before 去画：代码块本身已经用 `::before` 铺了底色，
+     同一个元素只能有一个 `::before`，两者会打架。所以直接改那层底，
+     竖条用 inset box-shadow 压在框内 —— 左边界正好落在卡片左沿。
+
+     竖条也不能用 border-left：border 会挤动行内容，整块代码向右挪 3px。 */
+  ".cm-md-codeblock.cm-md-marked::before": {
+    /* 比预览的 accent-soft 再重一档：代码块自己的底色（code-surface）垫在下面，
+       同样的 16% 混色在块内显得更淡 —— 实测 24% 才和预览里的观感打平。 */
+    backgroundColor: "color-mix(in oklab, var(--n-accent) 24%, var(--n-code-surface))",
+    boxShadow: "inset 3px 0 0 0 var(--n-accent)",
+  },
+  /* 兜底：万一某个主题下这行不是代码行（理论上不会），也让它有底色。
+     排除代码行：代码行的高亮在上面那条里已经画过一层实底的，
+     这里再叠一层半透明会变味。 */
+  ".cm-md-marked:not(.cm-md-codeblock)": {
+    backgroundColor: "color-mix(in oklab, var(--n-accent) 11%, transparent)",
+  },
+
+  /* ── 代码块的「语言 / 行号」标签 ──
      外层零高度，只当定位基准：它不能占文档流，否则会多出一行空白、
-     也会把行号和围栏的对应关系顶歪。真正的可见物是里面那枚绝对定位的小按钮，
+     也会把行号和围栏的对应关系顶歪。真正的可见物是里面那一排绝对定位的小按钮，
      浮在代码块右上角——离内容远，不会和正文、行号抢位置。 */
   ".cm-code-lang": {
     height: "0",
@@ -435,10 +465,18 @@ export const notaTheme = EditorView.theme({
        只抬到 2：补全弹层是 10，仍在它上面。 */
     zIndex: "2",
   },
-  ".cm-code-lang-btn": {
+  /* 两颗按钮并排：从右往左排「行号 · 语言」，语言那颗贴最右边，
+     因为它是原来就有的位置，加一颗不该把它顶走。 */
+  ".cm-code-lang-row": {
     position: "absolute",
     top: "5px",
     right: "14px",
+    display: "flex",
+    alignItems: "center",
+    gap: "4px",
+    flexDirection: "row-reverse",
+  },
+  ".cm-code-lang-btn": {
     display: "inline-flex",
     alignItems: "center",
     gap: "2px",
@@ -468,6 +506,14 @@ export const notaTheme = EditorView.theme({
   },
   /* 已经指定过语言的那块稍微实一点——有信息量才值得看得见 */
   ".cm-code-lang-btn.has-lang": { opacity: "0.7" },
+  /* 行号开着时这颗常亮：状态本身就是要看的信息 */
+  ".cm-code-lang-btn--gutter": { opacity: "0.4" },
+  ".cm-code-lang-btn--gutter.on": {
+    opacity: "1",
+    color: "var(--n-accent)",
+    borderColor: "color-mix(in oklab, var(--n-accent) 45%, var(--n-line))",
+    backgroundColor: "color-mix(in oklab, var(--n-accent) 10%, var(--n-bg))",
+  },
 });
 
 /**

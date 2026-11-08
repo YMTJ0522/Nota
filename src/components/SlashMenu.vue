@@ -25,7 +25,7 @@ const ICONS: Record<SlashCommandId, string> = {
   // 笔记
   tag: '#', blockId: '^', frontMatter: '---', comment: '%%',
   // 代码 / 表格 / 数学
-  codeBlock: '```', advancedCodeBlock: '⌗', mermaid: '◈', table: '▦',
+  codeBlock: '```', mermaid: '◈', table: '▦',
   inlineMath: '$', mathBlock: '$$',
   // 内容块
   callout: '❗', details: '▸', tabs: '⧉', divider: '—',

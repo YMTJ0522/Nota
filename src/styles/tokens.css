@@ -48,18 +48,20 @@
   --n-accent-soft: color-mix(in oklab, var(--n-accent) 13%, var(--n-bg));
   /* 强调色之上的文字色（按钮/选中态用）。浅色主题下强调色都压得够深，白字通用 */
   --n-on-accent: #ffffff;
+  /* 语义色的 soft 底不再手填：和上面的 accent-soft 同一条派生规则 ——
+     浅色掺 13%、深色掺 18%，五类提示块的「掺水比例」完全一致，
+     摆在一起只差色相不差深浅；换底色风格时也自动跟着走。 */
   --n-danger: #c0503f;
-  --n-danger-soft: #f7e7e3;
-  /* 警告 / 信息 / 成功：Callout 提示块按类型取色 */
+  --n-danger-soft: color-mix(in oklab, var(--n-danger) 13%, var(--n-bg));
   --n-warn: #9a6b1f;
-  --n-warn-soft: #f9f0dd;
+  --n-warn-soft: color-mix(in oklab, var(--n-warn) 13%, var(--n-bg));
   --n-info: #34688f;
-  --n-info-soft: #e4eef5;
+  --n-info-soft: color-mix(in oklab, var(--n-info) 13%, var(--n-bg));
   --n-ok: #3f7d52;
-  --n-ok-soft: #e5f1e8;
+  --n-ok-soft: color-mix(in oklab, var(--n-ok) 13%, var(--n-bg));
   /* 紫：留给「重要 / 疑问」这两类提示块，跟蓝绿红琥珀都拉开距离 */
   --n-violet: #6a5a9c;
-  --n-violet-soft: #eeebf7;
+  --n-violet-soft: color-mix(in oklab, var(--n-violet) 13%, var(--n-bg));
 
   /* 编辑器专用 */
   /* 选中色。
@@ -208,20 +210,21 @@
   --n-fg-dim: #a3a19b;
   /* 深色下 faint 原来压到 3.44:1，同样偏淡；提亮到 4.96，与浅色那档同一水平 */
   --n-fg-faint: #8a8882;
-  --n-accent: #6fae8f;
+  /* 深色下强调色偏亮，文字改用深色才够对比。
+     取值与下面色板的 celadon 深色档同源，别单独另调。 */
+  --n-accent: oklch(72% 0.11 150);
   --n-accent-soft: color-mix(in oklab, var(--n-accent) 16%, var(--n-bg));
-  /* 深色下强调色偏亮，文字改用深色才够对比 */
   --n-on-accent: #10160f;
   --n-danger: #e07a68;
-  --n-danger-soft: #3a2422;
+  --n-danger-soft: color-mix(in oklab, var(--n-danger) 18%, var(--n-bg));
   --n-warn: #d9a95c;
-  --n-warn-soft: #3a3122;
+  --n-warn-soft: color-mix(in oklab, var(--n-warn) 18%, var(--n-bg));
   --n-info: #7fb2d8;
-  --n-info-soft: #22313c;
+  --n-info-soft: color-mix(in oklab, var(--n-info) 18%, var(--n-bg));
   --n-ok: #7fc196;
-  --n-ok-soft: #22332a;
+  --n-ok-soft: color-mix(in oklab, var(--n-ok) 18%, var(--n-bg));
   --n-violet: #a99adf;
-  --n-violet-soft: #2a2740;
+  --n-violet-soft: color-mix(in oklab, var(--n-violet) 18%, var(--n-bg));
 
   /* 同浅色那套：不跟底色混，直接取强调色的色相，亮度锁在 48%
      （再亮白字就压不住了，再暗就跟 --n-surface 分不开），彩度留八成，
@@ -268,39 +271,42 @@
 }
 
 /* ─────────────────────────────────────────────
-   强调色板：6 套，挂在 <html data-accent> 上
+   强调色板：7 套，挂在 <html data-accent> 上
    只写主色，soft / selection / active-line 都由 color-mix 自动派生，
    所以加一套新色只要两行，不会出现「改了主色、配套色忘了改」的色偏。
    深浅两套分别取值：同一色相在深色底上要提亮，否则压不住背景。
+   深色档按统一规则取值：亮度 ≈ 浅色 + 22 档、彩度收到的 85% ——
+   七套色的「浅 → 深」落差一致，切主题时是「换张纸」不是「换了支笔」。
+   导出（store/index.ts 的 ACCENT_EXPORT）是这套浅色值的导出投影，改色要同步。
    ───────────────────────────────────────────── */
 
 /* 青瓷：默认，墨绿系，最接近纸笔的观感 */
-:root[data-accent='celadon'][data-theme='dark'] { --n-accent: oklch(74% 0.12 150); }
+:root[data-accent='celadon'][data-theme='dark'] { --n-accent: oklch(72% 0.11 150); }
 :root[data-accent='celadon'][data-theme='light'] { --n-accent: oklch(49% 0.13 150); }
 
 /* 朱砂：偏暖的砖红 */
-:root[data-accent='cinnabar'][data-theme='dark'] { --n-accent: oklch(66.5% 0.15 32); }
+:root[data-accent='cinnabar'][data-theme='dark'] { --n-accent: oklch(72% 0.125 31); }
 :root[data-accent='cinnabar'][data-theme='light'] { --n-accent: oklch(54% 0.15 30); }
 
 /* 靛蓝：唯一一套冷蓝，留着给想要「正经蓝」的场景 */
-:root[data-accent='indigo'][data-theme='dark'] { --n-accent: oklch(72% 0.13 252); }
+:root[data-accent='indigo'][data-theme='dark'] { --n-accent: oklch(71% 0.12 252); }
 :root[data-accent='indigo'][data-theme='light'] { --n-accent: oklch(52% 0.14 252); }
 
 /* 琥珀：暖黄，浅色底上偏橙、深色底上偏奶黄 */
-:root[data-accent='amber'][data-theme='dark'] { --n-accent: oklch(80% 0.14 95); }
+:root[data-accent='amber'][data-theme='dark'] { --n-accent: oklch(78% 0.09 95); }
 :root[data-accent='amber'][data-theme='light'] { --n-accent: oklch(56% 0.105 95); }
 
 /* 湖蓝：低饱和的青，比靛蓝更安静 */
-:root[data-accent='lagoon'][data-theme='dark'] { --n-accent: oklch(76% 0.105 205); }
+:root[data-accent='lagoon'][data-theme='dark'] { --n-accent: oklch(72% 0.065 205); }
 :root[data-accent='lagoon'][data-theme='light'] { --n-accent: oklch(49% 0.075 205); }
 
 /* 紫藤：偏紫，深色底上最出挑的一套 */
-:root[data-accent='wisteria'][data-theme='dark'] { --n-accent: oklch(72% 0.13 300); }
+:root[data-accent='wisteria'][data-theme='dark'] { --n-accent: oklch(71% 0.12 300); }
 :root[data-accent='wisteria'][data-theme='light'] { --n-accent: oklch(52% 0.14 300); }
 
 /* 石墨：不想要颜色时用这套。彩度压到接近 0，就是一支中性的深灰笔，
    选中态、按钮、链接都还在，只是不再是「某个颜色」。 */
-:root[data-accent='graphite'][data-theme='dark'] { --n-accent: oklch(76% 0.006 260); }
+:root[data-accent='graphite'][data-theme='dark'] { --n-accent: oklch(72% 0.006 260); }
 :root[data-accent='graphite'][data-theme='light'] { --n-accent: oklch(47% 0.006 260); }
 
 * {

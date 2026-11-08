@@ -64,7 +64,17 @@ export async function runAi(view: EditorView, action: AiAction): Promise<void> {
     : INSTRUCTION[action]
 
   toast('AI 处理中…')
-  const res = await window.api.aiChat(cfg, [{ role: 'user', content: prompt }])
+  /* 展开成普通对象再过 IPC：store.state.ai 是响应式 Proxy，
+     结构化克隆不了 —— 直接传会抛「An object could not be cloned」，
+     而且这个错不进任何 toast，表现就是点了 AI 操作之后永远没下文。
+     store/index.ts 里另外三处 aiChat 都展开过，就这里漏了。 */
+  let res: Awaited<ReturnType<typeof window.api.aiChat>>
+  try {
+    res = await window.api.aiChat({ ...cfg }, [{ role: 'user', content: prompt }])
+  } catch (e) {
+    toast(`AI 调用失败：${e instanceof Error ? e.message : String(e)}`)
+    return
+  }
   if (!res.ok || !res.text) {
     toast(`AI 调用失败：${res.error ?? '未知错误'}`)
     return

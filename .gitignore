@@ -18,6 +18,14 @@ docs/probe-*.png
 # clean.mjs / release.mjs 用改名代替删除而挪走的旧目录
 .trash/
 
+# 历史构建残渣（release2/release3 是被进程句柄锁住的空壳，split 是拆分打包的中间目录）
+release2/
+release3/
+release-split-*/
+
+# playwright-cli 的临时浏览器 profile
+.playwright-cli/
+
 # 预览/导出缓存（主进程按笔记 hash 建的临时目录，运行时自己会涨）
 .preview/
 test-output/
@@ -44,3 +52,6 @@ promo/cover-43.png
 
 # 工作区记忆与本地日志（不该进仓库）
 .workbuddy/
+
+# 逐张目检、量像素用的截图（.keep/marks、.keep/promocheck 之类）
+.keep/

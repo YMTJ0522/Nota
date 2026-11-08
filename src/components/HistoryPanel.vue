@@ -9,7 +9,8 @@ import {
   FileText,
 } from 'lucide-vue-next'
 import { store } from '@/store'
-import { diffLines, diffSummary, type DiffLine } from '@/utils/diff'
+import { diffSummary, type DiffLine } from '@/utils/diff'
+import { diffLinesAsync } from '@/utils/diff-client'
 
 /**
  * 版本历史抽屉。
@@ -77,27 +78,36 @@ onBeforeUnmount(() => {
   document.removeEventListener('pointerdown', onDocPointer)
   document.removeEventListener('keydown', onEsc)
   if (diffTimer) clearTimeout(diffTimer)
+  if (refreshTimer) clearTimeout(refreshTimer)
 })
 
 /**
- * 对比行**异步**算。diff 是纯 CPU 活，长文 + 大改动能烧掉小一秒；
- * 放在 computed 里就是同步卡死渲染 —— 面板一打开整个窗口点不动。
- * 先摆出「计算中」，下一拍再真算，窗口始终有响应。
+ * 对比行交给 **Worker** 算。上一版只是「延后 30ms 再同步算」——
+ * 算的那一刻主线程照样被 LCS 表格填满，长文 + 大改动就是实打实的
+ * 一两百毫秒卡顿，用户照样感觉得到。Worker 里算，主线程一行不占，
+ * 表格填多久界面都照常响应。
+ *
+ * token 防过期：用户连点两个版本时，先发的结果可能后到 ——
+ * 到货时 token 对不上就整包丢弃。
  */
 const diffRows = ref<DiffLine[]>([])
 const diffing = ref(false)
 let diffTimer: ReturnType<typeof setTimeout> | null = null
+let diffToken = 0
 
 function scheduleDiff() {
   if (diffTimer) clearTimeout(diffTimer)
   if (mode.value !== 'diff' || !active.value) {
+    diffToken += 1
     diffRows.value = []
     diffing.value = false
     return
   }
   diffing.value = true
-  diffTimer = setTimeout(() => {
-    const rows = diffLines(baseText.value, preview.value)
+  diffTimer = setTimeout(async () => {
+    const token = ++diffToken
+    const rows = await diffLinesAsync(baseText.value, preview.value)
+    if (token !== diffToken) return
     diffRows.value = rows
     diffing.value = false
   }, 30)
@@ -106,6 +116,29 @@ function scheduleDiff() {
 watch(() => [mode.value, baseText.value, preview.value, active.value], scheduleDiff)
 
 const summary = computed(() => diffSummary(diffRows.value))
+
+/* ── 分批渲染 ──
+   diff 算得再快，几千行一次性 patch 成 DOM 也要几百毫秒 —— 打开对比、
+   换基准、自动保存后刷新，每一次都卡一下。视口只有几百行高，
+   先渲染头部一屏多，滚动条挨到底部再放行下一批：快速翻到底也就
+   两三帧的事，而首屏始终是立即出来的。content-visibility 管「画」，
+   这里管「建」，两头都省。 */
+const RENDER_STEP = 600
+const renderLimit = ref(RENDER_STEP)
+const shownRows = computed(() => diffRows.value.slice(0, renderLimit.value))
+const behindCount = computed(() => Math.max(0, diffRows.value.length - shownRows.value.length))
+
+watch(diffRows, () => {
+  renderLimit.value = RENDER_STEP
+})
+
+function onDiffScroll(e: Event) {
+  if (renderLimit.value >= diffRows.value.length) return
+  const el = e.target as HTMLElement
+  if (el.scrollTop + el.clientHeight >= el.scrollHeight - 600) {
+    renderLimit.value += RENDER_STEP
+  }
+}
 
 /** 基准是版本时要把内容读出来；是当前笔记时直接用草稿 */
 async function loadBase() {
@@ -160,6 +193,37 @@ watch(
   () => state.activePath,
   () => {
     if (props.open) load()
+  },
+)
+
+/* ── 自动保存后实时刷新 ──
+   每次落盘 lastSavedAt 都会跳一下；抽屉开着时跟着重读一遍快照列表，
+   「改两笔 → 切到历史看」就不用关了重开。列表是追加式的（旧快照路径不变），
+   所以只动头部：用户停在最新一条上就跟着走到新快照，
+   停在旧版本上细看就别动他的选择。基准是「当前笔记」时内容也要跟着换。 */
+let refreshTimer: ReturnType<typeof setTimeout> | null = null
+
+async function refreshItems() {
+  if (!state.root || !state.activePath) return
+  const next = (await window.api.historyList?.(state.root, state.activePath)) ?? []
+  const prevTop = items.value[0]?.path
+  items.value = next
+  const top = next[0]
+  if (!top || top.path === prevTop) return
+  if (!active.value || active.value.path === prevTop) {
+    active.value = top
+    preview.value = (await window.api.historyRead?.(top.path)) ?? ''
+  }
+  if (baseKey.value === 'cur') baseText.value = state.draft ?? ''
+}
+
+watch(
+  () => state.lastSavedAt,
+  () => {
+    if (!props.open) return
+    if (refreshTimer) clearTimeout(refreshTimer)
+    // 快照有冷却间隔（连打几个字只存一次），慢半拍读才不会拿到半截
+    refreshTimer = setTimeout(() => void refreshItems(), 800)
   },
 )
 
@@ -276,22 +340,26 @@ function fmtSize(n: number) {
             </div>
 
             <!-- 对比：只把有变化的行摆出来更容易读，但会丢掉上下文，
-                 所以保留完整文本、用底色区分（和 git diff 的默认行为一致）。 -->
-            <div v-if="mode === 'diff'" class="hp-diff">
+                 所以保留完整文本、用底色区分（和 git diff 的默认行为一致）。
+                 行号只留一列（右侧那份 = 正在看的这个版本里的行号）：
+                 git 式的双列在对话框这个宽度里把正文挤得没法读，也没人分得清
+                 哪列是哪边。 -->
+            <div v-if="mode === 'diff'" class="hp-diff" @scroll.passive="onDiffScroll">
               <div v-if="diffing" class="hp-hint">正在对比…</div>
               <div v-else-if="diffRows.length === 0" class="hp-hint">选一个版本进行对比</div>
-              <div
-                v-for="(r, i) in diffRows"
-                v-else
-                :key="i"
-                class="hp-dl"
-                :class="r.op"
-              >
-                <span class="hp-g">{{ r.oldNo ?? '' }}</span>
-                <span class="hp-g">{{ r.newNo ?? '' }}</span>
-                <span class="hp-sign">{{ r.op === 'add' ? '+' : r.op === 'del' ? '−' : '' }}</span>
-                <span class="hp-dt">{{ r.text || ' ' }}</span>
-              </div>
+              <template v-else>
+                <div
+                  v-for="(r, i) in shownRows"
+                  :key="i"
+                  class="hp-dl"
+                  :class="r.op"
+                >
+                  <span class="hp-g">{{ r.newNo ?? '' }}</span>
+                  <span class="hp-sign">{{ r.op === 'add' ? '+' : r.op === 'del' ? '−' : '' }}</span>
+                  <span class="hp-dt">{{ r.text || ' ' }}</span>
+                </div>
+                <div v-if="behindCount > 0" class="hp-more">继续滚动加载剩余 {{ behindCount }} 行…</div>
+              </template>
             </div>
 
             <div v-else class="hp-preview">
@@ -536,12 +604,20 @@ function fmtSize(n: number) {
 
 .hp-g {
   flex: none;
-  width: 34px;
+  width: 40px;
   text-align: right;
   color: var(--n-fg-faint);
   font-size: 10.5px;
   font-variant-numeric: tabular-nums;
   user-select: none;
+}
+
+/* 分批加载的收尾行：告诉人底下还有多少，不是内容断了 */
+.hp-more {
+  padding: 8px 10px;
+  font-size: 11px;
+  color: var(--n-fg-faint);
+  text-align: center;
 }
 
 .hp-sign {

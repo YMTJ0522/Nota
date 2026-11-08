@@ -32,6 +32,7 @@ import { closeBrackets, closeBracketsKeymap } from "@codemirror/autocomplete";
 
 import { toolbarKeymap } from "./toolbar-keymap";
 import { codeLangChipExtensions } from "./code-lang-chip";
+import { fenceLineAt, fenceMarkedAt } from "./code-line-marks";
 import { fencedCodeBlockHighlighter } from "./code-languages";
 import { markdownCompletion } from "./completion";
 import { markdownLivePreview } from "./live-preview";
@@ -66,8 +67,15 @@ export function baseExtensions(options: {
   onDocChanged?: (doc: string) => void;
   /** Ctrl+F 交给外层自己画的搜索条；不给就退回 CodeMirror 原生面板 */
   onFind?: () => void;
+  /**
+   * 光标落在围栏代码块里的上下文：line = 第几条代码行（1 起，块外为 null），
+   * marked = 这一行**当前有没有被标行**。
+   * 「标行」按钮的提示用 line，亮不亮用 marked —— 亮要表示「已标、再点是撤」，
+   * 不能表示「在代码块里」，否则没标行的块也一直亮着。
+   */
+  onFenceContext?: (ctx: { line: number | null; marked: boolean }) => void;
 }): Extension[] {
-  const { placeholder = "", editable = true, onDocChanged, onFind } = options;
+  const { placeholder = "", editable = true, onDocChanged, onFind, onFenceContext } = options;
 
   const extensions: Extension[] = [
     highlightSpecialChars(),
@@ -126,6 +134,18 @@ export function baseExtensions(options: {
 
   if (placeholder) extensions.push(cmPlaceholder(placeholder));
   if (!editable) extensions.push(EditorState.readOnly.of(true));
+  if (onFenceContext) {
+    extensions.push(
+      EditorView.updateListener.of((update) => {
+        // 只有光标/正文动过才值得算一次：滚动、聚焦这些都不影响「在哪一行」
+        if (!update.docChanged && !update.selectionSet) return;
+        onFenceContext({
+          line: fenceLineAt(update.state, update.state.selection.main.head),
+          marked: fenceMarkedAt(update.state, update.state.selection.main.head),
+        });
+      }),
+    );
+  }
   if (onDocChanged) {
     extensions.push(
       EditorView.updateListener.of((update) => {

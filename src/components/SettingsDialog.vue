@@ -863,7 +863,7 @@ async function changeWorkspace() {
                 <div class="st-row">
                   <div class="st-label">
                     <span class="st-name">显示大纲</span>
-                    <span class="st-desc">资料栏里的「大纲」页签</span>
+                    <span class="st-desc">资料栏里的「大纲 / 导图」页签</span>
                   </div>
                   <button
                     class="st-switch"

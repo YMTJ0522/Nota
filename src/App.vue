@@ -7,6 +7,7 @@ import SideColumn from '@/components/SideColumn.vue'
 import SplitHandle from '@/components/SplitHandle.vue'
 import EditorPane from '@/components/EditorPane.vue'
 import GraphView from '@/components/GraphView.vue'
+import MindMapView from '@/components/MindMapView.vue'
 import StickyBoard from '@/components/StickyBoard.vue'
 import SearchPalette from '@/components/SearchPalette.vue'
 import CommandPalette from '@/components/CommandPalette.vue'
@@ -139,6 +140,10 @@ function onKey(e: KeyboardEvent) {
   } else if (e.shiftKey && (e.key === 'G' || e.key === 'g')) {
     e.preventDefault()
     store.toggleGraph()
+  } else if (e.shiftKey && (e.key === 'M' || e.key === 'm')) {
+    // 思维导图铺在主区，没打开笔记时没有东西可画
+    e.preventDefault()
+    if (state.activePath) store.toggleMap()
   }
 }
 
@@ -331,7 +336,7 @@ onBeforeUnmount(() => {
              所以这两种空态各自补一条顶栏，窗口才拖得动、关得掉。
              便签墙和关系图都自带顶栏，这里要给它们让开。 -->
         <header
-          v-if="!state.activePath && !state.graphOpen && state.columnView !== 'stickies'"
+          v-if="!state.activePath && !state.graphOpen && !state.mapOpen && state.columnView !== 'stickies'"
           class="bare"
         >
           <span class="mark">Nota</span>
@@ -342,6 +347,9 @@ onBeforeUnmount(() => {
         <!-- 关系图占的是主区（中间那一列只有 300px，画不下几百个节点）。
              它不是「关掉当前笔记」：从图上点一篇跳过去、再关掉图，正文还该在。 -->
         <GraphView v-else-if="state.graphOpen" />
+        <!-- 导图同理：它要的是一整块能看清的宽度，300px 的资料栏放不下。
+             它不改 activePath —— 看完结构关掉，正文还在原来那一篇上。 -->
+        <MindMapView v-else-if="state.mapOpen" />
         <!-- 便签视图下主区换成一面墙。以前这里还挂着上一篇笔记：左边整理便条，
              右边是被晾着的正文，两件事没有关系。activePath 不动 —— 切回笔记页
              还在原来那一篇上。 -->

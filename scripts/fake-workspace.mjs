@@ -276,11 +276,11 @@ export function makeInject(opts = {}) {
     '    return [{ name: "新导入的资料.zip", rel: p }]; },' +
     '  aiTest: async () => ({ ok: true, models: ["llama3.2"] }),' +
     '  onAiDelta: (cb) => { window.__delta = cb },' +
-    '  aiChat: async () => {' +
-    '    const cb = window.__delta;' +
-    '    for (const t of ["## 结果", "\\n\\n写好了。"]) { cb && cb({ text: t }); await window.__wait(80) }' +
-    '    return { ok: true, text: "## 结果\\n\\n写好了。" }' +
-    '  },' +
+  '  aiChat: async () => {' +
+  '    const cb = window.__delta;' +
+  '    for (const t of ["把想法写下来，", "它们才会慢慢长成真正的样子。"]) { cb && cb({ text: t }); await window.__wait(80) }' +
+  '    return { ok: true, text: "把想法写下来，它们才会慢慢长成真正的样子。" }' +
+  '  },' +
     '  appInfo: async () => ({ electron: "33.3.1", chrome: "130.0.6723.191", node: "20.18.0", platform: "win32", arch: "x64" }),' +
     '  minimize: async () => {}, toggleMaximize: async () => false, closeWindow: async () => {},' +
     '  onMaximizeChange: (cb) => { if (window.__maximized) cb(true) },' +

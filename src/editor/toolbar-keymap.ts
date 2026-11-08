@@ -14,6 +14,7 @@ import {
   toolbarBlockPrefix,
   toolbarHeading,
   toolbarInline,
+  toolbarLineMarks,
 } from "./toolbar-commands";
 
 type KeyHandler = (view: EditorView) => boolean;
@@ -39,6 +40,20 @@ function runHeading(level: 1 | 2 | 3 | 4 | 5 | 6): KeyHandler {
   };
 }
 
+/**
+ * 标行：跟工具栏那颗按钮走同一条路。
+ *
+ * 只多一件事——把回执转成轻提示。工具栏那边有 emit 可以用，这里在编辑器
+ * 层，走的是全应用共用的 `nota:toast` 事件（各处弹提示都是这一条通道）。
+ */
+function runLineMarks(): KeyHandler {
+  return (view) => {
+    const message = toolbarLineMarks(view);
+    if (message) window.dispatchEvent(new CustomEvent("nota:toast", { detail: message }));
+    return true;
+  };
+}
+
 export const toolbarKeymap: readonly { key: string; run: KeyHandler }[] = [
   { key: "Mod-b", run: runInline("bold") },
   { key: "Mod-i", run: runInline("italic") },
@@ -49,6 +64,7 @@ export const toolbarKeymap: readonly { key: string; run: KeyHandler }[] = [
   { key: "Mod-Shift-7", run: runPrefix("ordered") },
   { key: "Mod-Shift-8", run: runPrefix("bullet") },
   { key: "Mod-Shift-9", run: runPrefix("task") },
+  { key: "Mod-Alt-l", run: runLineMarks() },
   { key: "Mod-1", run: runHeading(1) },
   { key: "Mod-2", run: runHeading(2) },
   { key: "Mod-3", run: runHeading(3) },

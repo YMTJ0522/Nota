@@ -34,7 +34,6 @@ export type SlashCommandId =
   | "frontMatter"
   | "comment"
   | "codeBlock"
-  | "advancedCodeBlock"
   | "mermaid"
   | "table"
   | "inlineMath"
@@ -103,7 +102,6 @@ export const SLASH_COMMANDS: SlashCommandItem[] = [
   { id: "comment", group: "formatting", labelKey: "slash.comment" },
   // —— 代码 / 表格 / 数学 ——
   { id: "codeBlock", group: "formatting", labelKey: "slash.codeBlock" },
-  { id: "advancedCodeBlock", group: "formatting", labelKey: "slash.advancedCodeBlock" },
   { id: "mermaid", group: "formatting", labelKey: "slash.mermaid" },
   { id: "table", group: "formatting", labelKey: "slash.table" },
   { id: "inlineMath", group: "formatting", labelKey: "slash.inlineMath" },
@@ -146,7 +144,6 @@ export const SLASH_LABELS: Record<SlashCommandId, string> = {
   frontMatter: "Front Matter",
   comment: "隐藏注释",
   codeBlock: "代码块",
-  advancedCodeBlock: "高级代码块",
   mermaid: "Mermaid 图表",
   table: "表格",
   inlineMath: "行内公式",
@@ -186,7 +183,6 @@ const SLASH_ALIASES: Partial<Record<SlashCommandId, string[]>> = {
   frontMatter: ["fm", "yaml", "meta"],
   comment: ["yincang", "zhushi"],
   codeBlock: ["code", "daima", "fence"],
-  advancedCodeBlock: ["advanced", "gaoji"],
   mermaid: ["chart", "diagram", "tubiao"],
   table: ["biaoge"],
   inlineMath: ["math", "gongshi", "xingshi"],

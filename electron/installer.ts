@@ -41,6 +41,9 @@ const APP = 'Nota'
 const UNINSTALL_KEY = 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\com.ymtj.nota'
 
 let ui: BrowserWindow | null = null
+/** 安装窗是否还活着。main.ts 的 second-instance 处理靠它分辨
+    「该 showMain 的正常启动」和「安装期间发来的重复启动」。 */
+let uiAlive = false
 let targetDir = ''
 /** 笔记目录。空表示没动过，用「文档\Nota」——安装时用户选过就是他自己那个目录 */
 let notesDir = ''
@@ -199,16 +202,18 @@ async function unregister() {
 
 function createUi() {
   ui = new BrowserWindow({
-    width: 780,
-    // 第一屏现在是「装到哪儿」+「笔记放哪儿」两块。580 会把底部按钮
-    // 切掉半截并撑出滚动条（按真实打包结构截图确认过），660 又空得慌。
-    // 620 刚好：两行错误提示也塞得下。
-    height: 620,
+    // 新版式（OpenBitFun 式极简风）：左品牌 324px + 右内容，
+    // 标题 30px、选项卡更大。840×640 是按这个版式留足呼吸感试出来的；
+    // 再小的话右栏标题会换行、选项卡片挤成两行。
+    width: 840,
+    height: 640,
     show: false,
     frame: false,
     // 不做 transparent：透明窗口在关掉「透明效果」的机器上会露出一圈黑边，
     // 圆角交给系统（Win11 无边框窗口自带），底色直接给主题的 --n-bg
-    backgroundColor: '#16161a',
+    // 底色跟 install/installer.html 的 --bg（#141418）保持一致，
+    // 窗口建立到页面渲染完成之间不会闪一下别的颜色
+    backgroundColor: '#141418',
     resizable: false,
     maximizable: false,
     fullscreenable: false,
@@ -221,12 +226,19 @@ function createUi() {
       sandbox: false,
     },
   })
+  uiAlive = true
   ui.once('ready-to-show', () => ui?.show())
   ui.loadFile(path.join(process.resourcesPath ?? '', 'install', 'installer.html'))
   ui.webContents.on('render-process-gone', (_e, d) => logError('render-gone', new Error(JSON.stringify(d))))
   ui.on('closed', () => {
     ui = null
+    uiAlive = false
   })
+}
+
+/** 安装窗还开着吗（main.ts 的 second-instance 用它决定要不要 showMain） */
+export function installerUiActive(): boolean {
+  return uiAlive
 }
 
 function send(channel: string, payload?: unknown) {
@@ -459,19 +471,33 @@ export async function maybeRunInstaller(): Promise<boolean> {
       app.quit()
       return false
     }
-    /* 交给资源管理器拉起，不自己 spawn。
-       两个原因：一是 openPath / spawn 出来的进程都挂在这棵进程树下面，
-       portable 的壳（或启动它的宿主）在安装窗退出时会收掉整棵树，
+    /* 留交接标记：spawn 新程序的这一刻本进程还攥着单实例锁，
+       新 Nota.exe 可能抢锁失败。有这个标记它就等锁释放后重试，
+       而不是直接放弃（见 main.ts 单例锁那段）——
+       「点打开 Nota 时灵时不灵」就是这道竞态，输了就是这个表现。 */
+    try {
+      const dir = localAppData()
+      fs.mkdirSync(dir, { recursive: true })
+      fs.writeFileSync(
+        path.join(dir, 'install-handoff'),
+        `${new Date().toISOString()} ${target}\n`,
+      )
+    } catch (e) {
+      logError('handoff', e)
+    }
+    /* 交给资源管理器拉起，不自己 spawn：openPath / spawn 出来的进程
+       都挂在这棵进程树下面，portable 的壳在安装窗退出时会收掉整棵树，
        「点打开 Nota 什么也没发生」就是这么来的；
-       二是 ShellExecute 不继承 PORTABLE_EXECUTABLE_FILE，
-       不会让新进程又弹一次安装窗。 */
+       ShellExecute 也不继承 PORTABLE_EXECUTABLE_FILE，不会让新进程又弹安装窗。 */
     try {
       spawn('explorer.exe', [target], { detached: true, stdio: 'ignore' }).unref()
     } catch (e) {
       logError('launch-explorer', e)
     }
-    // 让新窗口先立起来，再关自己
-    setTimeout(() => app.quit(), 900)
+    /* 别逗留太久：锁要在新进程来抢之前释放。
+       500ms 够 explorer 把「打开这个文件」的请求转出去；
+       真有残余竞态，main.ts 的交接重试会兜住。 */
+    setTimeout(() => app.quit(), 500)
     return true
   })
 
@@ -504,6 +530,7 @@ export async function maybeRunInstaller(): Promise<boolean> {
       decided = true
       resolve(false)
       ui?.destroy()
+      uiAlive = false
       return true
     })
     ui?.on('closed', () => {

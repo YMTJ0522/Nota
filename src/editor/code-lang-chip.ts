@@ -7,6 +7,7 @@ import {
 } from "@codemirror/view";
 import { StateField, type EditorState, type Range } from "@codemirror/state";
 import { fencedCodeLanguages } from "./code-languages";
+import { readFence, toggleFenceLineNumbers } from "./code-line-marks";
 
 /**
  * 代码块右上角那枚「语言」小标签。
@@ -55,10 +56,18 @@ function displayLang(token: string) {
 }
 
 let openMenu: HTMLElement | null = null;
+/** 是哪颗 chip 把菜单打开的。toggle 的关键：document 级的 mousedown（capture）
+    比 click 先到，若把「点在 chip 上」也当成点了外面，菜单会在这里被关掉、
+    等 click 到达时 openMenu 已经是 null —— 于是又开一次，表现就是
+    「再点一下收不回去」。chip 自己的按下不算「外面」，留给 click 收。 */
+let openAnchor: HTMLElement | null = null;
 
 function onDocDown(event: MouseEvent) {
   const target = event.target as Node | null;
-  if (openMenu && target && !openMenu.contains(target)) closeLangMenu();
+  if (!openMenu) return;
+  if (openAnchor && target && openAnchor.contains(target)) return;
+  if (target && openMenu.contains(target)) return;
+  closeLangMenu();
 }
 
 function onDocKey(event: KeyboardEvent) {
@@ -86,6 +95,7 @@ function closeLangMenu() {
   if (!openMenu) return;
   openMenu.remove();
   openMenu = null;
+  openAnchor = null;
   document.removeEventListener("mousedown", onDocDown, true);
   document.removeEventListener("keydown", onDocKey, true);
   window.removeEventListener("resize", closeLangMenu);
@@ -176,6 +186,7 @@ function openLangMenu(view: EditorView, anchor: HTMLElement, pos: number) {
   list.querySelector<HTMLElement>(".n-menu-item.on")?.scrollIntoView({ block: "nearest" });
 
   openMenu = menu;
+  openAnchor = anchor;
   document.addEventListener("mousedown", onDocDown, true);
   document.addEventListener("keydown", onDocKey, true);
   window.addEventListener("resize", closeLangMenu);
@@ -189,12 +200,13 @@ class CodeLangChip extends WidgetType {
   constructor(
     readonly pos: number,
     readonly lang: string,
+    readonly numbered: boolean,
   ) {
     super();
   }
 
   eq(other: CodeLangChip) {
-    return other.pos === this.pos && other.lang === this.lang;
+    return other.pos === this.pos && other.lang === this.lang && other.numbered === this.numbered;
   }
 
   /** 让 CodeMirror 别把标签里的点击当成编辑器事件（否则会挪走光标） */
@@ -205,6 +217,11 @@ class CodeLangChip extends WidgetType {
   toDOM(view: EditorView) {
     const wrap = document.createElement("div");
     wrap.className = "cm-code-lang";
+
+    /* 两颗标签并排放。第二颗「行号」是给不会用《标行》的人留的最后一条路：
+       光标一落进代码块，眼前就有一个能点的东西，不用回头找工具栏。 */
+    const row = document.createElement("div");
+    row.className = "cm-code-lang-row";
 
     const btn = document.createElement("button");
     btn.type = "button";
@@ -232,7 +249,26 @@ class CodeLangChip extends WidgetType {
       openLangMenu(view, btn, this.pos);
     });
 
-    wrap.append(btn);
+    const gutter = document.createElement("button");
+    gutter.type = "button";
+    gutter.className = "cm-code-lang-btn cm-code-lang-btn--gutter";
+    if (this.numbered) gutter.classList.add("on");
+    gutter.title = this.numbered ? "关掉行号" : "显示行号";
+    gutter.setAttribute("aria-label", gutter.title);
+    gutter.setAttribute("aria-pressed", this.numbered ? "true" : "false");
+    gutter.textContent = "行号";
+    gutter.addEventListener("mousedown", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+    });
+    gutter.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      toggleFenceLineNumbers(view, this.pos);
+    });
+
+    row.append(btn, gutter);
+    wrap.append(row);
     return wrap;
   }
 }
@@ -246,6 +282,9 @@ class CodeLangChip extends WidgetType {
  * 而那种装饰恰恰是不占文档流、能把标签浮到行外的唯一办法。
  * StateField 经由 `EditorView.decorations` facet 提供就没有这个限制。
  */
+/** 被标出来的代码行的行装饰（样式在 theme.ts 的 `.cm-md-marked`） */
+const markedLine = Decoration.line({ class: "cm-md-marked" });
+
 function buildCodeLangChips(state: EditorState): DecorationSet {
   const ranges: Range<Decoration>[] = [];
   const seen = new Set<number>();
@@ -263,13 +302,29 @@ function buildCodeLangChips(state: EditorState): DecorationSet {
       if (seen.has(line.number)) return;
       seen.add(line.number);
       const token = /^[ \t]*(?:`{3,}|~{3,})([^\s`]*)/.exec(line.text)?.[1] ?? "";
+      /* 行号轨开没开。这里直接看围栏行有没有那串字，跟预览里的判断
+         （info 串上跑同一个正则）是同一套口径，不会一边亮一边不亮。 */
+      const numbered = /\bline[-_]?numbers\b/i.test(line.text);
       ranges.push(
         Decoration.widget({
-          widget: new CodeLangChip(line.from, token),
+          widget: new CodeLangChip(line.from, token, numbered),
           block: true,
           side: -1,
         }).range(line.from),
       );
+
+      /* 标出来的行在这儿铺一层淡底。
+         没有这一层，标行在编辑器里只体现为围栏行上多几个字符——
+         人点完看不出发生了什么，还得切到预览才知道有没有标上。
+         和预览里 `.pv-line.is-hl` 是同一份 marks 解析（code-line-marks.ts）。 */
+      const block = readFence(state, node);
+      if (block && block.info.marks.size > 0) {
+        block.content.forEach((contentLine, index) => {
+          if (block.info.marks.has(index + 1)) {
+            ranges.push(markedLine.range(contentLine.from));
+          }
+        });
+      }
     },
   });
 

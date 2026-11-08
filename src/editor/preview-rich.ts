@@ -13,6 +13,10 @@
  */
 
 import { displayLangName } from './code-languages'
+import { parseLineSpec } from './code-line-spec'
+/* 围栏与「抹掉行内记号」这两组判定挪去了 markdown-lines：
+   大纲 / 导图也要按行扫正文，两处各写一份迟早会对不上。 */
+import { fenceMarkOf, fenceCloseOf, plainInline, headingSlug } from './markdown-lines'
 
 const CALLOUT_RE =
   /<blockquote>\s*<p>\[!([A-Za-z]+)\]([+-]?)\s*([\s\S]*?)<\/p>([\s\S]*?)<\/blockquote>/g
@@ -537,63 +541,6 @@ export interface HeadingItem {
  *
  * 会跳过 front matter 和围栏代码块里的 `#`，免得把注释当成章节。
  */
-/**
- * 标题锚点：从文字生成 slug，重名的在后面加序号。
- *
- * 为什么不用「第几个标题」当 id（2.2.2 之前就是 `h-0` / `h-1` …）：
- * 大纲那份从源码提，预览这份从渲染后的 HTML 提，两边认到的标题集合并不
- * 总是完全一样 —— setext 标题（`标题` 下面一行 `===`）在源码里看不出来，
- * 引用块里的 `> # 标题` 源码那行又不以 `#` 开头。只要某一侧多认或少认一个，
- * 之后所有编号就整体错位一格，点第三项会跳到第四项去。
- *
- * 改成按文字取名之后，即使某一侧多一个标题，错位的也只有那一个，
- * 其余各项仍然各就各位。
- */
-export function headingSlug(text: string, seen: Map<string, number>): string {
-  const base =
-    text
-      .trim()
-      .toLowerCase()
-      .replace(/[\s　]+/g, '-')
-      .replace(/[^\p{L}\p{N}-]+/gu, '')
-      .replace(/^-+|-+$/g, '') || 'h'
-  const n = (seen.get(base) ?? 0) + 1
-  seen.set(base, n)
-  return n === 1 ? base : `${base}-${n}`
-}
-
-/**
- * 行首的围栏记号。
- *
- * 允许引用前缀（`> ```bash`）与最多 3 个空格的缩进——4 个空格起是缩进式
- * 代码块，不构成围栏（CommonMark 的规矩，顺手也避开列表续行的误判）。
- * 返回开栏用的字符与长度，关栏要靠它们配对。
- */
-function fenceMarkOf(line: string): { char: string; len: number } | null {
-  const m = /^(?:[ \t]*>[ \t]?)*([ \t]*)(`{3,}|~{3,})/.exec(line)
-  if (!m) return null
-  if (m[1].replace(/\t/g, '    ').length > 3) return null
-  return { char: m[2][0], len: m[2].length }
-}
-
-/**
- * 关栏行。按 CommonMark，关栏**只能是纯围栏**——除了空白不能再带东西，
- * 带语言标记的那一行是开栏，不是关栏。
- *
- * 以前开栏关栏共用一个判定（就是上面那个 `fenceMarkOf`），于是代码块里
- * 任何一行恰好以 ``` 开头都会被当成关栏：笔记在讲 Markdown 语法时很常见，
- * 代码里嵌的三引号字符串、示例里贴的一段 fence 也是。那一行提前关栏，
- * 后面整段代码就暴露在正文里，里面的 `# 注释` 顺理成章被收进了大纲——
- * 「大纲尾部冒出代码块里的注释」就是这么来的。
- *
- * `\r?` 是给 CRLF 留的：按行切完末尾会剩一个回车，不算「栏里还有东西」。
- */
-function fenceCloseOf(line: string): { char: string; len: number } | null {
-  const m = /^(?:[ \t]*>[ \t]?)*([ \t]*)(`{3,}|~{3,})[ \t]*\r?$/.exec(line)
-  if (!m) return null
-  if (m[1].replace(/\t/g, '    ').length > 3) return null
-  return { char: m[2][0], len: m[2].length }
-}
 
 export function outlineFromSource(raw: string): HeadingItem[] {
   const out: HeadingItem[] = []
@@ -639,18 +586,6 @@ export function outlineFromSource(raw: string): HeadingItem[] {
   return out
 }
 
-/** 抹掉行内的 Markdown 记号，只留看得见的字 */
-function plainInline(s: string): string {
-  return s
-    .replace(/\[([^\]]*)\]\([^)]*\)/g, '$1')
-    .replace(/!\[([^\]]*)\]\([^)]*\)/g, '$1')
-    .replace(/`([^`]*)`/g, '$1')
-    .replace(/(\*\*|__)(.*?)\1/g, '$2')
-    .replace(/(\*|_)(.*?)\1/g, '$2')
-    .replace(/~~(.*?)~~/g, '$1')
-    .replace(/\s+#+\s*$/, '')
-    .trim()
-}
 
 /**
  * 给预览里的 h1~h6 依次挂 id，并回传目录数据。
@@ -778,9 +713,14 @@ function enhanceCodeBlocks(src: string): string {
     /<pre\b([^>]*)\bdata-info="([^"]*)"([^>]*)>([\s\S]*?)<\/pre>/g,
     (whole, preA: string, rawInfo: string, preB: string, inner: string) => {
       const info = decodeEntities(rawInfo).trim()
-      const lang =
-        (info.split(/\s+/)[0] ?? '') ||
-        (/<code[^>]*class="[^"]*language-([^"\s]+)/.exec(inner)?.[1] ?? '')
+      /* 第一段是语言——**除非它其实是别的记号**。
+         ` ``` line-numbers ` 这种写法（只写修饰、没写语言）第一段就是
+         `line-numbers`；照第一条规则办会把它当成一门不存在的语言拿给
+         高亮器，语言标签上还会印出「line-numbers」四个字。 */
+      const first = info.split(/\s+/)[0] ?? ''
+      const lang = /^(?:line[-_]?numbers$|title\s*=|\{)/i.test(first)
+        ? ''
+        : first || (/<code[^>]*class="[^"]*language-([^"\s]+)/.exec(inner)?.[1] ?? '')
       const title = /title\s*=\s*"([^"]*)"|title\s*=\s*'([^']*)'/.exec(info)
       const caption = (title?.[1] ?? title?.[2] ?? '').trim()
       const numbered = /\bline-?numbers\b/i.test(info)
@@ -904,20 +844,6 @@ export function findTaskLine(md: string, index: number): { from: number; done: b
     pos += line.length + 1
   }
   return null
-}
-
-/** 把 `2,4-6` 这样的写法展开成行号集合 */
-function parseLineSpec(spec: string): Set<number> {
-  const set = new Set<number>()
-  for (const part of spec.split(',')) {
-    const m = /^\s*(\d+)(?:\s*-\s*(\d+))?\s*$/.exec(part)
-    if (!m) continue
-    const from = Number(m[1])
-    const to = m[2] ? Number(m[2]) : from
-    if (to < from) continue
-    for (let i = from; i <= to && i <= 9999; i += 1) set.add(i)
-  }
-  return set
 }
 
 /* ── 行内标签 `#标签` ──

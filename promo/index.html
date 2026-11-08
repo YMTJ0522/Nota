@@ -1,0 +1,276 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>Nota 朋友圈图</title>
+<style>
+  /* 一套给朋友圈发的 1080×1080 方图。
+     版式跟官网同一套：纸色底、墨色字、一行产品绿、Georgia 斜体英文 + 横线。
+     六张图之间只换标题和素材，骨架完全相同 —— 九宫格里并排看才像一套。 */
+  @font-face {
+    font-family: "Nanxi";
+    src: url("assets/nanxi-round.woff2") format("woff2");
+    font-weight: 100 900;
+    font-display: block;
+  }
+
+  :root {
+    --paper: #faf7f1;
+    --ink: #171614;
+    --ink-2: #5c574e;
+    --ink-3: #8e877a;
+    --green: #3f6f5a;
+    --line: rgba(23, 22, 20, 0.1);
+    --font: "PingFang SC", "Microsoft YaHei", "Noto Sans CJK SC", system-ui, sans-serif;
+    --serif: Georgia, "Times New Roman", serif;
+    --mono: "Cascadia Code", ui-monospace, Consolas, monospace;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  /* 截图时不能有滚动条 —— 它会被一起拍进去，画面右边就多一条灰杠。
+     滚动本身还要用（一张一张滚到每张卡），所以是把条藏了，不是禁止滚动。 */
+  html { scrollbar-width: none; }
+  html::-webkit-scrollbar { width: 0; height: 0; }
+  body { overflow-x: hidden; }
+
+  body {
+    background: #d9d3c6;
+    font-family: var(--font);
+    -webkit-font-smoothing: antialiased;
+    padding: 0;
+  }
+
+  .card {
+    width: 1080px;
+    height: 1080px;
+    background: var(--paper);
+    color: var(--ink);
+    padding: 84px 88px;
+    margin: 0 auto 40px;
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  .kicker {
+    font-family: var(--mono);
+    font-size: 13px;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .kicker::before {
+    content: "";
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--green);
+  }
+
+  .title {
+    margin-top: 26px;
+    font-size: 76px;
+    font-weight: 800;
+    line-height: 1.1;
+    letter-spacing: -0.035em;
+  }
+  .title em {
+    display: block;
+    font-style: normal;
+    color: var(--green);
+  }
+
+  .latin {
+    margin-top: 22px;
+    font-family: var(--serif);
+    font-style: italic;
+    font-size: 21px;
+    color: var(--ink-3);
+    padding-top: 14px;
+    border-top: 1px solid var(--line);
+  }
+
+  .shot {
+    margin-top: 54px;
+    border-radius: 14px;
+    border: 1px solid rgba(23, 22, 20, 0.12);
+    box-shadow: 0 22px 56px rgba(23, 22, 20, 0.13), 0 3px 8px rgba(23, 22, 20, 0.05);
+    overflow: hidden;
+    height: 470px;
+    background: #fff;
+  }
+  .shot img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+  }
+
+  .note {
+    margin-top: auto;
+    padding-top: 26px;
+    font-size: 16px;
+    line-height: 1.6;
+    color: var(--ink-2);
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 24px;
+  }
+  .page {
+    font-family: var(--mono);
+    font-size: 12px;
+    letter-spacing: 0.1em;
+    color: var(--ink-3);
+    flex: none;
+  }
+
+  /* ── 最后一张：二维码 ── */
+  .qr-card { padding-top: 96px; }
+  .qr-row {
+    margin-top: 58px;
+    display: flex;
+    align-items: center;
+    gap: 56px;
+  }
+  .qr-box {
+    width: 300px;
+    height: 300px;
+    background: #fff;
+    border: 1px solid rgba(23, 22, 20, 0.12);
+    border-radius: 10px;
+    padding: 18px;
+    flex: none;
+    box-shadow: 0 14px 36px rgba(23, 22, 20, 0.1);
+  }
+  .qr-box img { width: 100%; height: 100%; display: block; }
+  .qr-side { flex: 1; }
+  .url {
+    font-family: var(--mono);
+    font-size: 34px;
+    letter-spacing: -0.01em;
+    color: var(--ink);
+    line-height: 1.3;
+  }
+  .url small {
+    display: block;
+    font-family: var(--mono);
+    font-size: 13px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+    margin-bottom: 10px;
+  }
+  .meta-lines {
+    margin-top: 22px;
+    font-size: 15px;
+    line-height: 1.9;
+    color: var(--ink-2);
+  }
+  .meta-lines b { font-weight: 700; color: var(--ink); }
+  .tip-line {
+    /* 这张卡内容比别的少，空白全交给它上面的 auto —— 让二维码跟在标题下面，
+       说明沉到底部，而不是把一大块空当塞在标题和图之间。 */
+    margin-top: auto;
+    padding-top: 20px;
+    border-top: 1px solid var(--line);
+    font-size: 14px;
+    line-height: 1.7;
+    color: var(--ink-3);
+  }
+</style>
+</head>
+<body>
+
+  <!-- 01 封面 -->
+  <section class="card" id="c1">
+    <div class="kicker">v2.10.1 · Windows · 免费 · 开源</div>
+    <h1 class="title">一个只做笔记的<em>笔记应用</em></h1>
+    <div class="latin">a notebook that only takes notes</div>
+    <div class="shot"><img src="assets/hero.png" style="object-position: top center"></div>
+    <div class="note">
+      <span>文件存在你自己的目录里，就是一份普通的 Markdown。不联网、不上传、不要账号。</span>
+      <span class="page">01 / 06</span>
+    </div>
+  </section>
+
+  <!-- 02 代码块 -->
+  <section class="card" id="c2">
+    <div class="kicker">01 · 代码块</div>
+    <h1 class="title">写命令行笔记<em>不用再截图</em></h1>
+    <div class="latin">fenced code, actually highlighted</div>
+    <div class="shot"><img src="assets/crop-code.png"></div>
+    <div class="note">
+      <span>代码块有语法高亮，行内反引号也认；复制走的时候还是干净的纯文本。</span>
+      <span class="page">02 / 06</span>
+    </div>
+  </section>
+
+  <!-- 03 关系图 -->
+  <section class="card" id="c3">
+    <div class="kicker">02 · 关系图</div>
+    <h1 class="title">写过的笔记<em>自己连成一张网</em></h1>
+    <div class="latin">every [[link]] becomes an edge</div>
+    <div class="shot"><img src="assets/crop-graph.png"></div>
+    <div class="note">
+      <span>正文里敲 <b>[[</b> 就弹笔记名，写下的双链最后长成这张图。点节点直接跳过去。</span>
+      <span class="page">03 / 06</span>
+    </div>
+  </section>
+
+  <!-- 04 搜索 -->
+  <section class="card" id="c4">
+    <div class="kicker">03 · Ctrl + P</div>
+    <h1 class="title">三个月前那句话<em>三秒找回来</em></h1>
+    <div class="latin">full-text search, no index to build</div>
+    <div class="shot"><img src="assets/crop-search.png"></div>
+    <div class="note">
+      <span>一个框搜标题、搜正文、也搜命令。不用先建索引，打开就能搜。</span>
+      <span class="page">04 / 06</span>
+    </div>
+  </section>
+
+  <!-- 05 深色 -->
+  <section class="card" id="c5">
+    <div class="kicker">04 · 深色</div>
+    <h1 class="title">夜里写<em>也是一种写法</em></h1>
+    <div class="latin">paper by day, ink by night</div>
+    <div class="shot"><img src="assets/dark.png" style="object-position: top center"></div>
+    <div class="note">
+      <span>纸色 / 纯白 / 深色三档底，配七套强调色。换的是纸，不是主题。</span>
+      <span class="page">05 / 06</span>
+    </div>
+  </section>
+
+  <!-- 06 下载 -->
+  <section class="card qr-card" id="c6">
+    <div class="kicker">05 · 下载</div>
+    <h1 class="title">不需要账号<em>也不需要联网</em></h1>
+    <div class="latin">windows 10 / 11 · 64-bit</div>
+    <div class="qr-row">
+      <div class="qr-box"><img src="assets/qr.png" alt=""></div>
+      <div class="qr-side">
+        <div class="url"><small>官网</small>ymtj.hyper99.top</div>
+        <div class="meta-lines">
+          约 <b>68 MB</b>，装上就能用<br>
+          免安装版双击直接进界面<br>
+          也可以从 GitHub 拉源码自己编译
+        </div>
+      </div>
+    </div>
+    <div class="tip-line">
+      第一次运行会等十几秒 —— 那是 Windows 在扫一个没有签名的新程序，不是卡住了。
+    </div>
+    <div class="note">
+      <span>Nota · 一个只做笔记的笔记应用</span>
+      <span class="page">06 / 06</span>
+    </div>
+  </section>
+
+</body>
+</html>

@@ -21,7 +21,6 @@ import {
   Star,
   StickyNote,
   Trash2,
-  X,
 } from 'lucide-vue-next'
 import { isSettingsSection, store } from '@/store'
 import type { NavFilter, SettingsSection, TreeNode } from '@/store'
@@ -629,18 +628,12 @@ onBeforeUnmount(() => document.removeEventListener('pointerdown', onDocPointer))
              这一块以前是「有标签才显示」，工作区里的笔记一篇没打过标签时
              整块就消失了 —— 用户看到的结论是「这里没有标签功能」。
              现在常显，并且在标题旁给一个入口：标签是记在笔记上的，
-             所以新建＝给当前这篇打上这个标签。 -->
+             所以新建＝给当前这篇打上这个标签。
+             取消筛选不另设叉号按钮：点一下已选中的标签就是取消，
+             两下同一个位置完成选/清，界面也不会多出一个一闪一闪的 ×。 -->
         <section class="sec">
           <div class="sec-head">
             <span class="sec-title">标签</span>
-            <button
-              v-if="state.activeTag"
-              class="sec-add"
-              data-tip="清除筛选"
-              @click="store.setActiveTag(null)"
-            >
-              <X :size="14" :stroke-width="2.2" />
-            </button>
             <button class="sec-add" data-tip="新建标签" @click="startNewTag">
               <Plus :size="15" :stroke-width="2.2" />
             </button>

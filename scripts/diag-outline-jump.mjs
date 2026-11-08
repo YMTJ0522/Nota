@@ -44,7 +44,7 @@ await sleep(900)
 await evaluate(`document.querySelector('.col-tab[data-view="outline"]')?.click()`)
 await sleep(700)
 
-const count = JSON.parse(await evaluate(`JSON.stringify(document.querySelectorAll('.ov-item').length)`))
+const count = JSON.parse(await evaluate(`JSON.stringify(document.querySelectorAll('.ov-row').length)`))
 console.log('大纲条目数:', count)
 
 const SAMPLER = `
@@ -93,7 +93,7 @@ async function jump(idx) {
   await sleep(60)
   await evaluate(`
     (function () {
-      var it = document.querySelectorAll('.ov-item')[${idx}];
+      var it = document.querySelectorAll('.ov-row')[${idx}];
       if (it) it.click();
       void 0;
     })()
@@ -141,7 +141,7 @@ function analyze(s) {
 const targets = [2, 5, 9, 11, 7, 1, 11, 3]
 for (const idx of targets) {
   const want = JSON.parse(
-    await evaluate(`JSON.stringify(((document.querySelectorAll('.ov-item')[${idx}] || {}).textContent || '').trim().slice(0, 20))`),
+    await evaluate(`JSON.stringify(((document.querySelectorAll('.ov-row')[${idx}] || {}).textContent || '').trim().slice(0, 20))`),
   )
   const { s, land } = await jump(idx)
   console.log(`\n── 点第 ${idx} 项「${want}」`)

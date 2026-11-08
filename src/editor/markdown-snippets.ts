@@ -25,11 +25,6 @@ export const HORIZONTAL_RULE_CURSOR_OFFSET = 5;
 export const DETAILS_OPEN = "::: details []";
 export const DETAILS_CLOSE = ":::";
 
-/** Advanced code fence info string: language + title + line numbers + highlight.
-    标题给一个真名字而不是一对空引号：让它插出来当场就看得见效果，
-    人也就知道这一项跟普通「代码块」差在哪儿。 */
-export const ADVANCED_CODE_INFO = 'text title="示例脚本" line-numbers {2}'
-
 /* ── 图表模板 ──
    全部走 Mermaid：预览里由 preview-rich.ts 动态拉起 mermaid 渲染成 SVG。
    之所以做成「模板」而不是一个空的 ```mermaid 壳子：空壳得先去背
@@ -202,16 +197,9 @@ export interface CalloutType {
   color: string
 }
 
+/** 菜单里只给一种：提示。WARNING / DANGER 等类型不再从 UI 发放，
+    但预览仍然认识它们（见 preview-rich 的 CALLOUT_META）——
+    老文档里已经写出去的块不能因为菜单瘦身就渲染不出来。 */
 export const CALLOUT_TYPES: CalloutType[] = [
   { key: 'NOTE', label: '提示', color: 'var(--n-info)' },
-  { key: 'TIP', label: '技巧', color: 'var(--n-ok)' },
-  { key: 'IMPORTANT', label: '重要', color: 'var(--n-violet)' },
-  { key: 'WARNING', label: '警告', color: 'var(--n-warn)' },
-  { key: 'CAUTION', label: '注意', color: 'var(--n-warn)' },
-  { key: 'DANGER', label: '危险', color: 'var(--n-danger)' },
-  { key: 'SUCCESS', label: '成功', color: 'var(--n-ok)' },
-  { key: 'QUESTION', label: '疑问', color: 'var(--n-violet)' },
-  { key: 'EXAMPLE', label: '示例', color: 'var(--n-ok)' },
-  { key: 'QUOTE', label: '引用', color: 'var(--n-fg-dim)' },
-  { key: 'INFO', label: '说明', color: 'var(--n-info)' },
 ];

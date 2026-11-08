@@ -473,8 +473,10 @@ export function insertImageCommand(
   doc: string,
   selection: { from: number; to: number },
   url = "",
+  /** 弹窗里自己填的说明文字。不给就照旧拿选区内容当 alt */
+  altOverride?: string,
 ): MarkdownCommandResult {
-  const alt = escapeLinkLabel(doc.slice(selection.from, selection.to));
+  const alt = escapeLinkLabel(altOverride ?? doc.slice(selection.from, selection.to));
   const destination = url ? `<${escapeLinkDestination(url)}>` : "";
   const insert = `![${alt}](${destination})`;
   return {
