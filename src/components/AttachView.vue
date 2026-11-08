@@ -107,14 +107,9 @@ function insertMany(list: Attach[]) {
   toast(`已插入 ${list.length} 个附件`)
 }
 
+/** 单删也走确认弹窗：和批量删除同一条路（这里的删除直接从磁盘抹掉，没有回收站） */
 async function remove(a: Attach) {
-  if (!root.value) return
-  await window.api.attachDelete(root.value, a.rel)
-  items.value = items.value.filter((x) => x.rel !== a.rel)
-  sel.value = sel.value.filter((r) => r !== a.rel)
-  toast(`已删除 ${a.name}`)
-  // 附件数变了，侧栏那个小数字要跟着走
-  window.dispatchEvent(new CustomEvent('nota:library-changed'))
+  pending.value = { list: [a] }
 }
 
 /* ── 多选 ──
@@ -240,7 +235,7 @@ async function importFiles() {
   toast(added.length === 1 ? `已导入 ${added[0].name}` : `已导入 ${added.length} 个附件`)
 }
 
-/** 批量删除要过一道确认：这里的删除是直接从磁盘抹掉，没有回收站 */
+/** 删除（单个/批量）都要过一道确认：这里的删除是直接从磁盘抹掉，没有回收站 */
 const pending = ref<{ list: Attach[] } | null>(null)
 
 async function doRemoveBatch() {
@@ -253,7 +248,7 @@ async function doRemoveBatch() {
   const gone = new Set(list.map((a) => a.rel))
   items.value = items.value.filter((x) => !gone.has(x.rel))
   sel.value = sel.value.filter((r) => !gone.has(r))
-  toast(`已删除 ${list.length} 个附件`)
+  toast(list.length === 1 ? `已删除 ${list[0].name}` : `已删除 ${list.length} 个附件`)
   window.dispatchEvent(new CustomEvent('nota:library-changed'))
 }
 
@@ -387,7 +382,11 @@ defineExpose({ count: computed(() => items.value.length), reload: load })
     <ConfirmDialog
       :open="!!pending"
       title="删除附件？"
-      :message="`${pending?.list.length ?? 0} 个文件会被直接从磁盘删除，这里没有回收站。`"
+      :message="
+        (pending?.list.length ?? 0) === 1
+          ? `「${pending?.list[0]?.name ?? ''}」会被直接从磁盘删除，这里没有回收站。`
+          : `${pending?.list.length ?? 0} 个文件会被直接从磁盘删除，这里没有回收站。`
+      "
       confirm-text="删除"
       danger
       @confirm="doRemoveBatch"
