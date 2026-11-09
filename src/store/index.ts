@@ -3678,13 +3678,301 @@ function makeRecorder(msg: ChatMessage) {
   }
 }
 
+/* ── Agent 工具 ──
+   「一次 RAG 对话」和真正 agent 的分界线就在这里：模型不再只能被动接收
+   准备好的上下文，而是能自己申请调用工具——列笔记、读笔记、搜笔记、
+   改笔记、建笔记、联网检索——做一步、看结果、再决定下一步。
+
+   工具定义用 OpenAI function calling 格式，主流本地/云端服务都认；
+   服务不认的时候（有些旧版本地模型），整轮回退到老的普通对话流程。
+
+   写类工具（改/建）没有任何隐藏动作：每次调用都记进执行过程，
+   改了哪篇、替换了几处，面板上看得见。 */
+
+type AgentToolCall = { id: string; name: string; args: string }
+
+/** 一轮对话最多申请多少次工具。到顶就强制它总结，不许无限烧下去 */
+const AGENT_MAX_ROUNDS = 10
+
+/** read_note 一次最多带回多少字。再长就该让它分段读 */
+const AGENT_READ_LIMIT = 12000
+
+/** 工具名 → 面板步骤里的中文标签 */
+const TOOL_LABELS: Record<string, string> = {
+  list_notes: '列出笔记',
+  read_note: '读取笔记',
+  search_notes: '搜索笔记',
+  create_note: '新建笔记',
+  edit_note: '修改笔记',
+  web_search: '联网检索',
+}
+
+const AGENT_TOOL_DEFS = [
+  {
+    type: 'function',
+    function: {
+      name: 'list_notes',
+      description: '列出当前工作区里的笔记（名称与相对路径）。需要找笔记、了解库里有什么时用。',
+      parameters: {
+        type: 'object',
+        properties: { filter: { type: 'string', description: '可选，按名称过滤的关键词' } },
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'read_note',
+      description: '读一篇笔记的正文。不传 path 读的是用户当前打开的笔记。',
+      parameters: {
+        type: 'object',
+        properties: { path: { type: 'string', description: '笔记的相对路径；省略则读当前笔记' } },
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'search_notes',
+      description: '按关键词全文检索工作区里的所有笔记，返回命中文件与片段。',
+      parameters: {
+        type: 'object',
+        properties: { query: { type: 'string', description: '检索词' } },
+        required: ['query'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'create_note',
+      description: '在工作区里新建一篇笔记并写入 Markdown 内容。',
+      parameters: {
+        type: 'object',
+        properties: {
+          name: { type: 'string', description: '笔记名（不带 .md）' },
+          content: { type: 'string', description: '笔记的 Markdown 正文' },
+          dir: { type: 'string', description: '可选，目标文件夹的相对路径，默认工作区根目录' },
+        },
+        required: ['name'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'edit_note',
+      description:
+        '修改一篇笔记：把正文中的一段原文替换成另一段。改动前应先用 read_note 核对原文。不传 path 修改的是当前笔记。',
+      parameters: {
+        type: 'object',
+        properties: {
+          path: { type: 'string', description: '笔记的相对路径；省略则改当前笔记' },
+          find: { type: 'string', description: '要被替换的原文，必须与正文完全一致（含空格换行）' },
+          replace: { type: 'string', description: '替换成的内容，空串表示删除' },
+          replace_all: { type: 'boolean', description: '原文出现多次时是否全部替换；默认只允许命中一处' },
+        },
+        required: ['find', 'replace'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'web_search',
+      description: '联网检索资料。遇到时效性、事实性问题（价格、版本、新闻、日期）时用。',
+      parameters: {
+        type: 'object',
+        properties: { query: { type: 'string', description: '检索词，用最短的关键词' } },
+        required: ['query'],
+      },
+    },
+  },
+]
+
+/** 统一斜杠，路径比较才不会因为分隔符差异而失配 */
+function normSlash(p: string) {
+  return p.replace(/[\\/]+/g, '/')
+}
+
+function normKey(p: string) {
+  return normSlash(p).toLowerCase()
+}
+
+/** 路径是否落在工作区里面 */
+function insideRoot(p: string): boolean {
+  if (!state.root) return false
+  const nr = normSlash(state.root).replace(/\/$/, '')
+  const np = normSlash(p)
+  return np.toLowerCase() === nr.toLowerCase() || np.toLowerCase().startsWith(nr.toLowerCase() + '/')
+}
+
+/**
+ * 把模型给的路径落实成工作区内的绝对路径。
+ * 相对路径按工作区根目录拼；解析出来跑到工作区外的一律拒绝——
+ * agent 的手不能伸到库外面去。
+ */
+function resolveAgentPath(raw: string): string | null {
+  if (!state.root) return null
+  let p = raw.trim()
+  if (!p) return null
+  if (!insideRoot(p)) {
+    const root = state.root.replace(/[\\/]+$/, '')
+    p = root + '/' + p.replace(/^[\\/]+/, '')
+  }
+  return insideRoot(p) ? p : null
+}
+
+function parseToolArgs(args: string): Record<string, unknown> {
+  const v = JSON.parse(args || '{}')
+  return v && typeof v === 'object' ? (v as Record<string, unknown>) : {}
+}
+
+/** 面板步骤的 detail：把参数里最有信息量的几个值摆出来 */
+function toolStepDetail(tc: AgentToolCall): string {
+  try {
+    const a = parseToolArgs(tc.args)
+    const parts: string[] = []
+    for (const k of ['query', 'path', 'filter', 'name', 'dir', 'find']) {
+      const v = a[k]
+      if (typeof v === 'string' && v) {
+        parts.push(v.length > 30 ? `${v.slice(0, 30)}…` : v)
+        if (parts.length >= 2) break
+      }
+    }
+    return parts.join(' · ')
+  } catch {
+    return tc.args.slice(0, 40)
+  }
+}
+
+/**
+ * 执行一次工具调用，返回送回给模型的文本。
+ * 失败不抛异常出去（除非真出了程序错误）——把失败原因写成文字喂回去，
+ * 模型看到才知道该怎么纠正，用户面板上也能看到这一步是红的。
+ */
+async function execAgentTool(name: string, args: Record<string, unknown>, msg: ChatMessage): Promise<string> {
+  switch (name) {
+    case 'list_notes': {
+      const filter = String(args.filter ?? '').toLowerCase()
+      let files = allFiles.value
+      if (filter) files = files.filter((f) => normKey(f.path).includes(normKey(filter)))
+      if (!files.length) return filter ? `没有名称包含「${filter}」的笔记` : '工作区里还没有笔记'
+      const cap = 80
+      const lines = files
+        .slice(0, cap)
+        .map((f) => `- ${relOf(f.path)}${f.tags?.length ? `（标签：${f.tags.join('、')}）` : ''}`)
+      return `共 ${files.length} 篇${files.length > cap ? `，只列出前 ${cap} 篇` : ''}：\n${lines.join('\n')}`
+    }
+
+    case 'read_note': {
+      const raw = String(args.path ?? '').trim()
+      let path: string
+      let text: string
+      if (!raw || (state.activePath && normKey(raw) === normKey(state.activePath))) {
+        if (!state.activePath) return '当前没有打开任何笔记，也没给 path。先用 list_notes 找到目标'
+        path = state.activePath
+        text = state.draft
+      } else {
+        const resolved = resolveAgentPath(raw)
+        if (!resolved) return `路径不在工作区里：${raw}`
+        path = resolved
+        text = (await window.api.readNote(path)) ?? ''
+      }
+      const trimmed = text.trim()
+      if (!trimmed) return `「${relOf(path)}」是空的`
+      if (text.length > AGENT_READ_LIMIT)
+        return `「${relOf(path)}」正文太长，以下是前 ${AGENT_READ_LIMIT} 字：\n${text.slice(0, AGENT_READ_LIMIT)}\n（后文被截断；需要的话我可以按更小的段落给你）`
+      return `「${relOf(path)}」：\n${text}`
+    }
+
+    case 'search_notes': {
+      const query = String(args.query ?? '').trim()
+      if (!query) return '检索词是空的'
+      if (!state.root) return '没有打开的工作区，搜不了笔记'
+      const r = await window.api.aiNoteSearch(state.root, query, 15)
+      if (!r.ok || !r.hits?.length)
+        return `没有笔记包含「${query}」${r.error ? `（${r.error}）` : ''}`
+      return r.hits
+        .map((h) => `- ${relOf(h.path)}（命中 ${h.count} 次）\n    ${h.snippets.join('\n    ')}`)
+        .join('\n')
+    }
+
+    case 'create_note': {
+      const noteName = String(args.name ?? '').trim()
+      if (!noteName) return '没有给笔记名'
+      if (!state.root) return '没有打开的工作区，建不了笔记'
+      let dir = state.root
+      const rawDir = String(args.dir ?? '').trim()
+      if (rawDir) {
+        const resolved = resolveAgentPath(rawDir)
+        if (!resolved) return `目标文件夹不在工作区里：${rawDir}`
+        dir = resolved
+      }
+      const created = await window.api.createNote(dir, noteName)
+      const content = String(args.content ?? '')
+      if (content) await window.api.writeNote(created, content)
+      await refreshTree()
+      return `已创建「${relOf(created)}」${content ? `，写入了 ${content.length} 字` : '（空笔记）'}`
+    }
+
+    case 'edit_note': {
+      const find = String(args.find ?? '')
+      const replace = String(args.replace ?? '')
+      if (!find) return '没有给要替换的原文（find）'
+      const raw = String(args.path ?? '').trim()
+      const isCurrent = !raw || (state.activePath && normKey(raw) === normKey(state.activePath))
+      let path: string
+      let text: string
+      if (isCurrent) {
+        if (!state.activePath) return '当前没有打开任何笔记，也没给 path，改不了'
+        path = state.activePath
+        text = state.draft
+      } else {
+        const resolved = resolveAgentPath(raw)
+        if (!resolved) return `路径不在工作区里：${raw}`
+        path = resolved
+        text = (await window.api.readNote(path)) ?? ''
+      }
+      const total = text.split(find).length - 1
+      if (total === 0)
+        return `原文里没有找到这段文字（开头 60 字：${find.slice(0, 60)}）。先用 read_note 核对原文——find 必须与正文完全一致，含空格和换行。`
+      if (total > 1 && args.replace_all !== true)
+        return `这段文字出现了 ${total} 次。请把 find 扩得更长（保证只命中一处），或者把 replace_all 设为 true。`
+      const next = text.split(find).join(replace)
+      if (isCurrent) {
+        // 当前这篇走草稿：编辑器盯的是 draft，外面改完立刻能看见
+        state.draft = next
+        await saveNote({ silent: true })
+      } else {
+        await window.api.writeNote(path, next)
+      }
+      return `已替换 ${total} 处（「${relOf(path)}」）`
+    }
+
+    case 'web_search': {
+      const query = String(args.query ?? '').trim()
+      if (!query) return '检索词是空的'
+      const r = await window.api.aiWebSearch(query, 5)
+      if (!r.ok || !r.hits?.length)
+        return `没检索到结果${r.error ? `（${r.error}）` : ''}。请依据已有知识回答，并说明没有联网资料。`
+      if (msg) msg.sources = r.hits.map((h) => ({ title: h.title, url: h.url }))
+      return webContextBlock(r.hits)
+    }
+
+    default:
+      return `未知工具：${name}。可用的工具：${Object.keys(TOOL_LABELS).join('、')}`
+  }
+}
+
 /**
  * 发一轮对话。
  *
- * 比起「发一句、等、回一句」，这里做的是 agent 该做的事：
- * 先把这一轮要用的东西备齐（读哪篇笔记、怎么组织上下文），
- * 每一步都记在消息的执行过程里；模型的推理过程则一边生成一边流进面板。
- * 面板上看到的步骤和耗时都是真的，不是先摆好一排再逐条打勾。
+ * 这里现在跑的是完整的 agent 循环：模型每一步可以申请调工具（读哪篇
+ * 笔记、搜什么词、改哪一段、要不要联网），执行结果喂回去，它看完再决定
+ * 下一步，直到给出最终回答。面板上的执行过程记录每一次真实的工具调用，
+ * 思考与回答照旧一边生成一边往外流。
+ * 模型不支持工具调用时，整轮回退到老的普通对话流程。
  */
 async function sendChat(text: string, opts: { withNote?: boolean } = {}) {
   const q = text.trim()
@@ -3695,6 +3983,9 @@ async function sendChat(text: string, opts: { withNote?: boolean } = {}) {
   }
 
   pushChat('user', q)
+  // 这条用户消息自己的 id：history 里要把刚才push的它排除掉，
+  // 否则下面再显式补一次，模型会看到同一句话出现两遍
+  const userMsgId = state.chat[state.chat.length - 1]?.id ?? 0
   state.aiBusy = true
   state.aiStage = '准备上下文…'
 
@@ -3756,48 +4047,126 @@ async function sendChat(text: string, opts: { withNote?: boolean } = {}) {
         : '只带近 12 轮对话',
     )
 
-    // ②·b 联网检索。放在组织上下文之后：先知道笔记要说什么，才知道该怎么查
-    let webBlock = ''
-    const term = await decideSearch(q)
-    if (term) {
-      const hw = rec.begin('联网检索', term.length > 24 ? `${term.slice(0, 24)}…` : term)
-      state.aiStage = '正在联网检索…'
-      try {
-        const r = await window.api.aiWebSearch(term, 5)
-        if (r.ok && r.hits?.length) {
-          webBlock = webContextBlock(r.hits)
-          msg.sources = r.hits.map((h) => ({ title: h.title, url: h.url }))
-          rec.end(hw, `${r.engine ?? '搜索'} · ${r.hits.length} 条来源`)
-        } else {
-          // 没查到不算失败：这一轮照常回答，只是没有外部资料可依托
-          rec.end(hw, r.error ?? '没检索到结果，按已有知识回答')
-        }
-      } catch (e) {
-        rec.end(hw, String(e), 'fail')
-      }
-    }
+    // ②·b 组装对话。agent 模式下不再预先判断要不要联网——模型手里有
+    //    web_search，它自己决定什么时候查、查几次。只有服务不支持工具、
+    //    退回普通模式时，才走老的「先判一次」流程。
 
-    const system = [state.ai.system]
-    if (noteBlock) system.push(`以下是用户正在写的笔记，回答时参考它：\n${noteBlock}`)
-    if (webBlock) system.push(webBlock)
-    const systemText = system.join('\n\n')
+    const history = state.chat
+      .filter((m) => !m.error && m.id !== msg.id && m.id !== userMsgId && m.content)
+      .slice(-12) // 只带最近几轮，长对话不该把上下文无限撑大
+      .map((m) => ({ role: m.role, content: m.content }))
 
-    const messages = [
+    let systemText = [state.ai.system]
+      .concat(
+        noteBlock
+          ? [`以下是用户正在写的笔记的开头，回答时参考它；需要全文或后文就用 read_note 读：\n${noteBlock}`]
+          : [],
+      )
+      .join('\n\n')
+
+    type ConvoMsg = { role: string; content: string; tool_calls?: unknown; tool_call_id?: string }
+    let convo: ConvoMsg[] = [
       { role: 'system', content: systemText },
-      ...state.chat
-        .filter((m) => !m.error && m.id !== msg.id && m.content)
-        .slice(-12) // 只带最近几轮，长对话不该把上下文无限撑大
-        .map((m) => ({ role: m.role, content: m.content })),
+      ...history,
+      { role: 'user', content: q },
     ]
 
-    // ③ 调用模型
+    /** 调一次模型。带不带工具由 useTools 决定 */
+    const callModel = (messages: ConvoMsg[], useTools: boolean) =>
+      window.api.aiChat(
+        { ...state.ai, ...(useTools ? { tools: AGENT_TOOL_DEFS } : {}) },
+        messages,
+      )
+
+    // ③ agent 循环：申请工具 → 执行 → 结果送回 → 再问，直到给出不带工具申请的回答
     const h3 = rec.begin('调用模型', state.ai.model || '未配置模型')
     state.aiStage = '正在等模型…'
-    const r = await window.api.aiChat({ ...state.ai }, messages)
+    let useTools = true
+    let r = await callModel(convo, true)
+
+    /* 服务不认 tools 参数（旧版本地模型常见）：退回普通对话模式。
+       联网判断也跟着回到老流程——先判一次，需要就查一趟塞进上下文。 */
+    if (!r.ok && /tool|function/i.test(r.error ?? '')) {
+      useTools = false
+      const hf = rec.begin('模型不支持工具调用', '退回普通对话模式')
+      const term = await decideSearch(q)
+      if (term) {
+        try {
+          const sr = await window.api.aiWebSearch(term, 5)
+          if (sr.ok && sr.hits?.length) {
+            systemText = `${systemText}\n\n${webContextBlock(sr.hits)}`
+            msg.sources = sr.hits.map((h) => ({ title: h.title, url: h.url }))
+          }
+        } catch {
+          /* 查不到就算了，这轮照常回答 */
+        }
+      }
+      convo = [{ role: 'system', content: systemText }, ...history, { role: 'user', content: q }]
+      rec.end(hf, term ? '这轮按老流程带了一次联网资料' : '这轮按老流程直接回答')
+      state.aiStage = '正在等模型…'
+      r = await callModel(convo, false)
+    }
+
+    let toolUses = 0
+    for (let round = 0; r.ok && r.toolCalls?.length; round += 1) {
+      if (round >= AGENT_MAX_ROUNDS) {
+        // 到顶了不许再烧：把话说死，让它拿手里已有的信息收尾
+        convo = [
+          ...convo,
+          {
+            role: 'user',
+            content: '工具调用次数已达上限。不要再申请任何工具，直接根据已掌握的信息回答。',
+          },
+        ]
+        r = await callModel(convo, false)
+        break
+      }
+      // 模型这一轮的申请要原样记进对话：严格的实现要求 tool 结果能对上号
+      convo = [
+        ...convo,
+        {
+          role: 'assistant',
+          content: r.text ?? '',
+          tool_calls: r.toolCalls.map((t) => ({
+            id: t.id,
+            type: 'function',
+            function: { name: t.name, arguments: t.args },
+          })),
+        },
+      ]
+      for (const tc of r.toolCalls) {
+        toolUses += 1
+        state.aiStage = `正在${TOOL_LABELS[tc.name] ?? '执行工具'}…`
+        const ht = rec.begin(TOOL_LABELS[tc.name] ?? `工具 ${tc.name}`, toolStepDetail(tc))
+        let out: string
+        let args: Record<string, unknown> | null = null
+        try {
+          args = parseToolArgs(tc.args)
+        } catch {
+          /* 参数不是 JSON，走下面的失败分支 */
+        }
+        if (!args) {
+          out = '工具参数不是合法 JSON。重新申请调用，参数必须是一个完整的 JSON 对象。'
+          rec.end(ht, '参数解析失败', 'fail')
+        } else {
+          try {
+            out = await execAgentTool(tc.name, args, msg)
+            rec.end(ht, out.length > 90 ? `${out.slice(0, 90)}…` : out)
+          } catch (e) {
+            out = `工具执行出错：${String(e)}`
+            rec.end(ht, String(e), 'fail')
+          }
+        }
+        convo = [...convo, { role: 'tool', tool_call_id: tc.id, content: out }]
+      }
+      state.aiStage = '正在等模型…'
+      r = await callModel(convo, useTools)
+    }
+
     streaming = false
 
     if (r.ok) {
-      rec.end(h3, `${state.ai.model || '模型'} 已返回`)
+      rec.end(h3, `${toolUses ? `${toolUses} 次工具调用 · ` : ''}${state.ai.model || '模型'} 已返回`)
       // 非流式（或流被中间掐断）时，把兜底结果补上
       if (!msg.content) msg.content = r.text ?? ''
       if (!msg.thinking && r.reasoning) msg.thinking = r.reasoning
@@ -3806,13 +4175,10 @@ async function sendChat(text: string, opts: { withNote?: boolean } = {}) {
 
       /* 「答不出来就去网上找」。
        *
-       * 前置判断是猜的：它说不用查，结果问的偏偏是件新鲜事，模型就会老实
-       * 交代自己查不到、知识只到某个时间点、让用户自己去搜。这句话不该
-       * 原样当答案交给用户 —— 它把「我不知道」包装成了回答。
-       *
-       * 所以在这里补一次：拿原问题当检索词，把资料塞回去让它重答一遍。
-       * 只补一次。查完还说查不到，那就是真没有，再问也是烧钱。 */
-      if (!webBlock && looksUnsure(msg.content)) {
+       * agent 模式下模型自己手里有 web_search，真需要它会去用；走到这里的
+       * 补查只服务两种情况：普通模式的回退轮，或者模型嘴上说查不到、手里
+       * 却没动过工具。只补一次——查完还说查不到，那就是真没有。 */
+      if (!msg.sources?.length && looksUnsure(msg.content)) {
         const h5 = rec.begin('回答里说查不到', '补一次联网检索')
         state.aiStage = '先查一下…'
         try {
@@ -3823,7 +4189,8 @@ async function sendChat(text: string, opts: { withNote?: boolean } = {}) {
             const rr = await window.api.aiChat(
               { ...state.ai, system: `${systemText}\n\n${block}` },
               [
-                ...messages.slice(1),
+                ...history,
+                { role: 'user', content: q },
                 { role: 'assistant', content: msg.content },
                 {
                   role: 'user',

@@ -276,10 +276,40 @@ export function makeInject(opts = {}) {
     '    return [{ name: "新导入的资料.zip", rel: p }]; },' +
     '  aiTest: async () => ({ ok: true, models: ["llama3.2"] }),' +
     '  onAiDelta: (cb) => { window.__delta = cb },' +
-  '  aiChat: async () => {' +
+  /* aiChat 可编程：往 window.__aiScript 里排队每一轮的应答。
+     一项可以是 { deltas, text, reasoning, toolCalls, ok, error }；
+     队列空了走默认的两段文本。window.__aiCalls 记录每次调用的
+     （是否带 tools、消息表），脚本据此断言 agent 循环喂对了东西。 */
+  '  aiChat: async (cfg, msgs) => {' +
   '    const cb = window.__delta;' +
+  '    if (cfg.silent) return { ok: true, text: "SKIP" };' +
+  '    window.__aiCalls = (window.__aiCalls || []).concat([{ hasTools: !!(cfg.tools && cfg.tools.length), msgs }]);' +
+  '    const q = window.__aiScript && window.__aiScript.length ? window.__aiScript.shift() : null;' +
+  '    if (q) {' +
+  '      for (const t of q.deltas || []) { cb && cb(t); await window.__wait(30) }' +
+  '      const out = { ok: q.ok !== false, text: q.text ?? "" };' +
+  '      if (q.reasoning) out.reasoning = q.reasoning;' +
+  '      if (q.error) { out.ok = false; out.error = q.error }' +
+  '      if (q.toolCalls) out.toolCalls = q.toolCalls;' +
+  '      return out' +
+  '    }' +
   '    for (const t of ["把想法写下来，", "它们才会慢慢长成真正的样子。"]) { cb && cb({ text: t }); await window.__wait(80) }' +
   '    return { ok: true, text: "把想法写下来，它们才会慢慢长成真正的样子。" }' +
+  '  },' +
+  '  aiNoteSearch: async (root, query, limit) => {' +
+  '    const q = String(query).toLowerCase();' +
+  '    if (!q) return { ok: false, error: "检索词是空的" };' +
+  '    const hits = [];' +
+  '    for (const p of Object.keys(window.__notes)) {' +
+  '      const c = String(window.__notes[p]); const lower = c.toLowerCase();' +
+  '      let count = 0, from = 0; const snips = [];' +
+  '      for (;;) { const at = lower.indexOf(q, from); if (at < 0) break; count++;' +
+  '        if (snips.length < 2) { const s = Math.max(0, at - 40); snips.push(c.slice(s, at + q.length + 60).replace(/\\s+/g, " ")) }' +
+  '        from = at + q.length }' +
+  '      if (count) hits.push({ path: p, name: p.split("/").pop().replace(/\\.md$/i, ""), count, snippets: snips });' +
+  '      if (hits.length >= (limit || 20)) break' +
+  '    }' +
+  '    return { ok: true, hits }' +
   '  },' +
     '  appInfo: async () => ({ electron: "33.3.1", chrome: "130.0.6723.191", node: "20.18.0", platform: "win32", arch: "x64" }),' +
     '  minimize: async () => {}, toggleMaximize: async () => false, closeWindow: async () => {},' +

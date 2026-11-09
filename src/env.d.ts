@@ -63,9 +63,34 @@ interface NoteApi {
       /** 内部小请求（判断要不要联网）用：不推流、限制长度 */
       silent?: boolean
       maxTokens?: number
+      /** 工具定义（OpenAI function calling）。给了模型就能申请调工具 */
+      tools?: unknown[]
     },
-    messages: { role: string; content: string }[],
-  ): Promise<{ ok: boolean; text?: string; reasoning?: string; error?: string }>
+    messages: {
+      role: string
+      content: string
+      /** assistant 消息带上它申请的工具调用；tool 消息带上对应的 id */
+      tool_calls?: unknown
+      tool_call_id?: string
+    }[],
+  ): Promise<{
+    ok: boolean
+    text?: string
+    reasoning?: string
+    /** 模型申请的工具调用。args 是还没解析的 JSON 字符串 */
+    toolCalls?: { id: string; name: string; args: string }[]
+    error?: string
+  }>
+  /** 工作区全文检索：agent 的 search_notes 工具靠它 */
+  aiNoteSearch(
+    root: string,
+    query: string,
+    limit?: number,
+  ): Promise<{
+    ok: boolean
+    hits?: { path: string; name: string; count: number; snippets: string[] }[]
+    error?: string
+  }>
   /** 流式增量：回答和推理过程都是边生成边到 */
   onAiDelta(cb: (d: { text?: string; reasoning?: string; done?: boolean }) => void): void
   aiTest(cfg: {

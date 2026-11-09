@@ -800,8 +800,25 @@ interface AiRequest {
   silent?: boolean
   /** 限制输出长度。判断类请求只该回一行，不限制的话有的模型能写满一屏 */
   maxTokens?: number
+  /** 工具定义（OpenAI function calling 格式）。给了就透传给服务，
+      模型要不要用、用几次，由它在对话里自己决定 —— 这是 agent 循环的入口 */
+  tools?: unknown[]
 }
-type ChatMessage = { role: string; content: string }
+/* 带工具的对话里会出现两种扩展消息：assistant 带上它想调的 tool_calls，
+   tool 角色把执行结果送回去。content 对这两者都还在，只是不再是唯一字段 */
+type ChatMessage = {
+  role: string
+  content: string
+  tool_calls?: unknown[]
+  tool_call_id?: string
+}
+
+/** 模型申请的一次工具调用。args 还是 JSON 字符串，由调用方解析 */
+export interface AiToolCall {
+  id: string
+  name: string
+  args: string
+}
 
 /**
  * 归一化接口地址。
@@ -888,13 +905,44 @@ function pickReasoning(msg: Record<string, unknown> | undefined): string {
   return typeof v === 'string' ? v : ''
 }
 
+/**
+ * 把服务端吐出来的 tool_calls 规整成内部形状。
+ * 非流式路径是现成数组；流式路径那头的 delta 是碎片，另有累积逻辑，
+ * 走完才汇进来。字段不全或形状不对的条目直接丢弃——宁可少一次调用，
+ * 也不能拿一个没名字的工具去执行。
+ */
+function normalizeToolCalls(raw: unknown): AiToolCall[] {
+  if (!Array.isArray(raw)) return []
+  const out: AiToolCall[] = []
+  for (const item of raw) {
+    const it = item as {
+      id?: unknown
+      function?: { name?: unknown; arguments?: unknown }
+    }
+    const name = typeof it?.function?.name === 'string' ? it.function.name : ''
+    if (!name) continue
+    out.push({
+      id: typeof it?.id === 'string' && it.id ? it.id : `call_${out.length}`,
+      name,
+      args: typeof it?.function?.arguments === 'string' ? it.function.arguments : '{}',
+    })
+  }
+  return out
+}
+
 ipcMain.handle(
   'ai:chat',
   async (
     e,
     cfg: AiRequest,
     messages: ChatMessage[],
-  ): Promise<{ ok: boolean; text?: string; reasoning?: string; error?: string }> => {
+  ): Promise<{
+    ok: boolean
+    text?: string
+    reasoning?: string
+    toolCalls?: AiToolCall[]
+    error?: string
+  }> => {
     const controller = new AbortController()
     const timer = setTimeout(() => controller.abort(), AI_TIMEOUT_MS)
     const push = (p: AiPiece) => {
@@ -910,6 +958,7 @@ ipcMain.handle(
         messages: body,
         temperature: cfg.temperature,
         stream: true,
+        ...(cfg.tools?.length ? { tools: cfg.tools } : {}),
         ...(cfg.maxTokens && cfg.maxTokens > 0 ? { max_tokens: cfg.maxTokens } : {}),
       })
       /* 同一份请求按候选地址依次发：localhost / 127.0.0.1 哪一个通就用哪个。
@@ -941,15 +990,20 @@ ipcMain.handle(
       const ctype = res.headers.get('content-type') ?? ''
       if (!ctype.includes('event-stream')) {
         const data = (await res.json()) as {
-          choices?: { message?: { content?: string; reasoning_content?: string } }[]
+          choices?: {
+            message?: { content?: string; reasoning_content?: string; tool_calls?: unknown[] }
+          }[]
         }
         const msg = data?.choices?.[0]?.message
         const text = msg?.content
-        if (typeof text !== 'string') return { ok: false, error: '返回里没有文本内容' }
-        const reasoning = pickReasoning(msg as Record<string, unknown>)
+        const toolCalls = normalizeToolCalls(msg?.tool_calls)
+        // 只申请了工具没写正文也算有效返回，不能报「没有文本内容」
+        if (typeof text !== 'string' && !toolCalls.length)
+          return { ok: false, error: '返回里没有文本内容' }
+        const reasoning = pickReasoning(msg as Record<string, unknown> | undefined)
         if (reasoning) push({ reasoning })
-        push({ text })
-        return { ok: true, text, reasoning }
+        if (text) push({ text })
+        return { ok: true, text, reasoning, ...(toolCalls.length ? { toolCalls } : {}) }
       }
 
       /* SSE：一段一段读，攒出回答与推理。每读到一块就发给渲染进程，
@@ -960,6 +1014,8 @@ ipcMain.handle(
       let buf = ''
       let text = ''
       let reasoning = ''
+      /** 工具申请碎片按下标归堆；key 是服务端给的 index */
+      const toolAcc = new Map<number, { id: string; name: string; args: string }>()
       for (;;) {
         const { done, value } = await reader.read()
         if (done) break
@@ -991,14 +1047,43 @@ ipcMain.handle(
               text += c
               push({ text: c })
             }
+            /* 工具申请是以碎片流出来的：第一帧带 name 和 id，
+               arguments 分好几帧到。按下标累积，流结束后拼成完整调用 */
+            const tcs = d.tool_calls as
+              | {
+                  index?: number
+                  id?: string
+                  function?: { name?: string; arguments?: string }
+                }[]
+              | undefined
+            if (Array.isArray(tcs)) {
+              for (const tc of tcs) {
+                const idx = typeof tc.index === 'number' ? tc.index : 0
+                const acc = toolAcc.get(idx) ?? { id: '', name: '', args: '' }
+                if (tc.id) acc.id = tc.id
+                if (tc.function?.name) acc.name = tc.function.name
+                if (typeof tc.function?.arguments === 'string')
+                  acc.args += tc.function.arguments
+                toolAcc.set(idx, acc)
+              }
+            }
           }
         }
       }
       // 有些实现最后一帧不带空行收尾，把它也吃掉
       decoder.decode()
-      if (!text && !reasoning) return { ok: false, error: '流里没有收到任何内容' }
+      const toolCalls = normalizeToolCalls(
+        [...toolAcc.entries()].sort((a, b) => a[0] - b[0]).map(([, v]) => v),
+      )
+      if (!text && !reasoning && !toolCalls.length)
+        return { ok: false, error: '流里没有收到任何内容' }
       push({ done: true })
-      return { ok: true, text: text || '（模型只返回了思考过程）', reasoning }
+      return {
+        ok: true,
+        text: text || (toolCalls.length ? '' : '（模型只返回了思考过程）'),
+        reasoning,
+        ...(toolCalls.length ? { toolCalls } : {}),
+      }
     } catch (err) {
       return { ok: false, error: aiError(err) }
     } finally {
@@ -1502,6 +1587,88 @@ ipcMain.handle('note:create', async (_e, dir: string, name: string) => {
   await fs.writeFile(target, '', 'utf-8')
   return target
 })
+
+/* ── 工作区全文检索 ──
+   agent 的 search_notes 工具靠它：给一个词，把工作区里含这个词的
+   笔记连文件带片段一起交出来。渲染进程也能做（挨篇读），但笔记一多
+   就要跑几十趟 IPC；主进程一把扫完，顺手把片段截好。 */
+const SEARCH_SKIP_DIRS = new Set(['.nota', '.trash', 'attachments', 'node_modules'])
+const SEARCH_MAX_FILE = 2 * 1024 * 1024 // 超过 2MB 的 md 不扫，多半不是手写的
+
+async function scanNotes(root: string, out: string[]) {
+  let entries: import('fs').Dirent[]
+  try {
+    entries = await fs.readdir(root, { withFileTypes: true })
+  } catch {
+    return
+  }
+  for (const de of entries) {
+    if (out.length >= 2000) return // 大库别扫穿，够用了
+    const full = path.join(root, de.name)
+    if (de.isDirectory()) {
+      if (!SEARCH_SKIP_DIRS.has(de.name) && !de.name.startsWith('.')) await scanNotes(full, out)
+    } else if (de.isFile() && de.name.toLowerCase().endsWith('.md')) {
+      out.push(full)
+    }
+  }
+}
+
+ipcMain.handle(
+  'note:search',
+  async (
+    _e,
+    root: string,
+    query: string,
+    limit = 20,
+  ): Promise<{
+    ok: boolean
+    hits?: { path: string; name: string; count: number; snippets: string[] }[]
+    error?: string
+  }> => {
+    const q = String(query ?? '').trim().toLowerCase()
+    if (!q) return { ok: false, error: '检索词是空的' }
+    if (!root) return { ok: false, error: '没有打开的工作区' }
+    const files: string[] = []
+    await scanNotes(root, files)
+    const want = Math.max(1, Math.min(limit, 30))
+    const hits: { path: string; name: string; count: number; snippets: string[] }[] = []
+    for (const file of files) {
+      let text = ''
+      try {
+        const st = await fs.stat(file)
+        if (st.size > SEARCH_MAX_FILE) continue
+        text = await fs.readFile(file, 'utf-8')
+      } catch {
+        continue
+      }
+      const lower = text.toLowerCase()
+      let count = 0
+      let from = 0
+      const snippets: string[] = []
+      for (;;) {
+        const at = lower.indexOf(q, from)
+        if (at < 0) break
+        count++
+        if (snippets.length < 2) {
+          const start = Math.max(0, at - 40)
+          const end = Math.min(text.length, at + q.length + 60)
+          snippets.push((start > 0 ? '…' : '') + text.slice(start, end).replace(/\s+/g, ' ') + (end < text.length ? '…' : ''))
+        }
+        from = at + q.length
+      }
+      if (count > 0) {
+        hits.push({
+          path: file,
+          name: path.basename(file, '.md'),
+          count,
+          snippets,
+        })
+        if (hits.length >= want) break
+      }
+    }
+    return { ok: true, hits }
+  },
+)
 
 // 删除：移进工作区内的 .nota/trash，而不是系统回收站。
 // 系统回收站只认"文件名"，笔记恢复时不知道该放回哪个子目录，

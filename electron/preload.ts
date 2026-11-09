@@ -109,10 +109,17 @@ contextBridge.exposeInMainWorld('api', {
       /** 内部小请求（判断要不要联网）用：不推流、限制长度 */
       silent?: boolean
       maxTokens?: number
+      /** 工具定义（OpenAI function calling）。给了模型就能申请调工具 */
+      tools?: unknown[]
     },
     messages: { role: string; content: string }[],
-  ): Promise<{ ok: boolean; text?: string; reasoning?: string; error?: string }> =>
-    ipcRenderer.invoke('ai:chat', cfg, messages),
+  ): Promise<{
+    ok: boolean
+    text?: string
+    reasoning?: string
+    toolCalls?: { id: string; name: string; args: string }[]
+    error?: string
+  }> => ipcRenderer.invoke('ai:chat', cfg, messages),
   onAiDelta: (cb: (d: { text?: string; reasoning?: string; done?: boolean }) => void): void => {
     ipcRenderer.removeAllListeners('ai:delta')
     ipcRenderer.on('ai:delta', (_e, d) => cb(d))
@@ -154,6 +161,18 @@ contextBridge.exposeInMainWorld('api', {
     engine?: string
     error?: string
   }> => ipcRenderer.invoke('ai:websearch', query, limit),
+
+  /* 工作区全文检索：agent 的 search_notes 工具靠它。
+     扫描在主进程做，一次 IPC 拿回全部命中，不用挨篇读 */
+  aiNoteSearch: (
+    root: string,
+    query: string,
+    limit?: number,
+  ): Promise<{
+    ok: boolean
+    hits?: { path: string; name: string; count: number; snippets: string[] }[]
+    error?: string
+  }> => ipcRenderer.invoke('note:search', root, query, limit),
 
   /* 云同步（WebDAV）：测试连接 / 执行同步；进度事件一路推到界面 */
   syncTest: (cfg: {

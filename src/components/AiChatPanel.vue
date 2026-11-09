@@ -160,6 +160,10 @@ watch(
     if (last && last.role === 'assistant' && !last.error) {
       if (rendered.value[last.id] === undefined) await renderMessage(last.id, last.content)
       else if (state.aiBusy) scheduleRender(last.id, last.content)
+      /* 忙碌结束后内容又变了的收尾：直接排一次，不再攒批。
+         兜底回答、工具循环的最终结果都是「内容与 aiBusy=false 同一拍落地」，
+         上面的忙碌分支永远赶不上，漏排就是一片空白。 */
+      else await renderMessage(last.id, last.content)
     }
     await nextTick()
     if (pinned) scrollToEnd()
