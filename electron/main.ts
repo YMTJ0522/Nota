@@ -905,6 +905,19 @@ function pickReasoning(msg: Record<string, unknown> | undefined): string {
   return typeof v === 'string' ? v : ''
 }
 
+/** 有些网关不把正文当纯字符串发：要么是片段数组（content: [{type:'text',text:'…'},…]），
+    要么干脆走 delta.text 字段。这里统一把正文抽出来，别让模型的回答死在解析层 */
+function contentText(c: unknown): string {
+  if (typeof c === 'string') return c
+  if (Array.isArray(c)) {
+    return c
+      .map((p) => (typeof p === 'string' ? p : ((p as { text?: unknown } | null)?.text ?? '')))
+      .filter((t): t is string => typeof t === 'string' && t !== '')
+      .join('')
+  }
+  return ''
+}
+
 /**
  * 把服务端吐出来的 tool_calls 规整成内部形状。
  * 非流式路径是现成数组；流式路径那头的 delta 是碎片，另有累积逻辑，
@@ -991,15 +1004,14 @@ ipcMain.handle(
       if (!ctype.includes('event-stream')) {
         const data = (await res.json()) as {
           choices?: {
-            message?: { content?: string; reasoning_content?: string; tool_calls?: unknown[] }
+            message?: { content?: unknown; reasoning_content?: string; tool_calls?: unknown[] }
           }[]
         }
         const msg = data?.choices?.[0]?.message
-        const text = msg?.content
+        const text = contentText(msg?.content)
         const toolCalls = normalizeToolCalls(msg?.tool_calls)
         // 只申请了工具没写正文也算有效返回，不能报「没有文本内容」
-        if (typeof text !== 'string' && !toolCalls.length)
-          return { ok: false, error: '返回里没有文本内容' }
+        if (!text && !toolCalls.length) return { ok: false, error: '返回里没有文本内容' }
         const reasoning = pickReasoning(msg as Record<string, unknown> | undefined)
         if (reasoning) push({ reasoning })
         if (text) push({ text })
@@ -1042,10 +1054,17 @@ ipcMain.handle(
               reasoning += r
               push({ reasoning: r })
             }
-            const c = d.content
-            if (typeof c === 'string' && c) {
+            const c = contentText(d.content)
+            if (c) {
               text += c
               push({ text: c })
+            } else if (!('content' in d)) {
+              /* 个别网关不用 content 字段，正文直接挂在 delta.text 上 */
+              const t = d.text
+              if (typeof t === 'string' && t) {
+                text += t
+                push({ text: t })
+              }
             }
             /* 工具申请是以碎片流出来的：第一帧带 name 和 id，
                arguments 分好几帧到。按下标累积，流结束后拼成完整调用 */
@@ -1078,10 +1097,14 @@ ipcMain.handle(
       if (!text && !reasoning && !toolCalls.length)
         return { ok: false, error: '流里没有收到任何内容' }
       push({ done: true })
+      /* 有的思考型网关把真正的回答只放进 reasoning 字段、content 一路空着——
+         这时候把思考内容顶上当回答总比一句占位文案强。reasoning 置空是为了
+         别让回答和思考过程两处显示一模一样的东西 */
+      const fallbackText = text || (toolCalls.length ? '' : reasoning || '（模型没有返回正文）')
       return {
         ok: true,
-        text: text || (toolCalls.length ? '' : '（模型只返回了思考过程）'),
-        reasoning,
+        text: fallbackText,
+        reasoning: text ? reasoning : '',
         ...(toolCalls.length ? { toolCalls } : {}),
       }
     } catch (err) {
