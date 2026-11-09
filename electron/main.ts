@@ -983,7 +983,7 @@ ipcMain.handle(
       if (!res) throw lastErr ?? new Error('fetch failed')
       if (!res.ok) {
         const detail = await res.text().catch(() => '')
-        return { ok: false, error: `HTTP ${res.status} ${detail.slice(0, 200)}` }
+        return { ok: false, error: humanizeChatError(res.status, detail, cfg.model) }
       }
 
       // 有的服务不认 stream:true，原样回了完整 JSON —— 那就当非流式处理
@@ -1234,7 +1234,104 @@ ipcMain.handle(
 )
 
 /**
- * 测试连接：拉一次 /models，顺带把可用模型列出来方便直接挑。
+ * 把服务端返回的错误体翻成人话。
+ *
+ * Ollama 云端（ollama.com）的 402/404 是最常见的坑：测试连接只拉 /models
+ * 列表，列表能拉到不代表选中的模型能用——免费额度只含 gemma 系列，
+ * 别的模型要么要付费，要么名字根本不存在。原文是一坨英文 JSON，
+ * 用户看不出该干什么；这里按症状给出下一步该怎么做。
+ */
+function humanizeChatError(status: number, body: string, model: string): string {
+  let msg = body.slice(0, 200)
+  try {
+    const j = JSON.parse(body) as {
+      error?: { message?: string } | string
+      message?: string
+    }
+    const e = j.error
+    const parsed = typeof e === 'string' ? e : (e?.message ?? '') || j.message || ''
+    if (parsed) msg = parsed
+  } catch {
+    /* 不是 JSON 就用原文 */
+  }
+  const ollamaCloud = /ollama\.com/i.test(body) || /ollama\.com/i.test(msg)
+  if (status === 402 || (ollamaCloud && /free usage|upgrade for included/i.test(msg))) {
+    return (
+      '这个模型不在 Ollama 云端的免费额度里——免费额度只含 gemma 系列云模型。' +
+      '换个 gemma 模型（如 gemma3:12b）、在 ollama.com 充值，' +
+      '或改用本地部署的模型（ollama pull 拉下来，接口地址填 http://127.0.0.1:11434/v1）。'
+    )
+  }
+  if (status === 404 || /not[\s_-]?found/i.test(msg)) {
+    return (
+      `模型「${model || '未指定'}」在这个服务上不存在。` +
+      '点输入框左下角的模型名，从列表里选一个；' +
+      '本地 Ollama 先用 ollama pull 把模型拉下来（名字要带版本号，如 qwen2.5-coder:7b）。' +
+      (msg ? `服务原话：${msg.slice(0, 120)}` : '')
+    )
+  }
+  return `HTTP ${status}${msg ? `：${msg}` : ''}`
+}
+
+/**
+ * 用一次最小的对话请求验证模型真的能用。
+ *
+ * /models 列表拉得到只说明「服务活着」：Ollama 云端会把一堆要付费的、
+ * 不在免费额度里的模型都列出来，选了照样 402；手写的模型名拼错一个字符
+ * 就是 404。这就是用户碰到的「测试显示成功、聊天时报错」。
+ * max_tokens 给 1，验证只花一个 token 的钱。
+ */
+async function validateModel(base: string, cfg: AiRequest): Promise<{ ok: boolean; error?: string }> {
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), AI_TEST_TIMEOUT_MS)
+  try {
+    const urls = hostCandidates(base).map((b) => b + '/chat/completions')
+    let lastErr: { status: number; body: string } | null = null
+    for (const url of urls) {
+      try {
+        const res = await net.fetch(url, {
+          method: 'POST',
+          headers: aiHeaders(cfg.apiKey),
+          body: JSON.stringify({
+            model: cfg.model,
+            messages: [{ role: 'user', content: 'hi' }],
+            max_tokens: 1,
+            temperature: 0,
+            stream: false,
+          }),
+          signal: controller.signal,
+        })
+        if (res.ok) {
+          const text = await res.text().catch(() => '')
+          try {
+            const data = JSON.parse(text) as { choices?: unknown[] }
+            if (data.choices?.length) return { ok: true }
+          } catch {
+            /* 不是 JSON，走下面的宽容判断 */
+          }
+          // 有的服务无视 stream:false，照样回 SSE 流——只要它真回了话就算通过
+          if (text.includes('"delta"') || text.includes('data:')) return { ok: true }
+          lastErr = { status: res.status, body: '返回里没有 choices' }
+          continue
+        }
+        lastErr = { status: res.status, body: await res.text().catch(() => '') }
+      } catch (e) {
+        // 连不上和超时都算「这个地址不行」，换下一个候选
+        lastErr = { status: 0, body: aiError(e, AI_TEST_TIMEOUT_MS) }
+      }
+    }
+    if (!lastErr) return { ok: false, error: '验证请求发不出去' }
+    if (lastErr.status === 0) return { ok: false, error: lastErr.body }
+    return { ok: false, error: humanizeChatError(lastErr.status, lastErr.body, cfg.model) }
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
+/**
+ * 测试连接：拉一次 /models，顺带把可用模型列出来方便直接挑；
+ * 再用一次最小对话请求验证当前选中的模型真的能出话 ——
+ * 列表拉得到 ≠ 模型能用（Ollama 云端的免费额度、手写的错模型名都栽在这）。
  *
  * 不能只试一个地址就下结论 —— 用户报的「有时候测不成功」就是这个：
  * 预设/手写地址、带不带 /v1、localhost 与 127.0.0.1，任何一种组合都可能
@@ -1245,8 +1342,8 @@ ipcMain.handle(
   'ai:test',
   async (
     _e,
-    cfg: AiRequest,
-  ): Promise<{ ok: boolean; models?: string[]; error?: string }> => {
+    cfg: AiRequest & { checkModel?: boolean },
+  ): Promise<{ ok: boolean; models?: string[]; modelError?: string; error?: string }> => {
     const base = aiBase(cfg.baseUrl)
     if (!base) return { ok: false, error: '请先填接口地址' }
 
@@ -1279,7 +1376,13 @@ ipcMain.handle(
           // 有的服务回的是 models: [{name}]（Ollama 的原生 /api/tags 就是这样）
           ...(data?.models ?? []).map((m) => m.name ?? ''),
         ].filter(Boolean)
-        return { ok: true, models: [...new Set(models)] }
+        const unique = [...new Set(models)]
+        // 服务活着 ≠ 模型能用。设置里的「测试连接」补一发最小对话请求，
+        // 把当前选的模型也验了；验不过不算连接失败（列表和地址都是对的），
+        // 单独把模型的问题说出去。聊天面板拉模型列表时不验（那里只要列表）。
+        const modelError =
+          cfg.checkModel && cfg.model?.trim() ? (await validateModel(base, cfg)).error : undefined
+        return { ok: true, models: unique, ...(modelError ? { modelError } : {}) }
       } catch (e) {
         lastError = aiError(e, AI_TEST_TIMEOUT_MS)
       } finally {

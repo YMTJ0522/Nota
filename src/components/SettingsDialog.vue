@@ -375,11 +375,17 @@ async function testConnection() {
   testing.value = true
   testResult.value = null
   try {
-    const r = await window.api.aiTest({ ...state.ai })
+    const r = await window.api.aiTest({ ...state.ai, checkModel: true })
     testModels.value = r.models ?? []
-    testResult.value = r.ok
-      ? { ok: true, text: `连接成功${r.models?.length ? `，可用 ${r.models.length} 个模型` : ''}` }
-      : { ok: false, text: r.error ?? '连接失败' }
+    if (r.ok && r.modelError) {
+      // 服务连得上、列表也拉到了，但当前选的模型用不了——这才是
+      // 「测试成功、聊天报错」的元凶，必须在这时就亮出来，不能等聊天翻车
+      testResult.value = { ok: false, text: `连接成功，但当前模型有问题：${r.modelError}` }
+    } else {
+      testResult.value = r.ok
+        ? { ok: true, text: `连接成功${r.models?.length ? `，可用 ${r.models.length} 个模型` : ''}${state.ai.model ? `，模型 ${state.ai.model} 验证通过` : ''}` }
+        : { ok: false, text: r.error ?? '连接失败' }
+    }
     if (r.ok && r.models?.length) showModels.value = true
   } catch (e) {
     testResult.value = { ok: false, text: String(e) }

@@ -99,7 +99,9 @@ interface NoteApi {
     apiKey: string
     system: string
     temperature: number
-  }): Promise<{ ok: boolean; models?: string[]; error?: string }>
+    /** 顺带用一次最小对话请求验证当前模型真的能用（设置里的测试连接用） */
+    checkModel?: boolean
+  }): Promise<{ ok: boolean; models?: string[]; modelError?: string; error?: string }>
   /** 节点图标：相对路径 → 图标 id */
   iconsRead(root: string): Promise<Record<string, string>>
   iconsWrite(root: string, map: Record<string, string>): Promise<boolean>

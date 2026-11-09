@@ -274,7 +274,11 @@ export function makeInject(opts = {}) {
     '    const p = "attachments/新导入的资料.zip";' +
     '    window.__attach = window.__attach.concat([{ rel: p, name: "新导入的资料.zip", size: 4096, mtime: Date.now(), isVideo: false }]);' +
     '    return [{ name: "新导入的资料.zip", rel: p }]; },' +
-    '  aiTest: async () => ({ ok: true, models: ["llama3.2"] }),' +
+    '  aiTest: async (cfg) => {' +
+  '    window.__aiTestCalls = (window.__aiTestCalls || []).concat([{ checkModel: !!(cfg && cfg.checkModel) }]);' +
+  '    const r = window.__aiTestResult || { ok: true, models: ["llama3.2"] };' +
+  '    return JSON.parse(JSON.stringify(r))' +
+  '  },' +
     '  onAiDelta: (cb) => { window.__delta = cb },' +
   /* aiChat 可编程：往 window.__aiScript 里排队每一轮的应答。
      一项可以是 { deltas, text, reasoning, toolCalls, ok, error }；

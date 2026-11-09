@@ -228,13 +228,19 @@ const modelOptions = computed(() => {
   return out
 })
 
-/** 下拉底部那行说明。不给提示的话，列表空着看着像软件坏了 */
+/** 下拉底部那行说明。不给提示的话，列表空着看着像软件坏了。
+    当前模型不在服务列表里时点名警告——手写的名字拼错一个字符，
+    聊天时就是一发 404，在这里先拦住。 */
 const modelHint = computed(() => {
   if (modelLoading.value) return '正在读取模型列表…'
   if (modelsFetched.value) {
-    return serverModels.value.length
+    const base = serverModels.value.length
       ? `共 ${serverModels.value.length} 个模型 · ${matchedPreset.value?.label ?? state.ai.baseUrl}`
       : '这个接口没有返回模型列表，可直接手写模型名'
+    const m = state.ai.model
+    if (serverModels.value.length && m && !serverModels.value.includes(m))
+      return `${base}（当前模型「${m}」不在列表里，发消息会报错）`
+    return base
   }
   return '未读到模型列表，去设置里检查接口地址与密钥'
 })
