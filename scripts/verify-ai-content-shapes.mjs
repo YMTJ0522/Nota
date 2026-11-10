@@ -16,6 +16,7 @@ import { spawn } from 'node:child_process'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const EXE = [
+  path.join(root, 'release', 'win-unpacked-fresh3', 'Nota.exe'),
   path.join(root, 'release', 'win-unpacked-fresh2', 'Nota.exe'),
   path.join(root, 'release', 'win-unpacked-fresh', 'Nota.exe'),
   path.join(root, 'release', 'win-unpacked', 'Nota.exe'),
@@ -149,6 +150,7 @@ const chatModel = (model) =>
   check('C1 只回思考：思考内容顶上当回答', r.ok && r.text === '这段思考其实就是回答', JSON.stringify(r).slice(0, 140))
   check('C2 只回思考：不再报占位文案', !/只返回了思考过程/.test(r.text ?? ''), r.text)
   check('C3 只回思考：reasoning 置空避免双份显示', r.reasoning === '', r.reasoning)
+  check('C4 只回思考：带 textFromReasoning 标记供调用方补救', r.textFromReasoning === true, r.textFromReasoning)
 }
 
 app.kill()
