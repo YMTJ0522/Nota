@@ -79,6 +79,7 @@ interface NoteApi {
     reasoning?: string
     /** 模型申请的工具调用。args 是还没解析的 JSON 字符串 */
     toolCalls?: { id: string; name: string; args: string }[]
+    textFromReasoning?: boolean
     error?: string
   }>
   /** 工作区全文检索：agent 的 search_notes 工具靠它 */

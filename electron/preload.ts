@@ -118,6 +118,7 @@ contextBridge.exposeInMainWorld('api', {
     text?: string
     reasoning?: string
     toolCalls?: { id: string; name: string; args: string }[]
+    textFromReasoning?: boolean
     error?: string
   }> => ipcRenderer.invoke('ai:chat', cfg, messages),
   onAiDelta: (cb: (d: { text?: string; reasoning?: string; done?: boolean }) => void): void => {

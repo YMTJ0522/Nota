@@ -4056,13 +4056,20 @@ async function sendChat(text: string, opts: { withNote?: boolean } = {}) {
       .slice(-12) // 只带最近几轮，长对话不该把上下文无限撑大
       .map((m) => ({ role: m.role, content: m.content }))
 
-    let systemText = [state.ai.system]
-      .concat(
-        noteBlock
-          ? [`以下是用户正在写的笔记的开头，回答时参考它；需要全文或后文就用 read_note 读：\n${noteBlock}`]
-          : [],
-      )
-      .join('\n\n')
+    const agentRules = [
+      // agent 行为准则。写在系统提示词里而不是指望模型自觉：思考型模型
+      // （glm-5.x 这类）经常在思考里说「我需要联网查一下」，然后既不发
+      // 工具调用也不写正文——明说规矩能明显压住这个毛病
+      '你是一个能自主使用工具的 agent，手里有这些工具：',
+      '- list_notes / search_notes / read_note：查看、检索、阅读用户的笔记',
+      '- create_note / edit_note：新建笔记、精确修改笔记内容',
+      '- web_search(query)：联网搜索，拿最新的网页结果',
+      '规矩：涉及天气、新闻、价格、版本、赛果等时效性信息，或者你拿不准的事实，必须先调用 web_search 查证，基于检索结果回答；检索不到就明说没查到，不要凭记忆编造。需要动笔记时直接用对应工具，做完在回答里说明改了什么。',
+    ]
+    if (noteBlock) {
+      agentRules.push(`以下是用户正在写的笔记的开头，回答时参考它；需要全文或后文就用 read_note 读：\n${noteBlock}`)
+    }
+    let systemText = [state.ai.system, ...agentRules].join('\n\n')
 
     type ConvoMsg = { role: string; content: string; tool_calls?: unknown; tool_call_id?: string }
     let convo: ConvoMsg[] = [
@@ -4167,6 +4174,48 @@ async function sendChat(text: string, opts: { withNote?: boolean } = {}) {
 
     if (r.ok) {
       rec.end(h3, `${toolUses ? `${toolUses} 次工具调用 · ` : ''}${state.ai.model || '模型'} 已返回`)
+
+      /* 「光想不做」补救。思考型模型有时只吐 thinking（里面写着「我要联网搜」），
+         工具调用和正文都没发出来。agent 不能把思考当答案——替它把检索做了，
+         拿结果让它重答。只在 agent 模式、一次工具都没用过时补，防烧钱。 */
+      if (r.textFromReasoning && useTools && toolUses === 0 && !msg.sources?.length) {
+        const hr = rec.begin('模型只思考没回答', '自动补一次联网检索')
+        state.aiStage = '先查一下…'
+        try {
+          const term = q.replace(/[。？?！!]+$/g, '').slice(0, 60)
+          const sr = await window.api.aiWebSearch(term, 5)
+          if (sr.ok && sr.hits?.length) {
+            const block = webContextBlock(sr.hits)
+            msg.sources = sr.hits.map((h) => ({ title: h.title, url: h.url }))
+            state.aiStage = '正在等模型…'
+            const rr = await callModel(
+              [
+                ...convo,
+                // 它那段思考喂回去当上下文，让它知道自己刚才想干什么
+                { role: 'assistant', content: r.text ?? '' },
+                {
+                  role: 'user',
+                  content: `你刚才说需要联网检索但没给出回答。这是检索到的资料：\n\n${block}\n\n请直接根据资料回答用户最初的问题，正文里用 [序号] 标注依据，不要再输出思考过程。`,
+                },
+              ],
+              false,
+            )
+            if (rr.ok && rr.text?.trim()) {
+              r = rr
+              rec.end(hr, `已补查 ${sr.hits.length} 条来源并重答`)
+            } else {
+              // 重答失败就保留思考原文：聊胜于无
+              rec.end(hr, rr.error ?? '重答没返回内容，保留思考原文', 'fail')
+            }
+          } else {
+            rec.end(hr, sr.error ?? '没检索到结果，保留思考原文')
+          }
+        } catch (e) {
+          rec.end(hr, String(e), 'fail')
+        }
+        state.aiStage = ''
+      }
+
       // 非流式（或流被中间掐断）时，把兜底结果补上
       if (!msg.content) msg.content = r.text ?? ''
       if (!msg.thinking && r.reasoning) msg.thinking = r.reasoning

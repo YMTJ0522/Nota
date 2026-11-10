@@ -231,6 +231,28 @@ await waitDone(2)
   check('F2 这一步在执行过程里标成失败', steps.some((s) => s.fail), '')
 }
 
+/* ── G. 模型只思考没动手 → 自动补联网检索并重答 ── */
+await resetAI([
+  { text: '', reasoning: '用户在问天气，我需要联网搜索。', textFromReasoning: true },
+  { text: '根据检索结果：阿克苏今天晴，15 度。' },
+])
+await ask('今日阿克苏天气如何')
+await waitDone(2)
+{
+  const calls = await aiCalls()
+  const searched = await evaluate(`(window.__searched ?? []).join(',')`)
+  const txt = await lastBubble()
+  const steps = await lastSteps()
+  check('G1 检测到只思考后自动补了检索', searched.includes('阿克苏'), searched)
+  check(
+    'G2 补救重问不带工具定义',
+    calls.length === 2 && calls[0].hasTools === true && calls[1].hasTools === false,
+    `calls=${calls.length}`,
+  )
+  check('G3 回答是重答的正文而不是思考原文', txt.includes('阿克苏今天晴') && !txt.includes('我需要联网搜索'), txt.slice(0, 40))
+  check('G4 执行过程记了「模型只思考没回答」', steps.some((s) => s.label.includes('只思考')), '')
+}
+
 console.log(fail === 0 ? '\n✅ 全部通过' : `\n❌ ${fail} 项失败`)
 await close()
 process.exit(fail ? 1 : 0)

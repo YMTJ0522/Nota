@@ -291,9 +291,10 @@ export function makeInject(opts = {}) {
   '    const q = window.__aiScript && window.__aiScript.length ? window.__aiScript.shift() : null;' +
   '    if (q) {' +
   '      for (const t of q.deltas || []) { cb && cb(t); await window.__wait(30) }' +
-  '      const out = { ok: q.ok !== false, text: q.text ?? "" };' +
-  '      if (q.reasoning) out.reasoning = q.reasoning;' +
-  '      if (q.error) { out.ok = false; out.error = q.error }' +
+    '      const out = { ok: q.ok !== false, text: q.text ?? "" };' +
+    '      if (q.reasoning) out.reasoning = q.reasoning;' +
+    '      if (q.textFromReasoning) out.textFromReasoning = true;' +
+    '      if (q.error) { out.ok = false; out.error = q.error }' +
   '      if (q.toolCalls) out.toolCalls = q.toolCalls;' +
   '      return out' +
   '    }' +

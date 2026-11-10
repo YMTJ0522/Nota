@@ -954,6 +954,8 @@ ipcMain.handle(
     text?: string
     reasoning?: string
     toolCalls?: AiToolCall[]
+    /** 正文为空、用思考内容顶上当回答时置位——调用方可能想拿它做补救 */
+    textFromReasoning?: boolean
     error?: string
   }> => {
     const controller = new AbortController()
@@ -1106,6 +1108,7 @@ ipcMain.handle(
         text: fallbackText,
         reasoning: text ? reasoning : '',
         ...(toolCalls.length ? { toolCalls } : {}),
+        ...(text || toolCalls.length ? {} : { textFromReasoning: true }),
       }
     } catch (err) {
       return { ok: false, error: aiError(err) }
