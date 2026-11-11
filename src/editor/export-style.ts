@@ -18,7 +18,7 @@
 import katexCss from 'katex/dist/katex.min.css?raw'
 
 /** 字体文件名（去掉扩展名）→ base64 data URI */
-const FONT_URLS = import.meta.glob('/node_modules/katex/dist/fonts/*.woff2', {
+const FONT_URLS = import.meta.glob('../../../node_modules/katex/dist/fonts/*.woff2', {
   query: '?inline',
   eager: true,
   import: 'default',

@@ -76,7 +76,9 @@ def run(cli, cmd, timeout=600, quiet=False):
 
 def put(sftp, local, remote, label='', progress=False):
     """上传。文本文件顺手把 CRLF 抹掉 —— Windows 上写出来的 .sh 到 Linux 上
-    会把 `set -euo pipefail` 读成非法参数（`pipefail\\r`），脚本第一步就挂。"""
+    会把 `set -euo pipefail` 读成非法参数（`pipefail\\r`），脚本第一步就挂。
+    支持断点续传：远端已有同名文件且比本地小，就从断点接着传，免得 70MB 的包
+    每次断线都从头来。"""
     data = open(local, 'rb').read()
     if local.endswith(('.sh', '.py', '.json', '.txt')) and b'\r\n' in data:
         data = data.replace(b'\r\n', b'\n')
@@ -87,10 +89,22 @@ def put(sftp, local, remote, label='', progress=False):
     if label:
         print(f'上传 {label}' + (f'（{len(data) / 1048576:.1f} MB）' if progress else '') + ' …')
 
-    with sftp.file(remote, 'wb') as f:
+    # 断点续传：远端已有且不比本地大 → 接着传；否则重传
+    offset = 0
+    mode = 'wb'
+    try:
+        rsize = sftp.stat(remote).st_size
+        if 0 < rsize <= len(data):
+            offset = rsize
+            mode = 'ab'
+            print(f'  远端已有 {rsize / 1048576:.1f} MB，从断点续传', flush=True)
+    except IOError:
+        pass
+
+    with sftp.file(remote, mode) as f:
         chunk = 256 * 1024
         total = len(data)
-        sent = 0
+        sent = offset
         while sent < total:
             f.write(data[sent:sent + chunk])
             sent += chunk
