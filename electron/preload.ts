@@ -1,6 +1,21 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
 
 /**
+ * agent 引擎推过来的事件。和 electron/agentSdk.ts 的 AgentEvent 一一对应——
+ * preload 走的是独立编译，不能直接 import 主进程模块，所以这边重述一遍。
+ * 改字段时两边一起改（scripts/verify-agent-sdk.mjs 会比对）。
+ */
+export type AgentStreamEvent =
+  | { t: 'stage'; text: string }
+  | { t: 'text'; text: string }
+  | { t: 'reasoning'; text: string }
+  | { t: 'tool-start'; id: string; name: string; detail: string }
+  | { t: 'tool-end'; id: string; ok: boolean; detail: string }
+  | { t: 'sources'; hits: { title: string; url: string }[] }
+  | { t: 'draft'; text: string }
+
+
+/**
  * 拖进来的 File 在 Electron 里是有真实磁盘路径的。
  * 单独暴露一个取路径的方法（而不是把整个 webUtils 递过去）——
  * 渲染进程只能问「这个文件的路径是什么」，拿不到别的。
@@ -125,6 +140,38 @@ contextBridge.exposeInMainWorld('api', {
     ipcRenderer.removeAllListeners('ai:delta')
     ipcRenderer.on('ai:delta', (_e, d) => cb(d))
   },
+
+  /* agent 引擎（AI SDK）。过程和结果都走事件：先 onAiAgentEvent 一条条收，
+     最后 aiAgent 的 Promise 带回过整轮的正文与来源。 */
+  aiAgent: (
+    cfg: {
+      baseUrl: string
+      model: string
+      apiKey: string
+      system: string
+      temperature: number
+      maxTokens?: number
+    },
+    req: {
+      messages: { role: 'user' | 'assistant'; content: string }[]
+      root?: string | null
+      activePath?: string | null
+      draft?: string
+      maxSteps?: number
+    },
+  ): Promise<{
+    ok: boolean
+    text?: string
+    reasoning?: string
+    sources?: { title: string; url: string }[]
+    toolUses?: number
+    draft?: string
+    error?: string
+  }> => ipcRenderer.invoke('ai:agent', cfg, req),
+  onAiAgentEvent: (cb: (ev: AgentStreamEvent) => void): void => {
+    ipcRenderer.removeAllListeners('ai:agent-event')
+    ipcRenderer.on('ai:agent-event', (_e, ev) => cb(ev))
+  },
   aiTest: (cfg: {
     baseUrl: string
     model: string
@@ -164,6 +211,12 @@ contextBridge.exposeInMainWorld('api', {
     engine?: string
     error?: string
   }> => ipcRenderer.invoke('ai:websearch', query, limit),
+
+  /* 实时天气：搜索页抓不到预报（Bing 只回城市百科），单独走天气源 */
+  aiWeather: (
+    place: string,
+  ): Promise<{ ok: boolean; place?: string; text?: string; error?: string }> =>
+    ipcRenderer.invoke('ai:weather', place),
 
   /* 工作区全文检索：agent 的 search_notes 工具靠它。
      扫描在主进程做，一次 IPC 拿回全部命中，不用挨篇读 */

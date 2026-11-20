@@ -1,5 +1,18 @@
 /// <reference types="vite/client" />
 
+/**
+ * agent 引擎推过来的事件。和 electron/agentSdk.ts 的 AgentEvent 同构：
+ * 渲染层照着它画步骤条、拼正文、挂来源。
+ */
+type AgentStreamEvent =
+  | { t: 'stage'; text: string }
+  | { t: 'text'; text: string }
+  | { t: 'reasoning'; text: string }
+  | { t: 'tool-start'; id: string; name: string; detail: string }
+  | { t: 'tool-end'; id: string; ok: boolean; detail: string }
+  | { t: 'sources'; hits: { title: string; url: string }[] }
+  | { t: 'draft'; text: string }
+
 declare module '*.vue' {
   import type { DefineComponent } from 'vue'
   const component: DefineComponent<{}, {}, any>
@@ -94,6 +107,33 @@ interface NoteApi {
   }>
   /** 流式增量：回答和推理过程都是边生成边到 */
   onAiDelta(cb: (d: { text?: string; reasoning?: string; done?: boolean }) => void): void
+  /** agent 引擎（AI SDK）。过程走事件，结果走 Promise */
+  aiAgent(
+    cfg: {
+      baseUrl: string
+      model: string
+      apiKey: string
+      system: string
+      temperature: number
+      maxTokens?: number
+    },
+    req: {
+      messages: { role: 'user' | 'assistant'; content: string }[]
+      root?: string | null
+      activePath?: string | null
+      draft?: string
+      maxSteps?: number
+    },
+  ): Promise<{
+    ok: boolean
+    text?: string
+    reasoning?: string
+    sources?: { title: string; url: string }[]
+    toolUses?: number
+    draft?: string
+    error?: string
+  }>
+  onAiAgentEvent(cb: (ev: AgentStreamEvent) => void): void
   aiTest(cfg: {
     baseUrl: string
     model: string
@@ -124,6 +164,10 @@ interface NoteApi {
     engine?: string
     error?: string
   }>
+  /** 实时天气：按城市名取实况与未来三天（搜索页抓不到预报） */
+  aiWeather(
+    place: string,
+  ): Promise<{ ok: boolean; place?: string; text?: string; error?: string }>
   /** 云同步（WebDAV）：测试连接 / 执行同步 */
   syncTest(cfg: {
     url: string

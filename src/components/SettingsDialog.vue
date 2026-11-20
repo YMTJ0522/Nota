@@ -36,6 +36,7 @@ import {
   RefreshCw,
 } from 'lucide-vue-next'
 import { ACCENTS, ACCENT_SWATCH, AI_DEFAULTS, AI_PRESETS, BG_STYLES, DENSITY, MEASURES, store } from '@/store'
+import { KEY_SHAPE, keyLooksLikeModel } from '@/store/keyShape'
 import appIcon from '@/assets/app-icon.png'
 import type { AccentName, BgStyle, Density, MeasureName, SettingsSection, ViewMode } from '@/store'
 
@@ -319,6 +320,27 @@ const isCustom = computed(() => presetCustom.value || !presetIndex.value)
 const presetLabel = computed(() =>
   isCustom.value ? '自定义…' : AI_PRESETS[presetIndex.value - 1].label,
 )
+
+/**
+ * 当前这套服务的「密钥该从哪儿拿」。
+ *
+ * 预设里带控制台地址的才给链接——本地模型（Ollama / LM Studio）没有密钥，
+ * 这里就该说「留空」，而不是给一个莫名其妙的注册入口。手写成自定义地址时
+ * 认不出是哪家，什么都不显示，免得指错地方。
+ */
+const keyHelp = computed(() => {
+  const p = presetIndex.value ? AI_PRESETS[presetIndex.value - 1] : null
+  if (!p) return null
+  if (!p.console) return { url: '', shape: '' }
+  return { url: p.console, shape: KEY_SHAPE[p.baseUrl] ?? '服务商控制台里的那串密钥' }
+})
+
+/** 密钥框里像是模型名——当场提示，不用等提问时撞 401 */
+const keySuspect = computed(() => {
+  const k = state.ai.apiKey
+  if (!keyLooksLikeModel(k)) return ''
+  return `这看起来是模型名，不是密钥。模型名该填下面的「模型名称」，密钥在服务商控制台创建${keyHelp.value?.shape ? `，形如 ${keyHelp.value.shape}` : ''}。`
+})
 
 /** 「自定义…」是一个动作 + 一枚指示灯：先把光标送进接口地址那一格（接着打字就行），
     同时把下拉文字切成「自定义」。匹配不上任何预设时那一行本来就会打勾。 */
@@ -972,7 +994,16 @@ async function changeWorkspace() {
                 <div class="st-row">
                   <div class="st-label">
                     <span class="st-name">API Key</span>
-                    <span class="st-desc">存在本机 localStorage，不会随笔记上传；本地模型可留空</span>
+                    <span v-if="keyHelp?.url" class="st-desc">
+                      去
+                      <a class="st-link" :href="keyHelp.url" target="_blank" rel="noreferrer">
+                        服务商控制台
+                      </a>
+                      创建（形如 {{ keyHelp.shape }}）
+                    </span>
+                    <span v-else class="st-desc">
+                      存在本机，不会随笔记上传；本地模型不需要密钥，留空即可
+                    </span>
                   </div>
                   <div class="st-field">
                     <KeyRound class="st-field-ico" :size="13" :stroke-width="1.9" />
@@ -991,6 +1022,12 @@ async function changeWorkspace() {
                       <EyeOff v-if="showKey" :size="13" :stroke-width="1.9" />
                       <Eye v-else :size="13" :stroke-width="1.9" />
                     </button>
+                  </div>
+                </div>
+
+                <div v-if="keySuspect" class="st-row st-row-warn">
+                  <div class="st-label">
+                    <span class="st-warn">{{ keySuspect }}</span>
                   </div>
                 </div>
 
@@ -1565,6 +1602,31 @@ async function changeWorkspace() {
   font-size: 11.5px;
   color: var(--n-fg-faint);
   line-height: 1.5;
+}
+
+/* 「去控制台拿密钥」——低调的下划线链接，别做成按钮抢注意力 */
+.st-link {
+  color: var(--n-accent);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  text-decoration-thickness: 1px;
+  cursor: pointer;
+}
+.st-link:hover {
+  opacity: 0.75;
+}
+
+/* 粘错格子的当场提示：占满整行，不挤在标签栏里变成两三行细碎文字 */
+.st-row-warn {
+  grid-template-columns: 1fr;
+  padding: 6px 0 10px;
+  border-bottom: none;
+  margin-top: -6px;
+}
+.st-warn {
+  font-size: 11.5px;
+  line-height: 1.6;
+  color: var(--n-danger);
 }
 
 .st-value {

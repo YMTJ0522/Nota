@@ -98,6 +98,8 @@ const activeSessionTitle = computed(
    流式回答时长一直在变，不能每来一个字就重排一遍 Markdown 再高亮一次。
    攒 140ms 渲染一次，视觉上还是「一个字一个字往外冒」。 */
 let renderTimer: ReturnType<typeof setTimeout> | null = null
+/** 待渲染的是哪条消息。攒批期间 id 只会是同一个，但记住它比闭包稳 */
+let renderTarget = 0
 
 async function renderMessage(id: number, content: string) {
   try {
@@ -109,11 +111,17 @@ async function renderMessage(id: number, content: string) {
 }
 
 function scheduleRender(id: number, content: string) {
+  renderTarget = id
   if (renderTimer) return
   renderTimer = setTimeout(() => {
     renderTimer = null
     void (async () => {
-      await renderMessage(id, content)
+      /* 取**此刻**的正文，不要用闭包里带进来的那份。
+         攒批窗口是 140ms，期间来的字会被上面的 early return 挡掉——用旧
+         content 渲染，最后那几段就永远画不出来（实测踩过一次：一条回答
+         分两段到，气泡里只显示了第一段，而 store 里的 content 是完整的）。 */
+      const cur = state.chat.find((m) => m.id === renderTarget)
+      await renderMessage(renderTarget || id, cur?.content ?? content)
       await nextTick()
       if (pinned) scrollToEnd()
     })()
@@ -695,10 +703,6 @@ const thinkingLive = computed(
             <FileText :size="11" :stroke-width="1.9" />
             <span class="ae-fact-v">{{ state.aiWithNote ? noteLabel : '不带笔记' }}</span>
           </span>
-          <span class="ae-fact on" title="需要时会自己去查资料，不用手动开">
-            <Globe :size="11" :stroke-width="1.9" />
-            <span class="ae-fact-v">联网</span>
-          </span>
           <button class="ae-fact link" title="改模型、密钥、系统提示词" @click="openAiSettings">
             <Settings :size="11" :stroke-width="1.9" />
             <span class="ae-fact-v">设置</span>
@@ -879,14 +883,6 @@ const thinkingLive = computed(
             </button>
           </div>
         </div>
-
-        <!-- 联网不再是开关：每一轮自己判断要不要查。
-             这里只留一枚静态标示，告诉人「它是能上网的」，不需要他去按。
-             所以它不该长得像按钮 —— 没有底色、没有 hover、光标是箭头，
-             按不动的东西别给按得动的反馈。 -->
-        <span class="web-ind" title="需要时会自动联网查资料，不用手动开">
-          <Globe :size="13" :stroke-width="1.9" />
-        </span>
 
         <button class="send" :class="{ off: !canSend }" :disabled="!canSend" title="发送 (Enter)" @click="send">
           <ArrowUp :size="15" :stroke-width="2.2" />
@@ -1276,7 +1272,7 @@ const thinkingLive = computed(
   color: var(--n-fg-dim);
 }
 
-/* 状态行：模型 / 上下文 / 联网 / 设置。都是「影响它怎么答」的东西 */
+/* 状态行：模型 / 上下文 / 设置。都是「影响它怎么答」的东西 */
 .ae-facts {
   display: flex;
   flex-wrap: wrap;
@@ -1303,13 +1299,6 @@ const thinkingLive = computed(
   flex: none;
   fill: none;
   stroke: currentColor;
-}
-
-/* 联网开着时它是「这一轮会多一步」的信号，给强调色 */
-.ae-fact.on {
-  color: var(--n-accent);
-  border-color: color-mix(in srgb, var(--n-accent) 40%, transparent);
-  background: color-mix(in srgb, var(--n-accent) 10%, transparent);
 }
 
 .ae-fact.link {
@@ -1838,6 +1827,9 @@ const thinkingLive = computed(
 .send {
   padding: 0;
   flex: none;
+  /* 钉到右下角：模型名长短不一（gpt-4o 与本地那一长串），按钮跟在它
+     后面跑的话，每换一次模型就横跳一次 */
+  margin-left: auto;
   width: 28px;
   height: 28px;
   display: inline-flex;
@@ -1856,30 +1848,6 @@ const thinkingLive = computed(
 
 .send.off {
   opacity: 0.34;
-}
-
-/* 联网标示：一枚不能按的图标。
-   它只是「这台机器上的 AI 能出去查」的一个事实陈述，按不动就不能有按得动
-   的样子 —— 没有底、没有 hover、光标保持箭头。真正会不会查由每一轮自己
-   判断，查到了会在回答下面列出「联网来源 N 条」。 */
-.web-ind {
-  flex: none;
-  /* 把「联网标示 + 发送」当成一组钉到右下角：模型名长短不一（gpt-4o 与
-     本地那一长串），按钮跟在它后面跑的话，每换一次模型就横跳一次 ——
-     这个面板里唯一该固定住的就是「发送在右下角」。 */
-  margin-left: auto;
-  width: 20px;
-  height: 20px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  color: color-mix(in srgb, var(--n-accent) 62%, var(--n-fg-faint));
-  cursor: default;
-}
-
-.web-ind svg {
-  fill: none;
-  stroke: currentColor;
 }
 
 .ag-model {

@@ -253,10 +253,18 @@ export function makeInject(opts = {}) {
     /* 联网检索：给两条假结果 */
     '  aiWebSearch: async (q, limit) => {' +
     '    window.__searched = (window.__searched || []).concat(q);' +
+    /* __webByQuery 按检索词给不同结果：验多路合并与词典垃圾过滤时用 */
+    '    const byQuery = window.__webByQuery && window.__webByQuery[q];' +
+    '    if (byQuery) return { ok: true, engine: "test", hits: byQuery };' +
     '    return { ok: true, engine: "test", hits: [' +
     '      { title: "检索到的第一篇文章", url: "https://example.com/a", snippet: "这是摘要一。" },' +
     '      { title: "检索到的第二篇文章", url: "https://example.com/b", snippet: "这是摘要二。" },' +
     '    ] } },' +
+    '  aiWeather: async (place) => {' +
+    '    window.__weatherAsked = (window.__weatherAsked || []).concat(place);' +
+    /* __weatherFail 模拟天气源挂掉，验「拿不到就退回普通检索」 */
+    '    if (window.__weatherFail) return { ok: false, error: "天气服务不可达" };' +
+    '    return { ok: true, place, text: "地点：" + place + "\\n实况：晴，12℃（体感 10℃）\\n今天（2026-11-12）：晴，3~15℃，降水概率 0%" } },' +
     '  historySave: async (ws, f, c) => {' +
     '    const l = (window.__hist[f] = window.__hist[f] || []);' +
     '    const stamp = new Date(Date.now() + l.length * 60000).toISOString();' +
@@ -286,11 +294,18 @@ export function makeInject(opts = {}) {
      （是否带 tools、消息表），脚本据此断言 agent 循环喂对了东西。 */
   '  aiChat: async (cfg, msgs) => {' +
   '    const cb = window.__delta;' +
-  '    if (cfg.silent) return { ok: true, text: "SKIP" };' +
+  /* 静默请求（检索词改写 / 要不要联网的那种判断）：默认回 SKIP =「这轮不查」。
+     __rewriteQueue 里排了值就依次取，用来验「改写 → 多路搜索」这条链 */
+  '    if (cfg.silent) {' +
+  '      window.__silentCalls = (window.__silentCalls || []).concat([{ system: cfg.system, user: (msgs[msgs.length - 1] || {}).content }]);' +
+  '      const rw = window.__rewriteQueue && window.__rewriteQueue.length ? window.__rewriteQueue.shift() : "SKIP";' +
+  '      window.__rewriteLeft = window.__rewriteQueue ? window.__rewriteQueue.length : 0;' +
+  '      return { ok: true, text: rw }' +
+  '    }' +
   '    window.__aiCalls = (window.__aiCalls || []).concat([{ hasTools: !!(cfg.tools && cfg.tools.length), msgs }]);' +
   '    const q = window.__aiScript && window.__aiScript.length ? window.__aiScript.shift() : null;' +
   '    if (q) {' +
-  '      for (const t of q.deltas || []) { cb && cb(t); await window.__wait(30) }' +
+  '      for (const t of q.deltas || []) { window.__deltaLog = (window.__deltaLog || []).concat([t.text || t.reasoning || ""]); cb && cb(t); await window.__wait(30) }' +
     '      const out = { ok: q.ok !== false, text: q.text ?? "" };' +
     '      if (q.reasoning) out.reasoning = q.reasoning;' +
     '      if (q.textFromReasoning) out.textFromReasoning = true;' +
@@ -300,6 +315,21 @@ export function makeInject(opts = {}) {
   '    }' +
   '    for (const t of ["把想法写下来，", "它们才会慢慢长成真正的样子。"]) { cb && cb({ text: t }); await window.__wait(80) }' +
   '    return { ok: true, text: "把想法写下来，它们才会慢慢长成真正的样子。" }' +
+  '  },' +
+  /* agent 引擎（AI SDK）。事件流由 __agentScript 排，一项是一整轮的事件
+     数组；不发事件就直接回一段正文。__agentCalls 记下每次的入参，脚本
+     据此断言上下文（system 里有没有塞资料、messages 对不对）。 */
+  '  onAiAgentEvent: (cb) => { window.__agentCb = cb },' +
+  '  aiAgent: async (cfg, req) => {' +
+  '    window.__agentCalls = (window.__agentCalls || []).concat([{ cfg, req }]);' +
+  '    const cb = window.__agentCb;' +
+  '    const script = window.__agentScript && window.__agentScript.length ? window.__agentScript.shift() : null;' +
+  '    if (script && script.fail) return { ok: false, text: "", error: script.fail, sources: [], toolUses: 0, draft: req && req.draft };' +
+  '    const evs = script || [{ t: "text", text: "默认回答。" }];' +
+  '    for (const ev of evs) { cb && cb(ev); await window.__wait(15) }' +
+  '    const text = evs.filter(e => e.t === "text").map(e => e.text).join("");' +
+  '    const sources = evs.filter(e => e.t === "sources").flatMap(e => e.hits || []);' +
+  '    return { ok: true, text, reasoning: "", sources, toolUses: evs.filter(e => e.t === "tool-start").length, draft: req && req.draft };' +
   '  },' +
   '  aiNoteSearch: async (root, query, limit) => {' +
   '    const q = String(query).toLowerCase();' +

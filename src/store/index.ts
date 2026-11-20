@@ -9,7 +9,16 @@ import {
 import { getMarked, highlightFences } from '@/editor/markdown'
 import { loadSettings, remember, setting, flushSettings } from './settings'
 import { loadChat, saveChat, flushChat } from './chatFile'
-import { looksUnsure, parseJudge, skipModelJudge } from './searchIntent'
+import { looksUnsure, skipModelJudge } from './searchIntent'
+import {
+  isSkip,
+  localKeywords,
+  mergeHits,
+  parseQueries,
+  rankHits,
+  weatherPlace,
+  MAX_QUERIES,
+} from './webPipeline'
 
 /* ─────────────────────────────────────────────
    数据模型：字段名自己定，与任何外部项目无关
@@ -136,14 +145,45 @@ export const AI_DEFAULTS: AiConfig = {
  * 「同一个地址有时候能测通、有时候不能」。主进程里另有一层兜底（见 main.ts
  * 的 hostCandidates），但预设本身先给对的那个更省事。
  */
-export const AI_PRESETS: { label: string; baseUrl: string; model: string }[] = [
+export const AI_PRESETS: {
+  label: string
+  baseUrl: string
+  model: string
+  /** 密钥在哪儿创建。本地模型没有这一项 */
+  console?: string
+}[] = [
   { label: 'Ollama（本地）', baseUrl: 'http://127.0.0.1:11434/v1', model: 'llama3.2' },
   { label: 'LM Studio（本地）', baseUrl: 'http://127.0.0.1:1234/v1', model: 'local-model' },
-  { label: 'OpenAI', baseUrl: 'https://api.openai.com/v1', model: 'gpt-4o-mini' },
-  { label: 'DeepSeek', baseUrl: 'https://api.deepseek.com/v1', model: 'deepseek-chat' },
-  { label: '月之暗面 Kimi', baseUrl: 'https://api.moonshot.cn/v1', model: 'moonshot-v1-8k' },
-  { label: '智谱 GLM', baseUrl: 'https://open.bigmodel.cn/api/paas/v4', model: 'glm-4-flash' },
-  { label: '硅基流动', baseUrl: 'https://api.siliconflow.cn/v1', model: 'Qwen/Qwen2.5-7B-Instruct' },
+  {
+    label: 'OpenAI',
+    baseUrl: 'https://api.openai.com/v1',
+    model: 'gpt-4o-mini',
+    console: 'https://platform.openai.com/api-keys',
+  },
+  {
+    label: 'DeepSeek',
+    baseUrl: 'https://api.deepseek.com/v1',
+    model: 'deepseek-chat',
+    console: 'https://platform.deepseek.com/api_keys',
+  },
+  {
+    label: '月之暗面 Kimi',
+    baseUrl: 'https://api.moonshot.cn/v1',
+    model: 'moonshot-v1-8k',
+    console: 'https://platform.moonshot.cn/console/api-keys',
+  },
+  {
+    label: '智谱 GLM',
+    baseUrl: 'https://open.bigmodel.cn/api/paas/v4',
+    model: 'glm-4-flash',
+    console: 'https://bigmodel.cn/usercenter/apikeys',
+  },
+  {
+    label: '硅基流动',
+    baseUrl: 'https://api.siliconflow.cn/v1',
+    model: 'Qwen/Qwen2.5-7B-Instruct',
+    console: 'https://cloud.siliconflow.cn/account/ak',
+  },
 ]
 
 /** 设置里的色板列表：swatch 只用于画圆点，不参与真正的取色 */
@@ -3278,8 +3318,18 @@ function setAiConfig(patch: Partial<AiConfig>) {
 }
 
 function initAi() {
-  const saved = setting<Partial<AiConfig> | null>('nota-ai', null)
-  state.ai = saved ? { ...AI_DEFAULTS, ...saved } : { ...AI_DEFAULTS }
+  const saved = setting<Record<string, unknown> | null>('nota-ai', null)
+  if (!saved) {
+    state.ai = { ...AI_DEFAULTS }
+    return
+  }
+  /* 只认 AI_DEFAULTS 里有的键。老版本存进去、后来删掉的字段（比如已经
+     取消的引擎开关）不再跟着走，免得配置里永远躺着一个没人读的值。 */
+  const next = { ...AI_DEFAULTS }
+  for (const k of Object.keys(AI_DEFAULTS) as (keyof AiConfig)[]) {
+    if (saved[k] !== undefined) (next as Record<string, unknown>)[k] = saved[k]
+  }
+  state.ai = next
 }
 
 /**
@@ -3689,14 +3739,9 @@ function makeRecorder(msg: ChatMessage) {
    写类工具（改/建）没有任何隐藏动作：每次调用都记进执行过程，
    改了哪篇、替换了几处，面板上看得见。 */
 
-type AgentToolCall = { id: string; name: string; args: string }
 
 /** 一轮对话最多申请多少次工具。到顶就强制它总结，不许无限烧下去 */
 const AGENT_MAX_ROUNDS = 10
-
-/** read_note 一次最多带回多少字。再长就该让它分段读 */
-const AGENT_READ_LIMIT = 12000
-
 /** 工具名 → 面板步骤里的中文标签 */
 const TOOL_LABELS: Record<string, string> = {
   list_notes: '列出笔记',
@@ -3707,261 +3752,107 @@ const TOOL_LABELS: Record<string, string> = {
   web_search: '联网检索',
 }
 
-const AGENT_TOOL_DEFS = [
-  {
-    type: 'function',
-    function: {
-      name: 'list_notes',
-      description: '列出当前工作区里的笔记（名称与相对路径）。需要找笔记、了解库里有什么时用。',
-      parameters: {
-        type: 'object',
-        properties: { filter: { type: 'string', description: '可选，按名称过滤的关键词' } },
-      },
-    },
-  },
-  {
-    type: 'function',
-    function: {
-      name: 'read_note',
-      description: '读一篇笔记的正文。不传 path 读的是用户当前打开的笔记。',
-      parameters: {
-        type: 'object',
-        properties: { path: { type: 'string', description: '笔记的相对路径；省略则读当前笔记' } },
-      },
-    },
-  },
-  {
-    type: 'function',
-    function: {
-      name: 'search_notes',
-      description: '按关键词全文检索工作区里的所有笔记，返回命中文件与片段。',
-      parameters: {
-        type: 'object',
-        properties: { query: { type: 'string', description: '检索词' } },
-        required: ['query'],
-      },
-    },
-  },
-  {
-    type: 'function',
-    function: {
-      name: 'create_note',
-      description: '在工作区里新建一篇笔记并写入 Markdown 内容。',
-      parameters: {
-        type: 'object',
-        properties: {
-          name: { type: 'string', description: '笔记名（不带 .md）' },
-          content: { type: 'string', description: '笔记的 Markdown 正文' },
-          dir: { type: 'string', description: '可选，目标文件夹的相对路径，默认工作区根目录' },
-        },
-        required: ['name'],
-      },
-    },
-  },
-  {
-    type: 'function',
-    function: {
-      name: 'edit_note',
-      description:
-        '修改一篇笔记：把正文中的一段原文替换成另一段。改动前应先用 read_note 核对原文。不传 path 修改的是当前笔记。',
-      parameters: {
-        type: 'object',
-        properties: {
-          path: { type: 'string', description: '笔记的相对路径；省略则改当前笔记' },
-          find: { type: 'string', description: '要被替换的原文，必须与正文完全一致（含空格换行）' },
-          replace: { type: 'string', description: '替换成的内容，空串表示删除' },
-          replace_all: { type: 'boolean', description: '原文出现多次时是否全部替换；默认只允许命中一处' },
-        },
-        required: ['find', 'replace'],
-      },
-    },
-  },
-  {
-    type: 'function',
-    function: {
-      name: 'web_search',
-      description: '联网检索资料。遇到时效性、事实性问题（价格、版本、新闻、日期）时用。',
-      parameters: {
-        type: 'object',
-        properties: { query: { type: 'string', description: '检索词，用最短的关键词' } },
-        required: ['query'],
-      },
-    },
-  },
-]
-
-/** 统一斜杠，路径比较才不会因为分隔符差异而失配 */
-function normSlash(p: string) {
-  return p.replace(/[\\/]+/g, '/')
-}
-
-function normKey(p: string) {
-  return normSlash(p).toLowerCase()
-}
-
-/** 路径是否落在工作区里面 */
-function insideRoot(p: string): boolean {
-  if (!state.root) return false
-  const nr = normSlash(state.root).replace(/\/$/, '')
-  const np = normSlash(p)
-  return np.toLowerCase() === nr.toLowerCase() || np.toLowerCase().startsWith(nr.toLowerCase() + '/')
-}
-
 /**
- * 把模型给的路径落实成工作区内的绝对路径。
- * 相对路径按工作区根目录拼；解析出来跑到工作区外的一律拒绝——
- * agent 的手不能伸到库外面去。
+ * 跑一轮对话。
+ *
+ * 循环本身（申请工具 → 执行 → 结果喂回去 → 再问一步）跑在主进程里，
+ * 这边只做两件事——把上下文递过去，把回来的事件画成面板上的步骤和正文。
+ *
+ * 正文是不拼的：事件里每来一段就直接往 msg.content 上追加，所以看上去和
+ * 以前一样是一个字一个字冒出来。工具步骤用 toolCallId 配对，模型一次申请
+ * 多个工具时也不会串。
  */
-function resolveAgentPath(raw: string): string | null {
-  if (!state.root) return null
-  let p = raw.trim()
-  if (!p) return null
-  if (!insideRoot(p)) {
-    const root = state.root.replace(/[\\/]+$/, '')
-    p = root + '/' + p.replace(/^[\\/]+/, '')
-  }
-  return insideRoot(p) ? p : null
-}
+async function runSdkTurn(opts: {
+  q: string
+  systemText: string
+  history: { role: 'user' | 'assistant'; content: string }[]
+  msg: ChatMessage
+  rec: ReturnType<typeof makeRecorder>
+}) {
+  const { q, systemText, history, msg, rec } = opts
+  const h3 = rec.begin('调用模型', state.ai.model || '未配置模型')
+  state.aiStage = '正在等模型…'
+  /** 工具步骤的把手：tool-start 建、tool-end 收 */
+  const open = new Map<string, { step: AgentStep; at: number }>()
+  let toolUses = 0
 
-function parseToolArgs(args: string): Record<string, unknown> {
-  const v = JSON.parse(args || '{}')
-  return v && typeof v === 'object' ? (v as Record<string, unknown>) : {}
-}
+  window.api.onAiAgentEvent((ev) => {
+    switch (ev.t) {
+      case 'stage':
+        state.aiStage = ev.text
+        break
+      case 'text':
+        msg.content += ev.text
+        break
+      case 'reasoning':
+        msg.thinking = (msg.thinking ?? '') + ev.text
+        state.aiStage = '正在思考…'
+        break
+      case 'tool-start': {
+        toolUses += 1
+        open.set(ev.id, rec.begin(TOOL_LABELS[ev.name] ?? `工具 ${ev.name}`, ev.detail))
+        break
+      }
+      case 'tool-end': {
+        const h = open.get(ev.id)
+        if (h) rec.end(h, ev.detail, ev.ok ? 'ok' : 'fail')
+        open.delete(ev.id)
+        break
+      }
+      case 'sources': {
+        // 预检索给过一批来源，工具补搜的往后面接，重复的链接不再加一遍
+        const have = new Set((msg.sources ?? []).map((s) => s.url))
+        const extra = ev.hits.filter((h) => !have.has(h.url))
+        if (extra.length) msg.sources = [...(msg.sources ?? []), ...extra]
+        break
+      }
+      case 'draft':
+        /* 工具改了当前这篇。正文直接换掉，随后的自动保存把它写盘——
+           用户盯着编辑器时能看到改动一处一处落下来。 */
+        state.draft = ev.text
+        void saveNote({ silent: true })
+        break
+      default:
+        break
+    }
+  })
 
-/** 面板步骤的 detail：把参数里最有信息量的几个值摆出来 */
-function toolStepDetail(tc: AgentToolCall): string {
+  let r: Awaited<ReturnType<typeof window.api.aiAgent>>
   try {
-    const a = parseToolArgs(tc.args)
-    const parts: string[] = []
-    for (const k of ['query', 'path', 'filter', 'name', 'dir', 'find']) {
-      const v = a[k]
-      if (typeof v === 'string' && v) {
-        parts.push(v.length > 30 ? `${v.slice(0, 30)}…` : v)
-        if (parts.length >= 2) break
-      }
-    }
-    return parts.join(' · ')
-  } catch {
-    return tc.args.slice(0, 40)
+    r = await window.api.aiAgent(
+      {
+        baseUrl: state.ai.baseUrl,
+        model: state.ai.model,
+        apiKey: state.ai.apiKey,
+        system: systemText,
+        temperature: state.ai.temperature,
+      },
+      {
+        messages: [...history, { role: 'user', content: q }],
+        root: state.root,
+        activePath: state.activePath,
+        draft: state.draft,
+        maxSteps: AGENT_MAX_ROUNDS,
+      },
+    )
+  } catch (e) {
+    // IPC 本身炸了（主进程没起来、通道名写错）也不能让面板一直转圈
+    state.aiStage = ''
+    rec.end(h3, String(e), 'fail')
+    msg.error = String(e)
+    return
   }
-}
 
-/**
- * 执行一次工具调用，返回送回给模型的文本。
- * 失败不抛异常出去（除非真出了程序错误）——把失败原因写成文字喂回去，
- * 模型看到才知道该怎么纠正，用户面板上也能看到这一步是红的。
- */
-async function execAgentTool(name: string, args: Record<string, unknown>, msg: ChatMessage): Promise<string> {
-  switch (name) {
-    case 'list_notes': {
-      const filter = String(args.filter ?? '').toLowerCase()
-      let files = allFiles.value
-      if (filter) files = files.filter((f) => normKey(f.path).includes(normKey(filter)))
-      if (!files.length) return filter ? `没有名称包含「${filter}」的笔记` : '工作区里还没有笔记'
-      const cap = 80
-      const lines = files
-        .slice(0, cap)
-        .map((f) => `- ${relOf(f.path)}${f.tags?.length ? `（标签：${f.tags.join('、')}）` : ''}`)
-      return `共 ${files.length} 篇${files.length > cap ? `，只列出前 ${cap} 篇` : ''}：\n${lines.join('\n')}`
-    }
-
-    case 'read_note': {
-      const raw = String(args.path ?? '').trim()
-      let path: string
-      let text: string
-      if (!raw || (state.activePath && normKey(raw) === normKey(state.activePath))) {
-        if (!state.activePath) return '当前没有打开任何笔记，也没给 path。先用 list_notes 找到目标'
-        path = state.activePath
-        text = state.draft
-      } else {
-        const resolved = resolveAgentPath(raw)
-        if (!resolved) return `路径不在工作区里：${raw}`
-        path = resolved
-        text = (await window.api.readNote(path)) ?? ''
-      }
-      const trimmed = text.trim()
-      if (!trimmed) return `「${relOf(path)}」是空的`
-      if (text.length > AGENT_READ_LIMIT)
-        return `「${relOf(path)}」正文太长，以下是前 ${AGENT_READ_LIMIT} 字：\n${text.slice(0, AGENT_READ_LIMIT)}\n（后文被截断；需要的话我可以按更小的段落给你）`
-      return `「${relOf(path)}」：\n${text}`
-    }
-
-    case 'search_notes': {
-      const query = String(args.query ?? '').trim()
-      if (!query) return '检索词是空的'
-      if (!state.root) return '没有打开的工作区，搜不了笔记'
-      const r = await window.api.aiNoteSearch(state.root, query, 15)
-      if (!r.ok || !r.hits?.length)
-        return `没有笔记包含「${query}」${r.error ? `（${r.error}）` : ''}`
-      return r.hits
-        .map((h) => `- ${relOf(h.path)}（命中 ${h.count} 次）\n    ${h.snippets.join('\n    ')}`)
-        .join('\n')
-    }
-
-    case 'create_note': {
-      const noteName = String(args.name ?? '').trim()
-      if (!noteName) return '没有给笔记名'
-      if (!state.root) return '没有打开的工作区，建不了笔记'
-      let dir = state.root
-      const rawDir = String(args.dir ?? '').trim()
-      if (rawDir) {
-        const resolved = resolveAgentPath(rawDir)
-        if (!resolved) return `目标文件夹不在工作区里：${rawDir}`
-        dir = resolved
-      }
-      const created = await window.api.createNote(dir, noteName)
-      const content = String(args.content ?? '')
-      if (content) await window.api.writeNote(created, content)
-      await refreshTree()
-      return `已创建「${relOf(created)}」${content ? `，写入了 ${content.length} 字` : '（空笔记）'}`
-    }
-
-    case 'edit_note': {
-      const find = String(args.find ?? '')
-      const replace = String(args.replace ?? '')
-      if (!find) return '没有给要替换的原文（find）'
-      const raw = String(args.path ?? '').trim()
-      const isCurrent = !raw || (state.activePath && normKey(raw) === normKey(state.activePath))
-      let path: string
-      let text: string
-      if (isCurrent) {
-        if (!state.activePath) return '当前没有打开任何笔记，也没给 path，改不了'
-        path = state.activePath
-        text = state.draft
-      } else {
-        const resolved = resolveAgentPath(raw)
-        if (!resolved) return `路径不在工作区里：${raw}`
-        path = resolved
-        text = (await window.api.readNote(path)) ?? ''
-      }
-      const total = text.split(find).length - 1
-      if (total === 0)
-        return `原文里没有找到这段文字（开头 60 字：${find.slice(0, 60)}）。先用 read_note 核对原文——find 必须与正文完全一致，含空格和换行。`
-      if (total > 1 && args.replace_all !== true)
-        return `这段文字出现了 ${total} 次。请把 find 扩得更长（保证只命中一处），或者把 replace_all 设为 true。`
-      const next = text.split(find).join(replace)
-      if (isCurrent) {
-        // 当前这篇走草稿：编辑器盯的是 draft，外面改完立刻能看见
-        state.draft = next
-        await saveNote({ silent: true })
-      } else {
-        await window.api.writeNote(path, next)
-      }
-      return `已替换 ${total} 处（「${relOf(path)}」）`
-    }
-
-    case 'web_search': {
-      const query = String(args.query ?? '').trim()
-      if (!query) return '检索词是空的'
-      const r = await window.api.aiWebSearch(query, 5)
-      if (!r.ok || !r.hits?.length)
-        return `没检索到结果${r.error ? `（${r.error}）` : ''}。请依据已有知识回答，并说明没有联网资料。`
-      if (msg) msg.sources = r.hits.map((h) => ({ title: h.title, url: h.url }))
-      return webContextBlock(r.hits)
-    }
-
-    default:
-      return `未知工具：${name}。可用的工具：${Object.keys(TOOL_LABELS).join('、')}`
+  state.aiStage = ''
+  /* 正文可能是流进来时已经有的；非流式网关或流被掐断时补一次。
+     有正文就不当失败——模型确实答了，只是收尾那条事件没到。 */
+  if (!msg.content && r.text) msg.content = r.text
+  if (!msg.thinking && r.reasoning) msg.thinking = r.reasoning
+  if (r.ok || msg.content.trim()) {
+    rec.end(h3, `${toolUses ? `${toolUses} 次工具调用 · ` : ''}${state.ai.model || '模型'} 已返回`)
+  } else {
+    rec.end(h3, r.error ?? '请求失败', 'fail')
+    msg.error = r.error ?? '请求失败'
   }
 }
 
@@ -4002,19 +3893,6 @@ async function sendChat(text: string, opts: { withNote?: boolean } = {}) {
 
   // 流式增量进来时挂到这条消息上。只有一个请求在跑（aiBusy 守着），
   // 所以不需要给增量打标记区分是哪一轮
-  let streaming = true
-  window.api.onAiDelta?.((d) => {
-    if (!streaming) return
-    if (d.reasoning) {
-      msg.thinking = (msg.thinking ?? '') + d.reasoning
-      state.aiStage = '正在思考…'
-    }
-    if (d.text) {
-      msg.content += d.text
-      state.aiStage = '正在写回答…'
-    }
-  })
-
   const withNote = opts.withNote ?? state.aiWithNote
 
   try {
@@ -4063,217 +3941,78 @@ async function sendChat(text: string, opts: { withNote?: boolean } = {}) {
       '你是一个能自主使用工具的 agent，手里有这些工具：',
       '- list_notes / search_notes / read_note：查看、检索、阅读用户的笔记',
       '- create_note / edit_note：新建笔记、精确修改笔记内容',
-      '- web_search(query)：联网搜索，拿最新的网页结果',
-      '规矩：涉及天气、新闻、价格、版本、赛果等时效性信息，或者你拿不准的事实，必须先调用 web_search 查证，基于检索结果回答。需要动笔记时直接用对应工具，做完在回答里说明改了什么。',
-      '检索词是给搜索引擎的关键词组合，不是照抄用户的口语问句：去掉「啊/呢/怎么调」这类口头语，换成问题的核心词，并带上语境里的限定词。用户问「介绍一下 codex」而上下文在聊编程时，该搜「OpenAI Codex」而不是「codex」——后者只会搜到古代手抄本的词典释义。',
-      '检索结果如果跟问题对不上（标题/摘要明显答非所问），换一个更精确的检索词重查，最多试 3 种不同说法；3 次都查不到才明说没查到，不要凭记忆编造，也不要拿不相关的结果硬凑。',
+      '- web_search(query)：联网补搜，拿更细的网页结果',
+      '规矩：联网资料系统已经替你查好了，就在系统提示后面的「联网检索到的资料」里。回答时优先用这些资料，来源和要点要在回答里体现，别只凭记忆答。只有当资料没覆盖到、或者你确实需要更细的细节时，才调 web_search 补一次——一次够用就别反复搜。需要动笔记时直接用对应工具，做完在回答里说明改了什么。',
+      '真要自己写检索词时，写关键词而不是整句：去掉「帮我/介绍下/啊/呢」这类口头语，带上语境限定词。例「帮我介绍下啊hca海康运维工程师的日常」→ 搜「海康威视 运维工程师 工作内容」；聊编程时问「介绍一下 codex」→ 搜「OpenAI Codex」。照抄原句只会搜出字典词条。',
     ]
     if (noteBlock) {
       agentRules.push(`以下是用户正在写的笔记的开头，回答时参考它；需要全文或后文就用 read_note 读：\n${noteBlock}`)
     }
     let systemText = [state.ai.system, ...agentRules].join('\n\n')
 
-    type ConvoMsg = { role: string; content: string; tool_calls?: unknown; tool_call_id?: string }
-    let convo: ConvoMsg[] = [
-      { role: 'system', content: systemText },
-      ...history,
-      { role: 'user', content: q },
-    ]
+    /* ②·c 先搜再答，不指望模型自觉。
+     *
+     * 以前「默认先联网」只写在系统提示词里：模型照做就搜，不照做就什么都
+     * 不发生——免费档模型十次里有三四次不照做，表现就是「问什么都说不知道」。
+     * 现在不问它了：提问先跑一遍检索流水线，把资料直接塞进系统上下文。
+     * 模型想再深挖还能调 web_search，但它至少不会在手边有资料的情况下
+     * 凭记忆编。
+     *
+     * 本地规则判死不搜的（润色、翻译、改笔记）连这一步都不进，不白等。 */
+    if (!skipModelJudge(q)) {
+      const hq = rec.begin('联网检索', '先把问题压成关键词')
+      state.aiStage = '整理检索词…'
+      try {
+        /* 天气单走一路：搜索页只会给城市百科和旅游攻略（实测「乌鲁木齐
+           今天天气」在 Bing 上一条预报都没有），拿这类结果模型只能瞎猜。
+           有明确地名就查天气源，拿到实况和三天预报就直接用。 */
+        const place = weatherPlace(q)
+        let gotWeather = false
+        if (place) {
+          const hw = rec.begin('查实时天气', place)
+          const wr = await window.api.aiWeather(place)
+          if (wr.ok && wr.text) {
+            systemText = `${systemText}\n\n${[
+              '以下是实时天气数据（来源 wttr.in，观测时间为当地时间）。',
+              '直接据此回答，不要再补记忆里的温度；数据里没有的（比如紫外线、空气质量）就说没有。',
+              '',
+              wr.text,
+            ].join('\n')}`
+            msg.sources = [
+              { title: `${wr.place ?? place} 天气 - wttr.in`, url: `https://wttr.in/${encodeURIComponent(place)}` },
+            ]
+            rec.end(hw, `${wr.place ?? place} 实况 + 三天预报`)
+            gotWeather = true
+          } else {
+            rec.end(hw, wr.error ?? '没拿到，改走普通检索')
+          }
+          state.aiStage = '整理检索词…'
+        }
 
-    /** 调一次模型。带不带工具由 useTools 决定 */
-    const callModel = (messages: ConvoMsg[], useTools: boolean) =>
-      window.api.aiChat(
-        { ...state.ai, ...(useTools ? { tools: AGENT_TOOL_DEFS } : {}) },
-        messages,
-      )
-
-    // ③ agent 循环：申请工具 → 执行 → 结果送回 → 再问，直到给出不带工具申请的回答
-    const h3 = rec.begin('调用模型', state.ai.model || '未配置模型')
-    state.aiStage = '正在等模型…'
-    let useTools = true
-    let r = await callModel(convo, true)
-
-    /* 服务不认 tools 参数（旧版本地模型常见）：退回普通对话模式。
-       联网判断也跟着回到老流程——先判一次，需要就查一趟塞进上下文。 */
-    if (!r.ok && /tool|function/i.test(r.error ?? '')) {
-      useTools = false
-      const hf = rec.begin('模型不支持工具调用', '退回普通对话模式')
-      const term = await decideSearch(q)
-      if (term) {
-        try {
-          const sr = await window.api.aiWebSearch(term, 5)
-          if (sr.ok && sr.hits?.length) {
+        if (gotWeather) {
+          rec.end(hq, '天气已拿到，跳过网页检索')
+        } else {
+          const sr = await deepSearch(q)
+          if (sr.hits.length) {
             systemText = `${systemText}\n\n${webContextBlock(sr.hits)}`
             msg.sources = sr.hits.map((h) => ({ title: h.title, url: h.url }))
-          }
-        } catch {
-          /* 查不到就算了，这轮照常回答 */
-        }
-      }
-      convo = [{ role: 'system', content: systemText }, ...history, { role: 'user', content: q }]
-      rec.end(hf, term ? '这轮按老流程带了一次联网资料' : '这轮按老流程直接回答')
-      state.aiStage = '正在等模型…'
-      r = await callModel(convo, false)
-    }
-
-    let toolUses = 0
-    for (let round = 0; r.ok && r.toolCalls?.length; round += 1) {
-      if (round >= AGENT_MAX_ROUNDS) {
-        // 到顶了不许再烧：把话说死，让它拿手里已有的信息收尾
-        convo = [
-          ...convo,
-          {
-            role: 'user',
-            content: '工具调用次数已达上限。不要再申请任何工具，直接根据已掌握的信息回答。',
-          },
-        ]
-        r = await callModel(convo, false)
-        break
-      }
-      // 模型这一轮的申请要原样记进对话：严格的实现要求 tool 结果能对上号
-      convo = [
-        ...convo,
-        {
-          role: 'assistant',
-          content: r.text ?? '',
-          tool_calls: r.toolCalls.map((t) => ({
-            id: t.id,
-            type: 'function',
-            function: { name: t.name, arguments: t.args },
-          })),
-        },
-      ]
-      for (const tc of r.toolCalls) {
-        toolUses += 1
-        state.aiStage = `正在${TOOL_LABELS[tc.name] ?? '执行工具'}…`
-        const ht = rec.begin(TOOL_LABELS[tc.name] ?? `工具 ${tc.name}`, toolStepDetail(tc))
-        let out: string
-        let args: Record<string, unknown> | null = null
-        try {
-          args = parseToolArgs(tc.args)
-        } catch {
-          /* 参数不是 JSON，走下面的失败分支 */
-        }
-        if (!args) {
-          out = '工具参数不是合法 JSON。重新申请调用，参数必须是一个完整的 JSON 对象。'
-          rec.end(ht, '参数解析失败', 'fail')
-        } else {
-          try {
-            out = await execAgentTool(tc.name, args, msg)
-            rec.end(ht, out.length > 90 ? `${out.slice(0, 90)}…` : out)
-          } catch (e) {
-            out = `工具执行出错：${String(e)}`
-            rec.end(ht, String(e), 'fail')
+            rec.end(hq, `${sr.queries.join(' / ')} → ${sr.hits.length} 条`)
+          } else {
+            rec.end(hq, sr.error ? `没搜到（${sr.error}）` : '没搜到相关结果')
           }
         }
-        convo = [...convo, { role: 'tool', tool_call_id: tc.id, content: out }]
+      } catch (e) {
+        rec.end(hq, String(e), 'fail')
       }
       state.aiStage = '正在等模型…'
-      r = await callModel(convo, useTools)
     }
 
-    streaming = false
-
-    if (r.ok) {
-      rec.end(h3, `${toolUses ? `${toolUses} 次工具调用 · ` : ''}${state.ai.model || '模型'} 已返回`)
-
-      /* 「光想不做」补救。思考型模型有时只吐 thinking（里面写着「我要联网搜」），
-         工具调用和正文都没发出来。agent 不能把思考当答案——替它把检索做了，
-         拿结果让它重答。只在 agent 模式、一次工具都没用过时补，防烧钱。 */
-      if (r.textFromReasoning && useTools && toolUses === 0 && !msg.sources?.length) {
-        const hr = rec.begin('模型只思考没回答', '自动补一次联网检索')
-        state.aiStage = '先查一下…'
-        try {
-          const term = q.replace(/[。？?！!]+$/g, '').slice(0, 60)
-          const sr = await window.api.aiWebSearch(term, 5)
-          if (sr.ok && sr.hits?.length) {
-            const block = webContextBlock(sr.hits)
-            msg.sources = sr.hits.map((h) => ({ title: h.title, url: h.url }))
-            state.aiStage = '正在等模型…'
-            const rr = await callModel(
-              [
-                ...convo,
-                // 它那段思考喂回去当上下文，让它知道自己刚才想干什么
-                { role: 'assistant', content: r.text ?? '' },
-                {
-                  role: 'user',
-                  content: `你刚才说需要联网检索但没给出回答。这是检索到的资料：\n\n${block}\n\n请直接根据资料回答用户最初的问题，正文里用 [序号] 标注依据，不要再输出思考过程。`,
-                },
-              ],
-              false,
-            )
-            if (rr.ok && rr.text?.trim()) {
-              r = rr
-              rec.end(hr, `已补查 ${sr.hits.length} 条来源并重答`)
-            } else {
-              // 重答失败就保留思考原文：聊胜于无
-              rec.end(hr, rr.error ?? '重答没返回内容，保留思考原文', 'fail')
-            }
-          } else {
-            rec.end(hr, sr.error ?? '没检索到结果，保留思考原文')
-          }
-        } catch (e) {
-          rec.end(hr, String(e), 'fail')
-        }
-        state.aiStage = ''
-      }
-
-      // 非流式（或流被中间掐断）时，把兜底结果补上
-      if (!msg.content) msg.content = r.text ?? ''
-      if (!msg.thinking && r.reasoning) msg.thinking = r.reasoning
-      const h4 = rec.begin('收到回答')
-      rec.end(h4, `${msg.content.length} 字${msg.thinking ? '，另带一段推理' : ''}`)
-
-      /* 「答不出来就去网上找」。
-       *
-       * agent 模式下模型自己手里有 web_search，真需要它会去用；走到这里的
-       * 补查只服务两种情况：普通模式的回退轮，或者模型嘴上说查不到、手里
-       * 却没动过工具。只补一次——查完还说查不到，那就是真没有。 */
-      if (!msg.sources?.length && looksUnsure(msg.content)) {
-        const h5 = rec.begin('回答里说查不到', '补一次联网检索')
-        state.aiStage = '先查一下…'
-        try {
-          const term2 = q.replace(/[。？?！!]+$/g, '').slice(0, 60)
-          const sr = await window.api.aiWebSearch(term2, 5)
-          if (sr.ok && sr.hits?.length) {
-            const block = webContextBlock(sr.hits)
-            const rr = await window.api.aiChat(
-              { ...state.ai, system: `${systemText}\n\n${block}` },
-              [
-                ...history,
-                { role: 'user', content: q },
-                { role: 'assistant', content: msg.content },
-                {
-                  role: 'user',
-                  content:
-                    '你上一段里说查不到。这是刚检索到的资料，请据此重答；' +
-                    '句末用 [序号] 标出依据，资料里没有的直接说没查到，不要另外补。',
-                },
-              ],
-            )
-            if (rr.ok && rr.text?.trim()) {
-              msg.content = rr.text.trim()
-              msg.sources = sr.hits.map((h) => ({ title: h.title, url: h.url }))
-              if (rr.reasoning) msg.thinking = rr.reasoning
-              rec.end(h5, `补查 ${sr.hits.length} 条来源，已重答`)
-            } else {
-              // 重答失败就保留原来那段：它至少诚实地说过自己不知道
-              rec.end(h5, rr.error ?? '重答没返回内容，保留原回答', 'fail')
-            }
-          } else {
-            rec.end(h5, sr.error ?? '也没检索到结果，保留原回答')
-          }
-        } catch (e) {
-          rec.end(h5, String(e), 'fail')
-        }
-        state.aiStage = ''
-      }
-    } else {
-      rec.end(h3, r.error ?? '请求失败', 'fail')
-      msg.error = r.error ?? '请求失败'
-    }
+    /* ③ 交给主进程的 agent 引擎。
+     *
+     * 工具执行、多步驱动、只思考兜底、不支持 tools 时的降级，全在
+     * electron/agentSdk.ts 里。这边只管把上下文递过去、把事件画出来。 */
+    await runSdkTurn({ q, systemText, history, msg, rec })
   } catch (e) {
-    streaming = false
     msg.error = String(e)
   } finally {
     state.aiBusy = false
@@ -4329,54 +4068,102 @@ function setAiWithNote(v: boolean) {
  * 现在每一轮由 sendChat 自己决定查不查（见 shouldSearch）：明显是在处理
  * 手头这段文字的任务直接答，看着像事实性问题的先去查一趟。 */
 
-/* ── 这一轮要不要联网：自己判断，不再让用户按开关 ──
+/* ── 这一轮要不要联网 ──
  *
  * 以前面板上有个「联网」按钮，默认关。等于要求人在提问之前先回答
  * 「这个问题模型自己知不知道」——那本来就是软件该替他判断的事，而且
  * 常态是没人按：问到价格、版本、最近发生了什么，模型一本正经地编。
  *
- * 现在每一轮自己决定：先过一道很便宜的本地筛（纯文字加工直接答），
- * 剩下的交给模型判一句。规则本身在 searchIntent.ts，那里能单独验。 */
+ * 现在分两步：先过一道纯本地的筛子（润色/翻译/改笔记这类直接判死，见
+ * searchIntent.ts），剩下的交给 rewriteQueries —— 那一次请求同时回答
+ * 「要不要查」和「查什么词」，比单独判一次再查一次省一趟往返。 */
 
-const JUDGE_SYSTEM = `你在判断一个问题要不要联网查资料才能可靠地回答。
+/* ── 检索词改写 ──
+ *
+ * 为什么单独发一次小请求，而不是在同一次回答里让模型顺手写检索词：
+ * 让它「一边想答案一边写搜索词」，它十次有八次把用户的原句直接丢进
+ * 搜索框（「帮我介绍下啊hca海康运维工程师的日常」→ 搜回「帮」字的词条）。
+ * 单独一个小请求只干一件事——把问题压成关键词——它反而做得好；而且
+ * 输出格式固定，跑偏也跑不远。
+ */
+const REWRITE_SYSTEM = `你把用户的问题改写成给搜索引擎用的关键词。
 
-只输出一行，两种格式之一：
-- 需要查：SEARCH: <检索词>
-- 不需要：SKIP
+只输出关键词，一行一个，一共 2 到 3 行。要求：
+- 不要整句，不要标点，去掉「帮我/介绍下/啊/呢/怎么调」这类口头语
+- 每行 2 到 12 个字，带上语境限定词，让搜索能定位到具体事物
+- 例：用户问「帮我介绍下啊hca海康运维工程师的日常」→ 输出「海康威视 运维工程师」和「海康威视 运维 工作内容」
+- 例：用户问「codex怎么调」→ 输出「OpenAI Codex 使用方法」和「codex 配置教程」
+- 例：用户问「今天乌鲁木齐天气」→ 输出「乌鲁木齐 天气」
 
-判为 SKIP 的：改写、润色、翻译、总结用户给你的文字、写作建议、纯推理、闲聊、让 AI 扮演角色。
-判为 SEARCH 的：具体事实（价格、版本、日期、人物、产品参数、新闻、法规、赛事）、
-时效性内容、以及你自己拿不准、答错代价大的技术细节。
+如果这个问题根本不需要查资料（闲聊寒暄、让你改写润色翻译、只跟当前笔记有关的操作），就只输出一行 SKIP。`
 
-检索词用最短的关键词，像人在搜索框里会打的，不要整句，不超过 30 字。`
-
-/** 判断请求最多等这么久。它只是「顺手问一句」，卡住就该放弃，不能拖住正题 */
-const JUDGE_TIMEOUT_MS = 7000
+/** 改写是个「顺手问一句」，卡住就该放弃，不能拖住正题 */
+const REWRITE_TIMEOUT_MS = 9000
 
 /**
- * 返回要检索的词；返回 null 表示这一轮不联网。
+ * 把一个问题压成 2~3 个检索词。返回空数组表示「这轮不用联网」。
  *
- * 任何一步出问题（没配模型、超时、模型不按格式回）都退化成「不查」——
- * 宁可少查一次，也不能因为一次判断失败让整轮提问卡在那里。
+ * 三级降级：本地规则直接判死 → 模型改写 → 模型挂了就用本地兜底关键词。
+ * 最后一层很重要：整条流水线的价值就在于「不依赖模型状态」，如果模型
+ * 超时就直接不搜了，那这套东西等于没做。
+ *
+ * force 用来压掉「模型说不用查」这一种回答。补查那两处是**已经确认要查**
+ * 才进来的（模型自己说了要联网、或者回答里承认查不到），这时候它再回一句
+ * SKIP 就该被忽略 —— 否则等于把脚又踩回刹车上。
  */
-async function decideSearch(q: string): Promise<string | null> {
-  const text = q.trim()
-  if (!text) return null
-  if (skipModelJudge(text)) return null
+async function rewriteQueries(q: string, force = false): Promise<string[]> {
+  const text = (q ?? '').trim()
+  if (!text) return []
+  if (skipModelJudge(text)) return force ? localKeywords(text) : []
 
   try {
     const r = await Promise.race([
       window.api.aiChat(
-        { ...state.ai, system: JUDGE_SYSTEM, temperature: 0, silent: true, maxTokens: 48 },
-        [{ role: 'user', content: text.slice(0, 500) }],
+        { ...state.ai, system: REWRITE_SYSTEM, temperature: 0, silent: true, maxTokens: 96 },
+        [{ role: 'user', content: text.slice(0, 600) }],
       ),
-      new Promise<null>((res) => setTimeout(() => res(null), JUDGE_TIMEOUT_MS)),
+      new Promise<null>((res) => setTimeout(() => res(null), REWRITE_TIMEOUT_MS)),
     ])
-    if (!r || !r.ok || !r.text) return null
-    return parseJudge(r.text)
+    if (!r || !r.ok || !r.text) return localKeywords(text)
+    // 模型明确说不用查：预检索时尊重它，补查时忽略它
+    if (isSkip(r.text)) return force ? localKeywords(text) : []
+    const list = parseQueries(r.text)
+    return list.length ? list : localKeywords(text)
   } catch {
-    return null
+    return localKeywords(text)
   }
+}
+
+/**
+ * 一次完整检索：改写 → 多路并发 → 合并去重 → 相关性排序。
+ *
+ * 并发而不是串行：三路检索各自 1~2 秒，串起来就是 5 秒，用户等不起。
+ * 某一路失败不影响其它路——搜索结果本来就有随机性，三路里两路有货就够。
+ */
+async function deepSearch(question: string, seed?: string, force = false) {
+  const rewritten = await rewriteQueries(question, force)
+  const list = [...rewritten]
+  const s = (seed ?? '').trim()
+  /* 模型自己给的检索词排最前：那是它读完上下文写的，往往比只看问题
+     改写出来的更贴题。两路都留，等于「精确 + 泛化」各来一次 */
+  if (s && s.length <= 40 && !list.some((x) => x.toLowerCase() === s.toLowerCase())) {
+    list.unshift(s)
+  }
+  const queries = list.slice(0, MAX_QUERIES + 1)
+  if (!queries.length) return { queries, hits: [], error: '' }
+
+  const settled = await Promise.allSettled(queries.map((t) => window.api.aiWebSearch(t, 6)))
+  const lists: { title: string; url: string; snippet: string }[][] = []
+  let error = ''
+  for (const one of settled) {
+    if (one.status === 'fulfilled' && one.value?.ok && one.value.hits?.length) {
+      lists.push(one.value.hits)
+    } else if (one.status === 'fulfilled' && one.value?.error) {
+      error = one.value.error
+    }
+  }
+  const hits = rankHits(mergeHits(lists), queries).slice(0, 8)
+  return { queries, hits, error }
 }
 
 /** 把检索结果压成一段模型能直接用的参考资料 */

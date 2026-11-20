@@ -8,13 +8,12 @@
  *   - `purgeStale()`  开跑前扫一遍，把上一轮（默认 15 分钟前）的残留带走
  *   - `removeProfile()`  本次跑完删自己的目录；失败就算了，留给下次开跑时收
  *
- * 为什么要在开跑前收：Edge 被 kill 之后它的子进程不一定立刻松手，
- * Windows 上在脚本末尾 `rmSync` 常常 EBUSY。等过了几十分钟再删反而稳。
- * 亲测「末尾删」几乎每次都失败，所以末尾只做一次尽力而为的尝试，
- * 真正保证干净的是下一次开跑时的 `purgeStale`。
+ * 为什么末尾删不掉：Edge 被 kill 之后 crashpad / GPU 子进程还要一小会儿才
+ * 松手，Windows 上这期间 `rmSync` 一律 EBUSY。所以末尾用 `removeProfileWhenFree`
+ * 边等边重试（约 3 秒窗口），仍有漏网的交给下一次开跑时的 `purgeStale`。
  *
- * 删不动是常态不是意外，所以一律「失败就跳过」，不抛、不改变退出码——
- * 一个临时目录不该让验证脚本报红。
+ * 删不动不是意外，一律「失败就跳过」，不抛、不改变退出码——一个临时目录
+ * 不该让验证脚本报红。
  */
 import fs from 'node:fs'
 import path from 'node:path'
@@ -25,6 +24,9 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 /** 默认只收 15 分钟之外的，避免删掉别的脚本正在用的 profile */
 const DEFAULT_MAX_AGE = 15 * 60 * 1000
 
+/** `.tmp-cdp-*` 是一轮一换的一次性 profile，开跑前收 60 秒以上的就够安全 */
+const CDP_MAX_AGE = 60 * 1000
+
 /** 删单个 profile 目录；成功返回 true */
 export function removeProfile(dir) {
   if (!dir) return false
@@ -34,6 +36,19 @@ export function removeProfile(dir) {
   } catch {
     return false
   }
+}
+
+/**
+ * 边等边删。进程刚收到 kill 时句柄还没放开，硬删必 EBUSY，等一会儿就成了。
+ * 约 3 秒窗口（12 次 × 250ms）够 crashpad 退干净。
+ */
+export async function removeProfileWhenFree(dir, { tries = 12, waitMs = 250 } = {}) {
+  for (let i = 0; i < tries; i++) {
+    if (!fs.existsSync(dir)) return true
+    if (removeProfile(dir)) return true
+    await new Promise((r) => setTimeout(r, waitMs))
+  }
+  return false
 }
 
 /**
@@ -57,7 +72,9 @@ export function purgeStale(maxAgeMs = DEFAULT_MAX_AGE) {
       continue
     }
     if (!st.isDirectory()) continue
-    if (now - st.mtimeMs < maxAgeMs) {
+    /* cdp profile 一轮一个、名字带时间戳，不存在跨轮复用，门槛放低 */
+    const limit = name.startsWith('.tmp-cdp-') ? CDP_MAX_AGE : maxAgeMs
+    if (now - st.mtimeMs < limit) {
       kept++
       continue
     }
@@ -66,4 +83,22 @@ export function purgeStale(maxAgeMs = DEFAULT_MAX_AGE) {
   }
 
   return { removed, skipped, kept }
+}
+
+/**
+ * 收掉本机所有 `.tmp-cdp-*`。
+ *
+ * 收尾时只删自己那一个不够：实测偶有 Edge 的残留子进程在 close 之后又把
+ * profile 目录 recreates 一份（甚至换个名字），自己那个删干净了根目录里还
+ * 躺着一个。既然同一时刻只会有一个脚本在跑，收尾就按「整个前缀清空」处理。
+ */
+export async function purgeCdp({ tries = 4, waitMs = 400 } = {}) {
+  let pending = []
+  for (let i = 0; i < tries; i++) {
+    pending = fs.readdirSync(root).filter((n) => n.startsWith('.tmp-cdp-'))
+    if (!pending.length) return 0
+    for (const n of pending) removeProfile(path.join(root, n))
+    await new Promise((r) => setTimeout(r, waitMs))
+  }
+  return fs.readdirSync(root).filter((n) => n.startsWith('.tmp-cdp-')).length
 }

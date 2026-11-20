@@ -17,7 +17,13 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
-const EXE = path.join(root, 'release', 'win-unpacked', 'Nota.exe')
+/* NOTA_UNPACKED 可指定解包目录：打包残骸常被 watcher 锁成旧版本，
+   直接验 release/win-unpacked 会测到上一版的代码。 */
+const EXE = path.join(
+  root,
+  process.env.NOTA_UNPACKED || path.join('release', 'win-unpacked'),
+  'Nota.exe',
+)
 if (!fs.existsSync(EXE)) {
   console.log('没有打包产物，先跑 npm run pack')
   process.exit(2)

@@ -9,12 +9,12 @@
  *  - 不注入任何假数据（各脚本的业务假 IPC 差异太大，留在调用方）
  *  - 不跑断言（`ok()` 那种输出格式各脚本自己定）
  */
-import { spawn } from 'node:child_process'
+import { spawn, spawnSync } from 'node:child_process'
 import http from 'node:http'
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { purgeStale, removeProfile } from './tmp-profiles.mjs'
+import { purgeStale, removeProfileWhenFree, purgeCdp } from './tmp-profiles.mjs'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 /* WEB_ROOT 允许换一个静态根目录：剖析时需要一份**未压缩**的构建
@@ -178,12 +178,30 @@ export async function launch(opts = {}) {
     } catch {
       /* 忽略 */
     }
+    /* 光杀主进程不够：Edge 会派生 renderer / GPU / crashpad 一堆子进程，
+       它们活着就一直攥着 --user-data-dir 那个 profile 目录，目录于是删不掉
+       （rmSync 报 EBUSY）。按进程树收掉，PROFILE 才能当场清干净。 */
+    try {
+      if (process.platform === 'win32' && edge.pid) {
+        spawnSync('taskkill', ['/PID', String(edge.pid), '/T', '/F'], { stdio: 'ignore' })
+      }
+    } catch {
+      /* 忽略：极端情况下 taskkill 不在，交给 purgeStale 下次收 */
+    }
     try {
       server.close()
     } catch {
       /* 忽略 */
     }
-    removeProfile(PROFILE)
+    /* 进程刚收到 kill 还没退干净时 rmSync 一样会 EBUSY，边等边重试（约 3 秒）；
+       仍有漏网的，purgeStale 下次开跑会再收一遍 */
+    const gone = await removeProfileWhenFree(PROFILE)
+    if (process.env.NOTA_TMP_DEBUG)
+      console.log('[tmp-debug]', path.basename(PROFILE), 'gone=', gone, 'exists=', fs.existsSync(PROFILE))
+    /* 自己那个之外再兜一遍：Edge 的残留子进程偶尔会在 close 之后又造一份
+       profile 出来，只删自己的名字会漏掉它 */
+    const left = await purgeCdp()
+    if (left) console.log('[tmp] 还有', left, '个 profile 目录删不掉，下次开跑时再收')
   }
 
   return { send, evaluate, sleep, shot, shotBase64, boxOf, errors, close, port: PORT, on: (fn) => listeners.push(fn) }

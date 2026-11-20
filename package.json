@@ -1,7 +1,7 @@
 {
   "name": "nota",
   "private": true,
-  "version": "3.9.9",
+  "version": "3.9.12",
   "type": "module",
   "description": "A lightweight local-first Markdown note app.",
   "author": "YMTJ0522",
@@ -20,6 +20,7 @@
     "ship": "node scripts/ship.mjs"
   },
   "dependencies": {
+    "@ai-sdk/openai-compatible": "^3.0.90",
     "@codemirror/autocomplete": "^6.20.3",
     "@codemirror/commands": "^6.11.1",
     "@codemirror/lang-cpp": "^6.0.3",
@@ -42,6 +43,7 @@
     "@codemirror/state": "^6.7.6",
     "@codemirror/view": "^6.43.14",
     "@lezer/highlight": "^1.2.5",
+    "ai": "^7.0.170",
     "katex": "^0.16.47",
     "lucide-vue-next": "^1.0.0",
     "marked": "^15.0.6",

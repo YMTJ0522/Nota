@@ -18,6 +18,7 @@ import fs from 'node:fs/promises'
 import { existsSync, statSync, rmSync } from 'node:fs'
 import { pathToFileURL } from 'node:url'
 import { testConnection, syncWorkspace, onSyncProgress } from './sync'
+import { runAgent, type AgentEvent, type AgentHost } from './agentSdk'
 import { maybeRunInstaller, installerUiActive } from './installer'
 import { ensureVault, ensureVaultAt, readVaultPointer, takeFreshFlag } from './vault'
 import { checkUpdate } from './update'
@@ -998,7 +999,7 @@ ipcMain.handle(
       if (!res) throw lastErr ?? new Error('fetch failed')
       if (!res.ok) {
         const detail = await res.text().catch(() => '')
-        return { ok: false, error: humanizeChatError(res.status, detail, cfg.model) }
+        return { ok: false, error: humanizeChatError(res.status, detail, cfg.model, cfg.apiKey) }
       }
 
       // 有的服务不认 stream:true，原样回了完整 JSON —— 那就当非流式处理
@@ -1173,7 +1174,19 @@ const SEARCH_ENGINES: {
   build: (q: string) => string
   link: RegExp
   snip: RegExp
+  /** RSS 类引擎先掐掉频道头，让标题/摘要正则都只扫 <item> 内部，按下标才能对齐 */
+  prep?: (html: string) => string
 }[] = [
+  {
+    name: 'Bing RSS',
+    build: (q) => `https://www.bing.com/search?q=${encodeURIComponent(q)}&format=rss&count=10`,
+    link: /<item>[\s\S]*?<title>([\s\S]*?)<\/title>\s*<link>([\s\S]*?)<\/link>/gi,
+    snip: /<description>([\s\S]*?)<\/description>/gi,
+    prep: (html) => {
+      const i = html.indexOf('<item>')
+      return i >= 0 ? html.slice(i) : html
+    },
+  },
   {
     name: 'Bing',
     build: (q) => `https://www.bing.com/search?q=${encodeURIComponent(q)}&count=10`,
@@ -1194,6 +1207,7 @@ const SEARCH_ENGINES: {
  * 宁可少给两条，也不能把 A 的标题配到 B 的摘要上。
  */
 function parseEngine(html: string, engine: (typeof SEARCH_ENGINES)[number], limit: number) {
+  if (engine.prep) html = engine.prep(html)
   const links: { url: string; title: string }[] = []
   for (const m of html.matchAll(engine.link)) {
     const url = unwrapUrl(m[1])
@@ -1217,45 +1231,287 @@ function parseEngine(html: string, engine: (typeof SEARCH_ENGINES)[number], limi
   return out
 }
 
+/**
+ * 一次网页检索。抽成函数是因为 agent 的 web_search 工具也要用——
+ * 工具那边还要跑多路去重，逻辑留在 agentSdk 里，这里只管「给我这几个词
+ * 的搜索结果」。
+ */
+async function webSearchImpl(
+  query: string,
+  limit = 5,
+): Promise<{ ok: boolean; hits?: WebHit[]; engine?: string; error?: string }> {
+  const q = String(query ?? '').trim()
+  if (!q) return { ok: false, error: '检索词是空的' }
+  const want = Math.max(1, Math.min(limit, 8))
+  let lastError = ''
+  for (const engine of SEARCH_ENGINES) {
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), WEB_TIMEOUT_MS)
+    try {
+      const res = await net.fetch(engine.build(q), {
+        method: 'GET',
+        headers: {
+          // 不伪装成浏览器，搜索页通常直接拒绝；这里只声明自己是普通 UA
+          'User-Agent':
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36',
+          'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
+        },
+        signal: controller.signal,
+      })
+      if (!res.ok) {
+        lastError = `${engine.name} HTTP ${res.status}`
+        continue
+      }
+      const hits = parseEngine(await res.text(), engine, want)
+      if (hits.length) return { ok: true, hits, engine: engine.name }
+      lastError = `${engine.name} 没有解析到结果`
+    } catch (e) {
+      lastError = `${engine.name}：${aiError(e, WEB_TIMEOUT_MS)}`
+    } finally {
+      clearTimeout(timer)
+    }
+  }
+  return { ok: false, error: lastError || '联网检索失败' }
+}
+
+ipcMain.handle('ai:websearch', async (_e, query: string, limit = 5) => webSearchImpl(query, limit))
+
+/**
+ * 天气码 → 中文。
+ *
+ * wttr.in 的 lang=zh 实测不翻译（lang_zh 里还是 "Light drizzle"），
+ * 只能自己按 WWO 天气码转一遍。只收常见码，其余原样给英文描述。
+ */
+const WWO_ZH: Record<string, string> = {
+  '113': '晴',
+  '116': '多云',
+  '119': '阴',
+  '122': '阴天',
+  '143': '薄雾',
+  '176': '局部有雨',
+  '179': '局部有雪',
+  '182': '局部雨夹雪',
+  '185': '冻毛毛雨',
+  '200': '雷阵雨',
+  '227': '吹雪',
+  '230': '暴风雪',
+  '248': '雾',
+  '260': '冻雾',
+  '263': '零星毛毛雨',
+  '266': '毛毛雨',
+  '281': '冻毛毛雨',
+  '284': '强冻毛毛雨',
+  '293': '零星小雨',
+  '296': '小雨',
+  '299': '间歇中雨',
+  '302': '中雨',
+  '305': '间歇大雨',
+  '308': '大雨',
+  '311': '小冻雨',
+  '314': '中到大冻雨',
+  '317': '小雨夹雪',
+  '320': '中雨夹雪',
+  '323': '零星小雪',
+  '326': '小雪',
+  '329': '零星中雪',
+  '332': '中雪',
+  '335': '零星大雪',
+  '338': '大雪',
+  '350': '冰粒',
+  '353': '小阵雨',
+  '356': '中到大阵雨',
+  '359': '暴雨',
+  '362': '小阵雨夹雪',
+  '365': '中到大阵雨夹雪',
+  '368': '小阵雪',
+  '371': '中到大阵雪',
+  '374': '小冰粒',
+  '377': '中到大冰粒',
+  '386': '零星雷阵雨',
+  '389': '强雷阵雨',
+  '392': '零星雷阵雪',
+  '395': '强雷阵雪',
+}
+
+/** 按城市名取实时天气 + 未来三天；失败返回 null（调用方退回普通检索） */
+async function fetchWeather(place: string): Promise<{ place: string; text: string } | null> {
+  const q = place.trim()
+  if (!q) return null
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), WEB_TIMEOUT_MS)
+  try {
+    const res = await net.fetch(`https://wttr.in/${encodeURIComponent(q)}?format=j1&lang=zh`, {
+      headers: { 'User-Agent': 'curl/8.4.0', Accept: 'application/json' },
+      signal: controller.signal,
+    })
+    if (!res.ok) return null
+    const raw = (await res.json()) as any
+    const cur = raw?.current_condition?.[0]
+    const area = raw?.nearest_area?.[0]
+    if (!cur) return null
+
+    /* nearest_area 是观测站所在的片区（乌鲁木齐会返回 Shuixigou），
+       直接当地名显示反而让人困惑——以用户说的地名为准，站点只作附注 */
+    const station = area?.areaName?.[0]?.value || ''
+    const descOf = (code?: string, fallback?: string) =>
+      WWO_ZH[String(code ?? '')] ?? (fallback ? String(fallback) : '未知')
+
+    const lines: string[] = [
+      `地点：${q}${station && station !== q ? `（观测站 ${station}）` : ''}`,
+      `实况：${descOf(cur.weatherCode, cur.weatherDesc?.[0]?.value)}，${cur.temp_C}℃（体感 ${cur.FeelsLikeC}℃）`,
+      `湿度 ${cur.humidity}%，风速 ${cur.windspeedKmph} km/h，降水 ${cur.precipMM} mm`,
+    ]
+    if (cur.observation_time) lines.push(`观测时间：${cur.observation_time}（当地时间）`)
+
+    const label = ['今天', '明天', '后天']
+    for (let i = 0; i < Math.min(3, raw?.weather?.length ?? 0); i += 1) {
+      const w = raw.weather[i]
+      const hourly = w?.hourly ?? []
+      /* hourly 取正午那条最有代表性，没有就用最后一条 */
+      const noon = hourly[Math.min(4, Math.max(0, hourly.length - 1))]
+      const rain = hourly.reduce(
+        (mx: number, h: any) => Math.max(mx, Number(h.chanceofrain ?? 0)),
+        0,
+      )
+      lines.push(
+        `${label[i] ?? w.date}（${w.date}）：${descOf(noon?.weatherCode, noon?.weatherDesc?.[0]?.value)}，${w.mintempC}~${w.maxtempC}℃，降水概率 ${rain}%`,
+      )
+    }
+    return { place: q, text: lines.join('\n') }
+  } catch {
+    return null
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
 ipcMain.handle(
-  'ai:websearch',
+  'ai:weather',
   async (
     _e,
-    query: string,
-    limit = 5,
-  ): Promise<{ ok: boolean; hits?: WebHit[]; engine?: string; error?: string }> => {
-    const q = String(query ?? '').trim()
-    if (!q) return { ok: false, error: '检索词是空的' }
-    const want = Math.max(1, Math.min(limit, 8))
-    let lastError = ''
-    for (const engine of SEARCH_ENGINES) {
-      const controller = new AbortController()
-      const timer = setTimeout(() => controller.abort(), WEB_TIMEOUT_MS)
-      try {
-        const res = await net.fetch(engine.build(q), {
-          method: 'GET',
-          headers: {
-            // 不伪装成浏览器，搜索页通常直接拒绝；这里只声明自己是普通 UA
-            'User-Agent':
-              'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36',
-            'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
-          },
-          signal: controller.signal,
-        })
-        if (!res.ok) {
-          lastError = `${engine.name} HTTP ${res.status}`
-          continue
-        }
-        const hits = parseEngine(await res.text(), engine, want)
-        if (hits.length) return { ok: true, hits, engine: engine.name }
-        lastError = `${engine.name} 没有解析到结果`
-      } catch (e) {
-        lastError = `${engine.name}：${aiError(e, WEB_TIMEOUT_MS)}`
-      } finally {
-        clearTimeout(timer)
-      }
+    place: string,
+  ): Promise<{ ok: boolean; place?: string; text?: string; error?: string }> => {
+    const w = await fetchWeather(String(place ?? ''))
+    if (!w) return { ok: false, error: '天气服务没拿到这个地点的数据' }
+    return { ok: true, place: w.place, text: w.text }
+  },
+)
+
+/* ── agent 引擎（AI SDK） ──
+ *
+ * 改动之前，循环跑在渲染进程里：那边发一次请求，主进程只做 SSE 转发，回来
+ * 自己解析 tool_calls、逐个执行、把结果拼回对话再发下一次。主进程这边则是
+ * 手写 SSE 解析器，专门迁就各种不标准的网关。
+ *
+ * 现在把「循环」交给 AI SDK，宿主能力（读写笔记、检索）留在主进程——它本来
+ * 就有 fs 和搜索引擎，省掉一圈反向 IPC。渲染进程只负责准备上下文、把事件
+ * 画成步骤。旧的 ai:chat 通道原样保留：设置里能切回去，出问题不至于没退路。
+ */
+ipcMain.handle(
+  'ai:agent',
+  async (
+    e,
+    cfg: AiRequest,
+    req: {
+      messages: { role: 'user' | 'assistant'; content: string }[]
+      root?: string | null
+      activePath?: string | null
+      /** 当前编辑器的未保存正文。工具改当前笔记时改的是它 */
+      draft?: string
+      maxSteps?: number
+    },
+  ): Promise<{
+    ok: boolean
+    text?: string
+    reasoning?: string
+    sources?: { title: string; url: string }[]
+    toolUses?: number
+    draft?: string
+    error?: string
+  }> => {
+    /* 密钥填成模型名/服务名是最常见的坑。主进程自己先认一遍，比等服务器
+       回 401 快，而且能给出「这里该填密钥」这种说得清的话。 */
+    if (cfg.apiKey.trim() && keyLooksLikeModel(cfg.apiKey))
+      return { ok: false, error: humanizeChatError(401, '', cfg.model, cfg.apiKey) }
+
+    const push = (ev: AgentEvent) => {
+      if (!e.sender.isDestroyed()) e.sender.send('ai:agent-event', ev)
     }
-    return { ok: false, error: lastError || '联网检索失败' }
+    /** 工具改当前笔记时落在它身上，最后随结果一起交回渲染进程 */
+    let draft = String(req.draft ?? '')
+    const root = req.root === undefined ? workspaceRoot : req.root
+    const activePath = req.activePath ? String(req.activePath).replace(/\\/g, '/') : null
+
+    const host: AgentHost = {
+      root,
+      activePath,
+      readFile: async (p) => {
+        try {
+          return await fs.readFile(p, 'utf-8')
+        } catch {
+          return ''
+        }
+      },
+      writeFile: async (p, content) => {
+        await fs.mkdir(path.dirname(p), { recursive: true })
+        await fs.writeFile(p, content, 'utf-8')
+      },
+      createNote: createNoteImpl,
+      listNotes: async () => {
+        const out: string[] = []
+        if (root) await scanNotes(root, out)
+        return out
+      },
+      searchNotes: async (r, q) => {
+        const res = await searchNotesImpl(r, q, 15)
+        return res.hits ?? []
+      },
+      webSearch: async (q) => {
+        const res = await webSearchImpl(q, 6)
+        return { ok: res.ok, hits: res.hits, error: res.error }
+      },
+      getDraft: () => draft,
+      setDraft: (t) => {
+        draft = t
+      },
+    }
+
+    const r = await runAgent(
+      {
+        baseUrl: cfg.baseUrl,
+        model: cfg.model,
+        apiKey: cfg.apiKey,
+        system: cfg.system,
+        temperature: cfg.temperature,
+        maxOutputTokens: cfg.maxTokens,
+      },
+      {
+        messages: Array.isArray(req.messages) ? req.messages : [],
+        host,
+        emit: push,
+        maxSteps: req.maxSteps,
+        // net.fetch 走系统代理与证书，和 ai:chat 那边保持一致
+        fetchImpl: (url, init) => net.fetch(url, init),
+        describeError: (err) => {
+          const o = err as { statusCode?: number; responseBody?: string; message?: string } | null
+          // 服务器回话了（带状态码）就用那套按状态码分流的文案
+          if (o?.statusCode)
+            return humanizeChatError(o.statusCode, o.responseBody ?? '', cfg.model, cfg.apiKey)
+          // 连不上/超时这类没有状态码，交给 aiError 翻
+          return aiError(err)
+        },
+      },
+    )
+
+    return {
+      ok: r.ok,
+      text: r.text,
+      reasoning: r.reasoning,
+      sources: r.sources,
+      toolUses: r.toolUses,
+      draft,
+      error: r.error,
+    }
   },
 )
 
@@ -1267,7 +1523,24 @@ ipcMain.handle(
  * 别的模型要么要付费，要么名字根本不存在。原文是一坨英文 JSON，
  * 用户看不出该干什么；这里按症状给出下一步该怎么做。
  */
-function humanizeChatError(status: number, body: string, model: string): string {
+/**
+ * 密钥框里填的像不像模型名。
+ *
+ * 真实事故：从 Ollama 换到智谱时，把模型名 `qwen2.5-coder:7b-instruct`
+ * 粘进了 API Key 框，接口一直回 401「身份验证失败」，而界面上只是干巴巴
+ * 一句 HTTP 401——用户看不出这是自己填错了。密钥里不会有冒号（冒号是
+ * Ollama 模型的 tag 分隔符），所以带冒号基本可以断定是模型名。
+ */
+function keyLooksLikeModel(key: string): boolean {
+  const k = (key ?? '').trim()
+  if (!k) return false
+  if (k.includes(':')) return true
+  const skStyle = /^sk-/i.test(k) || k.includes('.')
+  if (skStyle) return false
+  return /^(qwen|llama|gemma|glm|mistral|deepseek|phi|codellama|yi|cogito)/i.test(k)
+}
+
+function humanizeChatError(status: number, body: string, model: string, apiKey = ''): string {
   let msg = body.slice(0, 200)
   try {
     const j = JSON.parse(body) as {
@@ -1281,6 +1554,29 @@ function humanizeChatError(status: number, body: string, model: string): string 
     /* 不是 JSON 就用原文 */
   }
   const ollamaCloud = /ollama\.com/i.test(body) || /ollama\.com/i.test(msg)
+  if (status === 401 || status === 403 || /身份验证失败|unauthori[sz]ed|invalid[ _-]?(api[ _-]?key|token|authentication)/i.test(msg)) {
+    const key = apiKey.trim()
+    if (!key) {
+      return (
+        `这个服务要 API Key，但现在没填。` +
+        `去服务商控制台创建一把密钥，粘进「API Key」框；` +
+        `如果用的是本机 Ollama，接口地址填 http://127.0.0.1:11434/v1，Key 留空即可。`
+      )
+    }
+    if (keyLooksLikeModel(key)) {
+      return (
+        `API Key 框里填的是「${key.slice(0, 40)}」，这看起来是个模型名，不是密钥。` +
+        `模型名该填在旁边的「模型」框（当前是 ${model || '空'}），密钥从服务商控制台创建，` +
+        `通常形如 sk-xxxx 或 xxxx.yyyy。`
+      )
+    }
+    return (
+      `API Key 被服务拒绝了（HTTP ${status}）。` +
+      `检查密钥是否复制完整、有没有过期或被删除；` +
+      `换了服务商（比如从 Ollama 切到智谱）时要重新填对应服务商的密钥。` +
+      (msg ? `服务原话：${msg.slice(0, 120)}` : '')
+    )
+  }
   if (status === 402 || (ollamaCloud && /free usage|upgrade for included/i.test(msg))) {
     return (
       '这个模型不在 Ollama 云端的免费额度里——免费额度只含 gemma 系列云模型。' +
@@ -1348,7 +1644,7 @@ async function validateModel(base: string, cfg: AiRequest): Promise<{ ok: boolea
     }
     if (!lastErr) return { ok: false, error: '验证请求发不出去' }
     if (lastErr.status === 0) return { ok: false, error: lastErr.body }
-    return { ok: false, error: humanizeChatError(lastErr.status, lastErr.body, cfg.model) }
+    return { ok: false, error: humanizeChatError(lastErr.status, lastErr.body, cfg.model, cfg.apiKey) }
   } finally {
     clearTimeout(timer)
   }
@@ -1699,7 +1995,10 @@ ipcMain.handle('note:write', async (_e, file: string, content: string) => {
 })
 
 // 新建笔记
-ipcMain.handle('note:create', async (_e, dir: string, name: string) => {
+ipcMain.handle('note:create', async (_e, dir: string, name: string) => createNoteImpl(dir, name))
+
+/** 新建笔记的实现。agent 的 create_note 工具也走这条路 */
+async function createNoteImpl(dir: string, name: string): Promise<string> {
   const safe = name.replace(/[\\/:*?"<>|]/g, '-').trim() || '未命名'
   let target = path.join(dir, `${safe}.md`)
   let i = 1
@@ -1713,9 +2012,10 @@ ipcMain.handle('note:create', async (_e, dir: string, name: string) => {
       break
     }
   }
+  await fs.mkdir(dir, { recursive: true })
   await fs.writeFile(target, '', 'utf-8')
   return target
-})
+}
 
 /* ── 工作区全文检索 ──
    agent 的 search_notes 工具靠它：给一个词，把工作区里含这个词的
@@ -1754,50 +2054,71 @@ ipcMain.handle(
     hits?: { path: string; name: string; count: number; snippets: string[] }[]
     error?: string
   }> => {
-    const q = String(query ?? '').trim().toLowerCase()
-    if (!q) return { ok: false, error: '检索词是空的' }
-    if (!root) return { ok: false, error: '没有打开的工作区' }
-    const files: string[] = []
-    await scanNotes(root, files)
-    const want = Math.max(1, Math.min(limit, 30))
-    const hits: { path: string; name: string; count: number; snippets: string[] }[] = []
-    for (const file of files) {
-      let text = ''
-      try {
-        const st = await fs.stat(file)
-        if (st.size > SEARCH_MAX_FILE) continue
-        text = await fs.readFile(file, 'utf-8')
-      } catch {
-        continue
-      }
-      const lower = text.toLowerCase()
-      let count = 0
-      let from = 0
-      const snippets: string[] = []
-      for (;;) {
-        const at = lower.indexOf(q, from)
-        if (at < 0) break
-        count++
-        if (snippets.length < 2) {
-          const start = Math.max(0, at - 40)
-          const end = Math.min(text.length, at + q.length + 60)
-          snippets.push((start > 0 ? '…' : '') + text.slice(start, end).replace(/\s+/g, ' ') + (end < text.length ? '…' : ''))
-        }
-        from = at + q.length
-      }
-      if (count > 0) {
-        hits.push({
-          path: file,
-          name: path.basename(file, '.md'),
-          count,
-          snippets,
-        })
-        if (hits.length >= want) break
-      }
-    }
-    return { ok: true, hits }
+    const r = await searchNotesImpl(root, query, limit)
+    return r
   },
 )
+
+/**
+ * 全文检索的实现。抽出来是因为 agent 的 search_notes 工具也走这条路——
+ * 一处逻辑，两条入口，免得工具那边和侧栏搜出来的结果对不上。
+ */
+async function searchNotesImpl(
+  root: string,
+  query: string,
+  limit = 20,
+): Promise<{
+  ok: boolean
+  hits?: { path: string; name: string; count: number; snippets: string[] }[]
+  error?: string
+}> {
+  const q = String(query ?? '').trim().toLowerCase()
+  if (!q) return { ok: false, error: '检索词是空的' }
+  if (!root) return { ok: false, error: '没有打开的工作区' }
+  const files: string[] = []
+  await scanNotes(root, files)
+  const want = Math.max(1, Math.min(limit, 30))
+  const hits: { path: string; name: string; count: number; snippets: string[] }[] = []
+  for (const file of files) {
+    let text = ''
+    try {
+      const st = await fs.stat(file)
+      if (st.size > SEARCH_MAX_FILE) continue
+      text = await fs.readFile(file, 'utf-8')
+    } catch {
+      continue
+    }
+    const lower = text.toLowerCase()
+    let count = 0
+    let from = 0
+    const snippets: string[] = []
+    for (;;) {
+      const at = lower.indexOf(q, from)
+      if (at < 0) break
+      count++
+      if (snippets.length < 2) {
+        const start = Math.max(0, at - 40)
+        const end = Math.min(text.length, at + q.length + 60)
+        snippets.push(
+          (start > 0 ? '…' : '') +
+            text.slice(start, end).replace(/\s+/g, ' ') +
+            (end < text.length ? '…' : ''),
+        )
+      }
+      from = at + q.length
+    }
+    if (count > 0) {
+      hits.push({
+        path: file,
+        name: path.basename(file, '.md'),
+        count,
+        snippets,
+      })
+      if (hits.length >= want) break
+    }
+  }
+  return { ok: true, hits }
+}
 
 // 删除：移进工作区内的 .nota/trash，而不是系统回收站。
 // 系统回收站只认"文件名"，笔记恢复时不知道该放回哪个子目录，
